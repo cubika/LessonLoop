@@ -1,0 +1,16 @@
+{
+  "url": "https://raw.githubusercontent.com/mem0ai/mem0/c7ee362aff94a369af70f13f2b4f853f6793ff4c/mem0-ts/src/oss/src/memory/index.ts",
+  "retrieved_at": "2026-09-12T04:06:27.1343193Z",
+  "excerpts": [
+    {
+      "start": 234,
+      "end": 252,
+      "text": "      this.config.llm.config,\r\n    );\r\n    if (this.config.reranker) {\r\n      this.reranker = RerankerFactory.create(\r\n        this.config.reranker.provider,\r\n        this.config.reranker.config,\r\n      );\r\n    }\r\n    if (this.config.disableHistory) {\r\n      this.db = new DummyHistoryManager();\r\n    } else {\r\n      this.db = HistoryManagerFactory.create(\r\n        this.config.historyStore!.provider,\r\n        this.config.historyStore!,\r\n      );\r\n    }\r\n\r\n    this.collectionName = this.config.vectorStore.config.collectionName;\r\n    this.apiVersion = this.config.version || \"v1.0\";"
+    },
+    {
+      "start": 318,
+      "end": 342,
+      "text": "  private async getEntityStore(): Promise<VectorStore> {\r\n    if (!this._entityStore) {\r\n      const entityProvider = this.config.vectorStore.provider;\r\n      const entityCollectionName = `${this.collectionName}_entities`;\r\n      const entityConfig: VectorStoreConfig = {\r\n        ...this.config.vectorStore.config,\r\n        collectionName: entityCollectionName,\r\n      };\r\n      // For file-based stores (memory/SQLite), always use a separate DB for entities\r\n      if (entityProvider === \"memory\") {\r\n        const basePath = entityConfig.dbPath || getDefaultVectorStoreDbPath();\r\n        entityConfig.dbPath = basePath.replace(/\\.db$/, \"_entities.db\");\r\n      }\r\n      if (entityProvider === \"databricks\") {\r\n        entityConfig.tableName = entityConfig.tableName\r\n          ? `${entityConfig.tableName}_entities`\r\n          : entityCollectionName;\r\n      }\r\n      this._entityStore = VectorStoreFactory.create(\r\n        entityProvider,\r\n        entityConfig,\r\n      );\r\n      await this._entityStore.initialize();\r\n    }\r\n    return this._entityStore;"
+    }
+  ]
+}

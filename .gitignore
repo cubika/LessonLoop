@@ -1,0 +1,5 @@
+node_modules/
+.p0/
+*.tsbuildinfo
+.env
+.env.*

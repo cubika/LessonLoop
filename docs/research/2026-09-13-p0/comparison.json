@@ -1,0 +1,11 @@
+{
+  "status": "blocked",
+  "reason": "A real OpenAI-compatible extraction/execution model must be configured with LESSONLOOP_MODEL_URL and LESSONLOOP_MODEL. No fake model is substituted.",
+  "arms": [
+    "no_memory",
+    "mem0_default",
+    "structured_learning"
+  ],
+  "fixtureStatus": "authored_mechanism_cases_not_held_out_benchmark",
+  "taskBenefitMeasured": false
+}

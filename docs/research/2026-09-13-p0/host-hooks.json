@@ -1,0 +1,399 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-09-13T02:05:20.943Z",
+  "cliVersion": "1.0.83",
+  "classification": "synthetic_protocol_only",
+  "realModelCalls": 0,
+  "credentialsProvided": false,
+  "pluginInstallation": false,
+  "cases": [
+    {
+      "case": "context",
+      "classification": "synthetic_protocol_only",
+      "verification": "observed",
+      "exitCode": 0,
+      "errorCode": null,
+      "timedOut": false,
+      "durationMs": 8768,
+      "protocolError": null,
+      "modelEndpoint": "loopback_scripted_response",
+      "requests": [
+        {
+          "at": 1789265103838,
+          "path": "/v1/chat/completions",
+          "markers": {
+            "originalTask": true,
+            "submittedOutput": true,
+            "transformedOutput": true,
+            "fixtureResult": false
+          },
+          "viewToolAvailable": true,
+          "toolResponseScripted": false
+        }
+      ],
+      "trace": [
+        {
+          "event": "userPromptSubmitted",
+          "at": 1789265103699,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "userPromptTransformed",
+          "at": 1789265103806,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        }
+      ],
+      "runtimeHooks": [
+        {
+          "event": "hook.start",
+          "hook": "userPromptSubmitted",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptSubmitted",
+          "success": true,
+          "errorKind": null
+        },
+        {
+          "event": "hook.start",
+          "hook": "userPromptTransformed",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptTransformed",
+          "success": true,
+          "errorKind": null
+        }
+      ],
+      "runtimeTools": [],
+      "observations": {
+        "pluginHookDispatchObserved": true,
+        "originalPromptObservedByHook": true,
+        "originalTaskInFirstModelInput": true,
+        "submittedOutputInModelInput": true,
+        "transformedOutputInModelInput": true,
+        "transformedHookBeforeFirstModelRequest": true,
+        "preToolHookObserved": false,
+        "toolResponseScripted": false,
+        "explicitProbeDenialObserved": false,
+        "successfulToolCompletionObserved": false,
+        "postToolFixtureReadObserved": false,
+        "fixtureResultInSubsequentModelInput": false,
+        "timeoutWarningObserved": false,
+        "requiresLogin": false,
+        "finalSyntheticTextObserved": true
+      },
+      "documentationComparison": {
+        "source": "https://docs.github.com/en/copilot/reference/hooks-reference#userpromptsubmitted--userpromptsubmit",
+        "documentedSubmittedCommandOutput": "discarded",
+        "actualSubmittedModifiedPrompt": "honored",
+        "agreesWithDocumentation": false
+      },
+      "diagnostic": null
+    },
+    {
+      "case": "deny",
+      "classification": "synthetic_protocol_only",
+      "verification": "observed",
+      "exitCode": 0,
+      "errorCode": null,
+      "timedOut": false,
+      "durationMs": 7667,
+      "protocolError": null,
+      "modelEndpoint": "loopback_scripted_response",
+      "requests": [
+        {
+          "at": 1789265111429,
+          "path": "/v1/chat/completions",
+          "markers": {
+            "originalTask": true,
+            "submittedOutput": true,
+            "transformedOutput": true,
+            "fixtureResult": false
+          },
+          "viewToolAvailable": true,
+          "toolResponseScripted": true
+        },
+        {
+          "at": 1789265111546,
+          "path": "/v1/chat/completions",
+          "markers": {
+            "originalTask": true,
+            "submittedOutput": true,
+            "transformedOutput": true,
+            "fixtureResult": false
+          },
+          "viewToolAvailable": true,
+          "toolResponseScripted": false
+        }
+      ],
+      "trace": [
+        {
+          "event": "userPromptSubmitted",
+          "at": 1789265111301,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "userPromptTransformed",
+          "at": 1789265111407,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "preToolUse",
+          "at": 1789265111524,
+          "hasOriginalPrompt": false,
+          "toolName": "view",
+          "resultType": null,
+          "fixtureResult": false
+        }
+      ],
+      "runtimeHooks": [
+        {
+          "event": "hook.start",
+          "hook": "userPromptSubmitted",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptSubmitted",
+          "success": true,
+          "errorKind": null
+        },
+        {
+          "event": "hook.start",
+          "hook": "userPromptTransformed",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptTransformed",
+          "success": true,
+          "errorKind": null
+        },
+        {
+          "event": "hook.start",
+          "hook": "preToolUse",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "preToolUse",
+          "success": true,
+          "errorKind": null
+        }
+      ],
+      "runtimeTools": [
+        {
+          "event": "tool.execution_complete",
+          "success": false,
+          "deniedByProbe": true,
+          "errorCode": "denied",
+          "fixtureResult": false
+        }
+      ],
+      "observations": {
+        "pluginHookDispatchObserved": true,
+        "originalPromptObservedByHook": true,
+        "originalTaskInFirstModelInput": true,
+        "submittedOutputInModelInput": true,
+        "transformedOutputInModelInput": true,
+        "transformedHookBeforeFirstModelRequest": true,
+        "preToolHookObserved": true,
+        "toolResponseScripted": true,
+        "explicitProbeDenialObserved": true,
+        "successfulToolCompletionObserved": false,
+        "postToolFixtureReadObserved": false,
+        "fixtureResultInSubsequentModelInput": false,
+        "timeoutWarningObserved": false,
+        "requiresLogin": false,
+        "finalSyntheticTextObserved": true
+      },
+      "documentationComparison": {
+        "source": "https://docs.github.com/en/copilot/reference/hooks-reference#userpromptsubmitted--userpromptsubmit",
+        "documentedSubmittedCommandOutput": "discarded",
+        "actualSubmittedModifiedPrompt": "honored",
+        "agreesWithDocumentation": false
+      },
+      "diagnostic": null
+    },
+    {
+      "case": "timeout",
+      "classification": "synthetic_protocol_only",
+      "verification": "observed",
+      "exitCode": 0,
+      "errorCode": null,
+      "timedOut": false,
+      "durationMs": 9252,
+      "protocolError": null,
+      "modelEndpoint": "loopback_scripted_response",
+      "requests": [
+        {
+          "at": 1789265119550,
+          "path": "/v1/chat/completions",
+          "markers": {
+            "originalTask": true,
+            "submittedOutput": true,
+            "transformedOutput": true,
+            "fixtureResult": false
+          },
+          "viewToolAvailable": true,
+          "toolResponseScripted": true
+        },
+        {
+          "at": 1789265120796,
+          "path": "/v1/chat/completions",
+          "markers": {
+            "originalTask": true,
+            "submittedOutput": true,
+            "transformedOutput": true,
+            "fixtureResult": true
+          },
+          "viewToolAvailable": true,
+          "toolResponseScripted": false
+        }
+      ],
+      "trace": [
+        {
+          "event": "userPromptSubmitted",
+          "at": 1789265119419,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "userPromptTransformed",
+          "at": 1789265119527,
+          "hasOriginalPrompt": true,
+          "toolName": null,
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "preToolUse",
+          "at": 1789265119648,
+          "hasOriginalPrompt": false,
+          "toolName": "view",
+          "resultType": null,
+          "fixtureResult": false
+        },
+        {
+          "event": "postToolUse",
+          "at": 1789265120775,
+          "hasOriginalPrompt": false,
+          "toolName": "view",
+          "resultType": "success",
+          "fixtureResult": true
+        }
+      ],
+      "runtimeHooks": [
+        {
+          "event": "hook.start",
+          "hook": "userPromptSubmitted",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptSubmitted",
+          "success": true,
+          "errorKind": null
+        },
+        {
+          "event": "hook.start",
+          "hook": "userPromptTransformed",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "userPromptTransformed",
+          "success": true,
+          "errorKind": null
+        },
+        {
+          "event": "hook.start",
+          "hook": "preToolUse",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "preToolUse",
+          "success": false,
+          "errorKind": "hook_timeout"
+        },
+        {
+          "event": "hook.start",
+          "hook": "postToolUse",
+          "success": null,
+          "errorKind": null
+        },
+        {
+          "event": "hook.end",
+          "hook": "postToolUse",
+          "success": true,
+          "errorKind": null
+        }
+      ],
+      "runtimeTools": [
+        {
+          "event": "tool.execution_complete",
+          "success": true,
+          "deniedByProbe": false,
+          "errorCode": null,
+          "fixtureResult": true
+        }
+      ],
+      "observations": {
+        "pluginHookDispatchObserved": true,
+        "originalPromptObservedByHook": true,
+        "originalTaskInFirstModelInput": true,
+        "submittedOutputInModelInput": true,
+        "transformedOutputInModelInput": true,
+        "transformedHookBeforeFirstModelRequest": true,
+        "preToolHookObserved": true,
+        "toolResponseScripted": true,
+        "explicitProbeDenialObserved": false,
+        "successfulToolCompletionObserved": true,
+        "postToolFixtureReadObserved": true,
+        "fixtureResultInSubsequentModelInput": true,
+        "timeoutWarningObserved": true,
+        "requiresLogin": false,
+        "finalSyntheticTextObserved": true
+      },
+      "documentationComparison": {
+        "source": "https://docs.github.com/en/copilot/reference/hooks-reference#userpromptsubmitted--userpromptsubmit",
+        "documentedSubmittedCommandOutput": "discarded",
+        "actualSubmittedModifiedPrompt": "honored",
+        "agreesWithDocumentation": false
+      },
+      "diagnostic": null
+    }
+  ],
+  "limitations": [
+    "Scripted local protocol responses do not measure agent reasoning, task quality, or memory benefit.",
+    "Plugin loading and timing findings apply only to this CLI version and synthetic input.",
+    "No account credentials or default-profile configuration were supplied; no global file-write audit was run.",
+    "Host-owned session files may be created inside the isolated profile; these are not core memory storage."
+  ]
+}

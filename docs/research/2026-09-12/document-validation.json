@@ -1,0 +1,24 @@
+{
+  "checkedAt": "2026-09-13T02:20:52.507Z",
+  "command": "node scripts/validate-docs.mjs",
+  "markdownFiles": 12,
+  "localLinks": 59,
+  "jsonExamples": 5,
+  "mermaidSyntaxShapeChecks": 1,
+  "errors": [],
+  "hashes": {
+    "docs/01-product.md": "e8760e3c81c013eb0f88e66f9d8c21e126fa0e714be26090a3df1d054928be8d",
+    "docs/02-experience-model.md": "94367c80c80ddaca85ccad43f166169cfca24872e5c74de342fb5d0bce2d7083",
+    "docs/03-architecture.md": "62eaba16b14fbeca024246990562aefb855c0133feb1a05299b3f715c3fd7a3c",
+    "docs/04-contracts-and-extensions.md": "cc7bd4fe02d910260b33430f8730c9863fcbf18c62d115b8be07a7a624297376",
+    "docs/05-delivery-and-validation.md": "df8fcc59c34884e215efda4ea105fc7329b7f452c095b8bd51354983c6fc5bb8",
+    "docs/06-review-and-decisions.md": "eb2a7da1af46a5e618335e38dee7e0926aa3030ba4dd05fccf0aa221bae399c9",
+    "docs/07-storage-model.md": "36288bec6d97155da6ea0c9b4a1110bb248db9fd42af8f23fa02397244fd3ed9",
+    "docs/08-connectors.md": "7617e70606517c9c4e4b76c32894759c324f0fffc8794a61502b2bed49b217e1",
+    "docs/research/2026-09-12/README.md": "717f2a44843db1090e1e3af4b49fbb7b1158ad546ca2781f34c793d2857fac4e",
+    "docs/research/2026-09-13-p0/README.md": "321bf9a6e4e789819132a61bf97fcb8b7ddfe8560bd18aa8151e77e03e8e73a4",
+    "README.md": "b6fb765a4f0017329adffa9667f8d643f5459306662bbf3786c509f991190947",
+    "spikes/p0/README.md": "43ac747067413954a3a71dd64acfd9fb9fe4c34c57900c9efc6a0bfd26406ab8"
+  },
+  "limitations": "This command checks document structure, local links, JSON and excerpt ranges only. Mermaid was not rendered. Runtime and model tests, if any, have separate reports."
+}

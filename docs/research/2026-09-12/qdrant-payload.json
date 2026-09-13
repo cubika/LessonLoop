@@ -1,0 +1,63 @@
+{
+  "url": "https://raw.githubusercontent.com/qdrant/landing_page/c341e980866afc423e7cb49da7d681e04f3b55ae/qdrant-landing/content/documentation/manage-data/payload.md",
+  "retrieved_at": "2026-09-12T04:07:42.6668673Z",
+  "sha256_utf8": "373563f377480f484531d446ae05e2c1ce92ea8b6943fdc5a572361d5e427b3c",
+  "matches": [
+    {
+      "line": 100,
+      "text": "### Keyword"
+    },
+    {
+      "line": 102,
+      "text": "`keyword` - string value."
+    },
+    {
+      "line": 104,
+      "text": "Example of single and multiple `keyword` values:"
+    },
+    {
+      "line": 184,
+      "text": "In addition to the basic `keyword` type, Qdrant supports `uuid` type for storing UUID values."
+    },
+    {
+      "line": 185,
+      "text": "Functionally, it works the same as `keyword`, internally stores parsed UUID values."
+    },
+    {
+      "line": 200,
+      "text": "Usage of `uuid` index type is recommended in payload-heavy collections to save RAM and improve search performance."
+    },
+    {
+      "line": 294,
+      "text": "## Payload indexing"
+    },
+    {
+      "line": 296,
+      "text": "To search more efficiently with filters, Qdrant allows you to create indexes for payload fields by specifying the name and type of field it is intended to be."
+    },
+    {
+      "line": 298,
+      "text": "The indexed fields also affect the vector index. See [Indexing](/documentation/manage-data/indexing/) for details."
+    },
+    {
+      "line": 300,
+      "text": "In practice, we recommend creating an index on those fields that could potentially constrain the results the most."
+    },
+    {
+      "line": 301,
+      "text": "For example, using an index for the object ID will be much more efficient, being unique for each record, than an index by its color, which has only a few possible values."
+    },
+    {
+      "line": 303,
+      "text": "In compound queries involving multiple fields, Qdrant will attempt to use the most restrictive index first."
+    },
+    {
+      "line": 305,
+      "text": "To create index for the field, you can use the following:"
+    },
+    {
+      "line": 307,
+      "text": "REST API ([Schema](https://api.qdrant.tech/api-reference/indexes/create-field-index))"
+    }
+  ]
+}

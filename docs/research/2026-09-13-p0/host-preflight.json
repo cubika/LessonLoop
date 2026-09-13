@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-09-13T02:13:45.636Z",
+  "node": "v22.18.0",
+  "platform": "win32",
+  "architecture": "x64",
+  "expectedVersion": "1.0.83",
+  "executable": "C:\\Users\\bili1\\source\\LessonLoop\\.p0\\runtime\\copilot-1.0.83\\copilot.exe",
+  "officialArchive": {
+    "url": "https://github.com/github/copilot-cli/releases/download/v1.0.83/copilot-win32-x64.zip",
+    "sha256": "0e07221a275fdf7e61619c53566e3a421fd646d74d8e9ca491dbbff221f22945",
+    "verification": "download_must_verify_archive_separately"
+  },
+  "isolation": {
+    "profile": "C:\\Users\\bili1\\source\\LessonLoop\\.p0\\host\\profile",
+    "cache": "C:\\Users\\bili1\\source\\LessonLoop\\.p0\\host\\cache",
+    "logs": "C:\\Users\\bili1\\source\\LessonLoop\\.p0\\host\\logs",
+    "workingDirectory": "C:\\Users\\bili1\\source\\LessonLoop\\.p0\\host\\scratch",
+    "environment": "system_allowlist_only; credential variables and runtime injection options excluded",
+    "defaultProfileWriteMonitoring": "not_run"
+  },
+  "modelRequestsIssued": 0,
+  "pluginInstallationAttempted": false,
+  "experienceChecks": {
+    "beforePlanningRecall": "not_run",
+    "beforeAdoptionRefresh": "not_run",
+    "trustedMaterialAndCorrectionReceipt": "not_run"
+  },
+  "officialFacts": [
+    {
+      "feature": "userPromptSubmitted",
+      "status": "documented_only",
+      "fact": "Config-file command/HTTP hook output is discarded; modifiedPrompt is SDK-only.",
+      "source": "https://docs.github.com/en/copilot/reference/hooks-reference#userpromptsubmitted--userpromptsubmit"
+    },
+    {
+      "feature": "userPromptTransformed",
+      "status": "requires_fixed_version_runtime_test",
+      "fact": "modifiedTransformedPrompt can replace model-facing content before persistence.",
+      "source": "https://docs.github.com/en/copilot/reference/hooks-reference#userprompttransformed"
+    },
+    {
+      "feature": "preToolUse",
+      "status": "documented_only",
+      "fact": "Command crashes and explicit denial block a tool; hook timeouts remain fail-open.",
+      "source": "https://docs.github.com/en/copilot/reference/hooks-reference#exit-codes-for-command-hooks"
+    }
+  ],
+  "limitations": [
+    "Version/help checks do not validate plugin loading, hooks, model behavior, or user experience.",
+    "The child receives isolated paths; default-profile file writes are not independently monitored.",
+    "No login, model request, plugin installation, or global configuration change is requested."
+  ],
+  "status": "passed",
+  "reason": "version_and_help_only",
+  "detectedVersion": "1.0.83",
+  "supportedFlags": {
+    "--no-auto-update": true,
+    "--log-dir": true,
+    "--disable-builtin-mcps": true,
+    "--output-format": true
+  },
+  "commands": [
+    {
+      "name": "version",
+      "exitCode": 0,
+      "errorCode": null,
+      "signal": null,
+      "timedOut": false,
+      "durationMs": 3490
+    },
+    {
+      "name": "help",
+      "exitCode": 0,
+      "errorCode": null,
+      "signal": null,
+      "timedOut": false,
+      "durationMs": 714
+    }
+  ]
+}

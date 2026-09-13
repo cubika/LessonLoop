@@ -1,0 +1,12 @@
+{
+  "url": "https://raw.githubusercontent.com/mem0ai/mem0/c7ee362aff94a369af70f13f2b4f853f6793ff4c/mem0-ts/package.json",
+  "retrieved_at": "2026-09-12T01:34:29.3981128Z",
+  "sha256_utf8": "b8a5db3e6dfc35320b1e00053e6df64e1a75b06e62b30ea53453c376f0153b65",
+  "excerpts": [
+    {
+      "end": 6,
+      "text": "{\r\n  \"name\": \"mem0ai\",\r\n  \"version\": \"3.1.8\",\r\n  \"description\": \"The Memory Layer For Your AI Apps\",\r\n  \"main\": \"./dist/index.js\",\r\n  \"module\": \"./dist/index.mjs\",",
+      "start": 1
+    }
+  ]
+}

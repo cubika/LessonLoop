@@ -1,0 +1,67 @@
+{
+  "date": "2026-09-13T02:15:08.9374723Z",
+  "validation": {
+    "unit_tests_passed": 23,
+    "host_protocol_classification": "synthetic_protocol_only",
+    "typecheck": "passed",
+    "npm_audit": "0 vulnerabilities after sharp override",
+    "storage_checks": 12,
+    "real_model_comparison": "blocked_missing_model_configuration",
+    "unit_tests": 23,
+    "host_protocol_cases": 3
+  },
+  "source_hashes": [
+    {
+      "path": "package.json",
+      "sha256": "3c279b882626c9c39f78ac5092c030aa944338b9c0afcc7cab2f5b774619f210"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "0309eeacd176d59e366cfd220862e5a995b247ca8f0541fa972d16d75598456a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "44c16e3cf390e155b038522cd8a76a6bfffff7b2c3c880c4ee4a75f0075ab265"
+    },
+    {
+      "path": "spikes/p0/storage-probe.ts",
+      "sha256": "9228bed0924369912db840a07c88696ce2fa03866f0984fbc8757ee50be54bcf"
+    },
+    {
+      "path": "spikes/p0/mem0-gateway.ts",
+      "sha256": "59003b5b9f4511c3884e8f28a4260c93ee2cf53cc7c2f074afb6b5f46999317d"
+    },
+    {
+      "path": "spikes/p0/mem0-imports.mjs",
+      "sha256": "36bbd71d021e24746bf922df50da3daddf22eb9ab2fe782bc6f4e6e39b63f064"
+    },
+    {
+      "path": "spikes/p0/host-hook-probe.ts",
+      "sha256": "5a3e4183a01504484315c79b0660e587447964721151b5096d15473a551a1562"
+    },
+    {
+      "path": "spikes/p0/host-probe.ts",
+      "sha256": "1de4417162d0404211ed0320763fbe71809533b7460b0c8952ad5fc90d9fb060"
+    },
+    {
+      "path": "spikes/p0/evaluate.ts",
+      "sha256": "a65515ad65e4db5550f68e019c1e6a52db3db438a447fe723e8659880f5ac1f0"
+    },
+    {
+      "path": "spikes/p0/experience.ts",
+      "sha256": "61e45a2db0636b8684493f9a22e028581288e7fc0bd5371dec69752ecae17d6e"
+    },
+    {
+      "path": "spikes/p0/qdrant-runtime.ts",
+      "sha256": "1e3189770fc68d0d7a5edd24f7e25c5847934d8c629fa7237ecc8a7dde40e538"
+    },
+    {
+      "path": "tests/gateway.test.ts",
+      "sha256": "b1c267bbe8a05ce079e4280956fc353cfde3b9d475cea20331fd2fc72223ec70"
+    },
+    {
+      "path": "scripts/validate-docs.mjs",
+      "sha256": "68b5af928ac40fa6c09dbb9457694a5cd81919831d4af13a0e9b8cac979cd42b"
+    }
+  ]
+}
