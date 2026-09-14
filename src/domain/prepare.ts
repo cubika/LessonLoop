@@ -237,6 +237,7 @@ export class Preparation {
         ? {
             status: "lead",
             taskApplicability: "undetermined",
+            method: s.method,
             methodUseRef: use,
             missingChecks: missing,
           }
