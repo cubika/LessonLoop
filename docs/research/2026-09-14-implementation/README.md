@@ -11,6 +11,10 @@
 
 TypeScript 检查、构建及 28 个现有/新增单元测试通过。真实 PostgreSQL 集成测试覆盖迁移、单实例、幂等、冲突、来源角色、任务观察与重启。它们只证明对应工程行为。
 
+后续新增 Copilot 事件适配与产品 MCP 初版。真实 Copilot CLI 1.0.84-5 在独立验证目录中成功执行 userPromptTransformed、postToolUse、sessionEnd；宿主事件记录确认产品 lead 经 modifiedTransformedPrompt 回填，并关联核心 task/methodUse。当前仍未验证完整材料捕获、显式续用及安装注册。领域与协议单元测试增至 30 项。
+
+真实宿主验证发现两项配置差异：Agent Plugins 1.0 的 manifest 必须包含准确的 `$schema`；复制完整用户 config.json 会带入已安装插件，验证环境改为仅保留账号选择字段并限定可信目录。失败运行未算回填成功。
+
 ## 官方组件实测
 
 固定清单见 [components.json](../../../config/components.json)。官方 Hindsight 0.9.2、Copilot SDK 1.0.13、pg0 0.15.1、PostgreSQL 18.1、pgvector 0.8.5 和本地多语言 E5 已在本机 Windows 启动。E5 五个文件完整下载并通过 SHA256 校验。未使用 Docker。

@@ -1,2 +1,63 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LessonLoop 方法库</title><link rel="stylesheet" href="/style.css"></head><body><header><b>LessonLoop</b><span>从工作中积累方法</span></header><main><section id="login"><h1>打开方法库</h1><p>使用本机设置中的访问令牌连接服务。</p><label>访问令牌<input id="token" type="password" autocomplete="off"></label><button id="connect">连接</button></section><section id="workspace" hidden><nav><button data-view="methods">方法库</button><button data-view="materials">提交材料</button><button data-view="settings">设置</button></nav><p id="notice" role="status"></p><div id="methods"><h1>方法库</h1><form id="search"><input id="query" placeholder="按名称、主题或内容查找"><button>查找</button></form><div class="columns"><div id="cards"></div><article id="detail"><p>选择一个方法查看步骤、依据和变化。</p></article></div></div><div id="materials" hidden><h1>记录工作片段</h1><label>范围<input id="scope" value="personal"></label><label>原文<textarea id="material" rows="10" placeholder="记录尝试、观察、结果和仍不确定的地方。"></textarea></label><button id="submit">提交并复盘</button><pre id="job"></pre></div><div id="settings" hidden><h1>设置</h1><div id="settings-form"></div></div></section></main><script src="/app.js"></script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LessonLoop 方法库</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header><b>LessonLoop</b><span>从工作中积累方法</span></header>
+    <main>
+      <section id="login">
+        <h1>打开方法库</h1>
+        <p>使用本机设置中的访问令牌连接服务。</p>
+        <label
+          >访问令牌<input
+            id="token"
+            type="password"
+            autocomplete="off" /></label
+        ><button id="connect">连接</button>
+      </section>
+      <section id="workspace" hidden>
+        <nav>
+          <button data-view="methods">方法库</button
+          ><button data-view="materials">提交材料</button
+          ><button data-view="settings">设置</button>
+        </nav>
+        <p id="notice" role="status"></p>
+        <div id="methods">
+          <h1>方法库</h1>
+          <form id="search">
+            <input id="query" placeholder="按名称、主题或内容查找" /><button>
+              查找
+            </button>
+          </form>
+          <div class="columns">
+            <div id="cards"></div>
+            <article id="detail">
+              <p>选择一个方法查看步骤、依据和变化。</p>
+            </article>
+          </div>
+        </div>
+        <div id="materials" hidden>
+          <h1>记录工作片段</h1>
+          <label>范围<input id="scope" value="personal" /></label
+          ><label
+            >原文<textarea
+              id="material"
+              rows="10"
+              placeholder="记录尝试、观察、结果和仍不确定的地方。"
+            ></textarea></label
+          ><button id="submit">提交并复盘</button>
+          <pre id="job"></pre>
+        </div>
+        <div id="settings" hidden>
+          <h1>设置</h1>
+          <div id="settings-form"></div>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,12 +1,171 @@
-let token="", current, settings=[];
-const $=id=>document.getElementById(id);
-const node=(tag,text)=>{const e=document.createElement(tag);e.textContent=text;return e;};
-async function rpc(operation,input={}){const r=await fetch("/v1/rpc",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`,"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({operation,input})});const v=await r.json();if(!r.ok)throw new Error(v.error);return v.result;}
-const handle=fn=>async event=>{try{$("notice").textContent="";await fn(event);}catch(e){$("notice").textContent=e.message;}};
-$("connect").onclick=handle(async()=>{token=$("token").value;settings=await rpc("settings.get");$("login").hidden=true;$("workspace").hidden=false;await list();});
-async function list(){const methods=await rpc("browseMethods",{query:$("query").value});$("cards").replaceChildren();if(!methods.length)$("cards").append(node("p","暂无方法。提交有价值的工作片段后，可在这里查看复盘结果。"));for(const method of methods){const card=node("section","");card.className="card";card.append(node("h2",method.title),node("p",method.goal),node("span",`${method.state} · 修订 ${method.revision}`));card.onclick=handle(()=>show(method.id));$("cards").append(card);}}
-$("search").onsubmit=handle(async e=>{e.preventDefault();await list();});
-async function show(id){current=await rpc("inspectMethod",{id});const d=$("detail");d.replaceChildren(node("h2",current.title),node("p",current.goal));for(const [label,key]of[["适用条件","conditions"],["例外","exceptions"]])if(current[key].length){d.append(node("h3",label));const ul=node("ul","");current[key].forEach(v=>ul.append(node("li",v.text)));d.append(ul);}const steps=node("ol","");for(const s of current.steps){const li=node("li",s.instruction);if(s.choices)li.append(node("pre",s.choices.map(c=>`${c.when.text} → ${c.next}`).join("\n")));steps.append(li);}d.append(steps,node("h3","完成检查"));current.completionChecks.forEach(c=>d.append(node("p",c.text)));d.append(node("h3","最近变化"),node("p",current.change.summary));const state=node("button",current.state==="disabled"?"重新检查并启用":"停用");state.onclick=handle(async()=>{await rpc("setMethodState",{id,expectedRevision:current.revision,state:current.state==="disabled"?"active":"disabled"});await show(id);await list();});const history=node("button","查看历史");history.onclick=handle(async()=>d.append(node("pre",JSON.stringify(await rpc("methodHistory",{id}),null,2))));d.append(state,history);}
-document.querySelectorAll("[data-view]").forEach(button=>button.onclick=handle(async()=>{["methods","materials","settings"].forEach(id=>$(id).hidden=id!==button.dataset.view);if(button.dataset.view==="settings")await renderSettings();}));
-async function renderSettings(){settings=await rpc("settings.get");const form=$("settings-form");form.replaceChildren();for(const s of settings){const section=node("section","");section.append(node("h2",s.scopeId));for(const [key,label]of[["learning","从新工作材料中学习"],["recommendation","新任务自动推荐方法"],["review","记录使用结果与效果回顾"],["notifications","显示回顾提醒"]]){const l=node("label",label);const i=node("input","");i.type="checkbox";i.checked=s[key];i.onchange=handle(async()=>{s[key]=i.checked;const {id,revision,...body}=s;const saved=await rpc("settings.update",{...body,expectedRevision:revision});Object.assign(s,saved);});l.prepend(i);section.append(l);}form.append(section);}}
-$("submit").onclick=handle(async()=>{const r=await rpc("submitMaterial",{scopeId:$("scope").value,segments:[{text:$("material").value,role:"user"}]});$("job").textContent=`已接收。作业 ${r.jobId}`;const poll=async()=>{try{const j=await rpc("getJob",{id:r.jobId});$("job").textContent=JSON.stringify(j,null,2);if(["queued","running","uncertain"].includes(j.status))setTimeout(poll,4000);else await list();}catch(e){$("job").textContent=e.message;}};await poll();});
+let token = "",
+  current,
+  settings = [];
+const $ = (id) => document.getElementById(id);
+const node = (tag, text) => {
+  const e = document.createElement(tag);
+  e.textContent = text;
+  return e;
+};
+async function rpc(operation, input = {}) {
+  const r = await fetch("/v1/rpc", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ operation, input }),
+  });
+  const v = await r.json();
+  if (!r.ok) throw new Error(v.error);
+  return v.result;
+}
+const handle = (fn) => async (event) => {
+  try {
+    $("notice").textContent = "";
+    await fn(event);
+  } catch (e) {
+    $("notice").textContent = e.message;
+  }
+};
+$("connect").onclick = handle(async () => {
+  token = $("token").value;
+  settings = await rpc("settings.get");
+  $("login").hidden = true;
+  $("workspace").hidden = false;
+  await list();
+});
+async function list() {
+  const methods = await rpc("browseMethods", { query: $("query").value });
+  $("cards").replaceChildren();
+  if (!methods.length)
+    $("cards").append(
+      node("p", "暂无方法。提交有价值的工作片段后，可在这里查看复盘结果。"),
+    );
+  for (const method of methods) {
+    const card = node("section", "");
+    card.className = "card";
+    card.append(
+      node("h2", method.title),
+      node("p", method.goal),
+      node("span", `${method.state} · 修订 ${method.revision}`),
+    );
+    card.onclick = handle(() => show(method.id));
+    $("cards").append(card);
+  }
+}
+$("search").onsubmit = handle(async (e) => {
+  e.preventDefault();
+  await list();
+});
+async function show(id) {
+  current = await rpc("inspectMethod", { id });
+  const d = $("detail");
+  d.replaceChildren(node("h2", current.title), node("p", current.goal));
+  for (const [label, key] of [
+    ["适用条件", "conditions"],
+    ["例外", "exceptions"],
+  ])
+    if (current[key].length) {
+      d.append(node("h3", label));
+      const ul = node("ul", "");
+      current[key].forEach((v) => ul.append(node("li", v.text)));
+      d.append(ul);
+    }
+  const steps = node("ol", "");
+  for (const s of current.steps) {
+    const li = node("li", s.instruction);
+    if (s.choices)
+      li.append(
+        node(
+          "pre",
+          s.choices.map((c) => `${c.when.text} → ${c.next}`).join("\n"),
+        ),
+      );
+    steps.append(li);
+  }
+  d.append(steps, node("h3", "完成检查"));
+  current.completionChecks.forEach((c) => d.append(node("p", c.text)));
+  d.append(node("h3", "最近变化"), node("p", current.change.summary));
+  const state = node(
+    "button",
+    current.state === "disabled" ? "重新检查并启用" : "停用",
+  );
+  state.onclick = handle(async () => {
+    await rpc("setMethodState", {
+      id,
+      expectedRevision: current.revision,
+      state: current.state === "disabled" ? "active" : "disabled",
+    });
+    await show(id);
+    await list();
+  });
+  const history = node("button", "查看历史");
+  history.onclick = handle(async () =>
+    d.append(
+      node("pre", JSON.stringify(await rpc("methodHistory", { id }), null, 2)),
+    ),
+  );
+  d.append(state, history);
+}
+document.querySelectorAll("[data-view]").forEach(
+  (button) =>
+    (button.onclick = handle(async () => {
+      ["methods", "materials", "settings"].forEach(
+        (id) => ($(id).hidden = id !== button.dataset.view),
+      );
+      if (button.dataset.view === "settings") await renderSettings();
+    })),
+);
+async function renderSettings() {
+  settings = await rpc("settings.get");
+  const form = $("settings-form");
+  form.replaceChildren();
+  for (const s of settings) {
+    const section = node("section", "");
+    section.append(node("h2", s.scopeId));
+    for (const [key, label] of [
+      ["learning", "从新工作材料中学习"],
+      ["recommendation", "新任务自动推荐方法"],
+      ["review", "记录使用结果与效果回顾"],
+      ["notifications", "显示回顾提醒"],
+    ]) {
+      const l = node("label", label);
+      const i = node("input", "");
+      i.type = "checkbox";
+      i.checked = s[key];
+      i.onchange = handle(async () => {
+        s[key] = i.checked;
+        const { id, revision, ...body } = s;
+        const saved = await rpc("settings.update", {
+          ...body,
+          expectedRevision: revision,
+        });
+        Object.assign(s, saved);
+      });
+      l.prepend(i);
+      section.append(l);
+    }
+    form.append(section);
+  }
+}
+$("submit").onclick = handle(async () => {
+  const r = await rpc("submitMaterial", {
+    scopeId: $("scope").value,
+    segments: [{ text: $("material").value, role: "user" }],
+  });
+  $("job").textContent = `已接收。作业 ${r.jobId}`;
+  const poll = async () => {
+    try {
+      const j = await rpc("getJob", { id: r.jobId });
+      $("job").textContent = JSON.stringify(j, null, 2);
+      if (["queued", "running", "uncertain"].includes(j.status))
+        setTimeout(poll, 4000);
+      else await list();
+    } catch (e) {
+      $("job").textContent = e.message;
+    }
+  };
+  await poll();
+});
