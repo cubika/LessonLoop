@@ -232,3 +232,5 @@ console.log(
     observedMethod: result.observedMethod,
   }),
 );
+
+process.exitCode = result.status === "injection_observed" ? 0 : 1;

@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { ProductStore, Conflict } from "../store/postgres.js";
-import { identity, digest, byteSize, refSchema } from "../domain/schema.js";
+import {
+  identity,
+  digest,
+  byteSize,
+  refSchema,
+  type ObjectRef,
+} from "../domain/schema.js";
 const eventSchema = z
   .object({
     eventId: z.string().min(1).max(128),
@@ -121,16 +127,56 @@ export class Effects {
               status: seen.cleared ? "ignored" : "duplicate",
             };
           }
-          const actual = await tx.get<{ callerId: string; scopeId: string }>(
-            "task",
-            event.taskRef,
-          );
+          const actual = await tx.get<{
+            callerId: string;
+            scopeId: string;
+            erasedObservationHashes?: string[];
+            endedAt?: string;
+          }>("task", event.taskRef);
           if (
             !actual ||
             actual.callerId !== caller.id ||
             actual.scopeId !== event.scopeId
           )
             throw new Error("task_identity_mismatch");
+          if (
+            actual.endedAt &&
+            (Date.now() > Date.parse(actual.endedAt) + 86400000 ||
+              Date.parse(event.occurredAt) >
+                Date.parse(actual.endedAt) + 86400000)
+          )
+            throw new Error("event_outside_window");
+          if (event.method || event.methodUseRef || event.stepId) {
+            const uses = await tx.list<{
+              taskRef: string;
+              callerId: string;
+              method: ObjectRef;
+              methodUseRef: string;
+              stepIds: string[];
+              returnedAt: string;
+            }>("method_use", [event.scopeId]);
+            if (
+              !event.method ||
+              !event.methodUseRef ||
+              !uses.some(
+                (use) =>
+                  use.taskRef === event.taskRef &&
+                  use.method.id === event.method!.id &&
+                  use.method.revision === event.method!.revision &&
+                  use.methodUseRef === event.methodUseRef &&
+                  (!event.stepId || use.stepIds.includes(event.stepId)) &&
+                  Date.parse(use.returnedAt) <= Date.parse(event.occurredAt),
+              )
+            )
+              throw new Error("method_use_mismatch");
+          } else if (["delivery", "usage"].includes(event.kind))
+            throw new Error("method_use_mismatch");
+          if (actual.erasedObservationHashes?.includes(digest(event.text)))
+            return {
+              eventId: event.eventId,
+              status: "ignored",
+              reason: "source_erased",
+            };
           const task = await tx.get<EffectTask>("effect_task", id);
           const previous = task?.events.find(
             (e) => e.eventId === event.eventId,
@@ -180,6 +226,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
+                    "method_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)
@@ -192,6 +239,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
+                    "method_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)
@@ -295,6 +343,27 @@ export class Effects {
           }),
           event.revision,
         );
+      for (const kind of ["effect_review", "review_notification"])
+        for (const row of await tx.list<{ id: string; revision: number }>(
+          kind,
+          [scopeId],
+        ))
+          await tx.remove(kind, row.id, row.revision);
+      const schedule = await tx.get<{
+        id: string;
+        revision: number;
+        scopeId: string;
+        through: string;
+      }>("review_schedule", scopeId);
+      if (schedule)
+        await tx.put(
+          entry("review_schedule", {
+            ...schedule,
+            revision: schedule.revision + 1,
+            through: boundary.clearedAt,
+          }),
+          schedule.revision,
+        );
       return { accepted: true, clearedAt: boundary.clearedAt };
     });
   }
@@ -314,11 +383,6 @@ export class Effects {
               ...task,
               revision: task.revision + 1,
               events,
-              createdAt: events.reduce(
-                (a, e) =>
-                  Date.parse(e.occurredAt) < Date.parse(a) ? e.occurredAt : a,
-                events[0]!.occurredAt,
-              ),
             }),
             task.revision,
           );

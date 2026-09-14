@@ -197,3 +197,101 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   );
   await store.close();
 });
+test("Trusted task materials aggregate without source duplication or cross-task mixing", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    const scope = randomUUID(),
+      host = { id: randomUUID(), channel: "host" as const, scopes: [scope] },
+      owner = { ...host, channel: "user" as const };
+    const core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    await core.configure(owner, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    });
+    const task = await core.startTask(host, scope),
+      other = await core.startTask(host, scope);
+    const input = (taskRef: string, text: string) => ({
+      scopeId: scope,
+      context: { taskRef },
+      segments: [{ text, role: "tool" }],
+    });
+    const first = await core.submitMaterial(
+      host,
+      input(task.taskRef, "actual A"),
+      "a",
+    );
+    const forged = await core.submitMaterial(
+      { ...host, channel: "agent" },
+      input(task.taskRef, "agent assertion"),
+      "forged",
+    );
+    await core.submitMaterial(
+      host,
+      input(other.taskRef, "other task"),
+      "other",
+    );
+    const next = await core.submitMaterial(
+      host,
+      input(task.taskRef, "actual B"),
+      "b",
+    );
+    const job = await core.getJob(host, next.jobId);
+    assert.equal(job.kind, "synthesis");
+    assert.deepEqual(job.materialIds, [first.materialId, next.materialId]);
+    assert.equal(job.materialIds.includes(forged.materialId), false);
+    const duplicate = await core.submitMaterial(
+      host,
+      input(task.taskRef, "actual B"),
+      "b",
+    );
+    assert.equal(duplicate.jobId, next.jobId);
+    await assert.rejects(
+      core.submitMaterial(
+        { ...host, id: "other-host" },
+        input(task.taskRef, "wrong owner"),
+        "wrong",
+      ),
+      /task_identity_mismatch/,
+    );
+    const otherScope = randomUUID();
+    await assert.rejects(
+      core.submitMaterial(
+        { ...host, scopes: [scope, otherScope] },
+        { ...input(task.taskRef, "wrong scope"), scopeId: otherScope },
+        "wrong-scope",
+      ),
+      /task_identity_mismatch/,
+    );
+    const raw = {
+      taskRef: task.taskRef,
+      eventId: "missing-time",
+      text: "Actual observation",
+    };
+    assert.equal(
+      (await core.recordHostObservation(host, raw)).duplicate,
+      false,
+    );
+    assert.equal((await core.recordHostObservation(host, raw)).duplicate, true);
+    const all = await store.transaction((tx) =>
+      tx.list<any>("material", [scope]),
+    );
+    assert.equal(
+      all.find((m) => m.id === first.materialId).sourceFamily,
+      all.find((m) => m.id === next.materialId).sourceFamily,
+    );
+    assert.equal(
+      all.find((m) => m.id === forged.materialId).sourceFamily,
+      undefined,
+    );
+  } finally {
+    await store.close();
+  }
+});

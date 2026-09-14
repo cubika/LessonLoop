@@ -47,6 +47,43 @@ export class HindsightEngine {
   supportBank(scopeId: string, fingerprint: string) {
     return `lessonloop-support-${digest([scopeId, fingerprint]).slice(0, 32)}`;
   }
+  private async productCall<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(
+      new URL(`/ext/lessonloop/${path}`, this.baseUrl),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(65000),
+      },
+    );
+    if (!response.ok) throw new Error(`${path}_${response.status}`);
+    return (await response.json()) as T;
+  }
+  async eraseRegisteredBank(bankId: string, generation: number) {
+    return this.productCall<{
+      erased: boolean;
+      remaining: Record<string, number>;
+    }>("erase-bank", { bank_id: bankId, generation });
+  }
+  async cancelRetainSubmission(scopeId: string, operationId: string) {
+    return this.productCall<{
+      submission_canceled: boolean;
+      operation_status: string;
+    }>("cancel-retain-submission", {
+      bank_id: this.bank(scopeId),
+      operation_id: operationId,
+    });
+  }
+  async drainRegisteredBank(bankId: string) {
+    return this.productCall<{ drained: boolean; remaining: number }>(
+      "drain-bank",
+      { bank_id: bankId },
+    );
+  }
   async health() {
     const version = await this.client.getVersion({
       signal: AbortSignal.timeout(5000),
@@ -88,6 +125,13 @@ export class HindsightEngine {
     };
   }
   async configure(scopeId: string) {
+    if (this.nativeNamespace) {
+      await this.productCall("configure-bank", {
+        bank_id: this.bank(scopeId),
+        mission: LEARNING_MISSION,
+      });
+      return;
+    }
     await this.client.createBank(this.bank(scopeId), {
       retainMission: LEARNING_MISSION,
       reflectMission: LEARNING_MISSION,
@@ -101,25 +145,23 @@ export class HindsightEngine {
   ) {
     for (const e of evidence) {
       const bank = this.supportBank(scopeId, e.fingerprint);
-      await this.client.createBank(bank, {
-        retainExtractionMode: "chunks",
-        enableObservations: false,
-        enableGraphRetrieval: false,
-        enableTemporalRetrieval: false,
-        signal: AbortSignal.timeout(10000),
-      });
       const documentId = `${reference.id}-${reference.revision}-${digest(e.excerpt).slice(0, 16)}`;
-      await this.client.retain(bank, e.excerpt, {
-        documentId,
-        async: false,
-        tags: [`source:${e.fingerprint}`],
-        metadata: {
-          fingerprint: e.fingerprint,
-          role: e.role,
-          product_id: reference.id,
-          product_revision: String(reference.revision),
-        },
-        signal: AbortSignal.timeout(30000),
+      await this.productCall("retain-submissions", {
+        bank_id: bank,
+        mode: "chunks",
+        contents: [
+          {
+            content: e.excerpt,
+            document_id: documentId,
+            tags: [`source:${e.fingerprint}`],
+            metadata: {
+              fingerprint: e.fingerprint,
+              role: e.role,
+              product_id: reference.id,
+              product_revision: String(reference.revision),
+            },
+          },
+        ],
       });
       const memories = await this.client.listMemories(bank, {
         documentId,
@@ -131,34 +173,61 @@ export class HindsightEngine {
     }
   }
   async retain(material: Material, operationId: string) {
-    const r = await this.client.retainBatch(
-      this.bank(material.scopeId),
-      material.segments.map((s, i) => ({
-        content: s.text,
-        context: JSON.stringify({
-          role: s.role,
-          locator: s.locator,
-          author: s.author,
-          observedAt: s.observedAt,
-          fingerprint: material.fingerprints[i],
-          context: material.context,
-        }),
-        metadata: {
-          material_id: material.id,
-          fingerprint: material.fingerprints[i]!,
-          role: s.role,
-          profile: PROFILE_VERSION,
-        },
-        document_id: `${material.id}-${i}`,
-        tags: ["lessonloop", `source:${material.fingerprints[i]}`],
-      })),
-      { async: true, operationId, signal: AbortSignal.timeout(15000) },
-    );
+    const contents = material.segments.map((s, i) => ({
+      content: s.text,
+      context: JSON.stringify({
+        role: s.role,
+        locator: s.locator,
+        author: s.author,
+        observedAt: s.observedAt,
+        fingerprint: material.fingerprints[i],
+        context: material.context,
+      }),
+      metadata: {
+        material_id: material.id,
+        fingerprint: material.fingerprints[i]!,
+        role: s.role,
+        profile: PROFILE_VERSION,
+      },
+      document_id: `${material.id}-${i}`,
+      tags: ["lessonloop", `source:${material.fingerprints[i]}`],
+    }));
+    const r = this.nativeNamespace
+      ? await this.productCall<{
+          success: boolean;
+          async: boolean;
+          operation_id: string;
+        }>("retain-submissions", {
+          bank_id: this.bank(material.scopeId),
+          mode: "learning",
+          operation_id: operationId,
+          contents,
+        })
+      : await this.client.retainBatch(this.bank(material.scopeId), contents, {
+          async: true,
+          operationId,
+          signal: AbortSignal.timeout(15000),
+        });
     if (!r.success || !r.async || r.operation_id !== operationId)
       throw new Error("retain_not_confirmed");
     return r;
   }
   async stageEvidence(scopeId: string, materials: Material[]) {
+    if (this.nativeNamespace) {
+      await this.configure(scopeId);
+      for (const m of materials)
+        await this.productCall("retain-submissions", {
+          bank_id: this.bank(scopeId),
+          mode: "chunks",
+          contents: m.segments.map((s, i) => ({
+            content: s.text,
+            document_id: `support-${m.id}-${i}`,
+            tags: [`source:${m.fingerprints[i]}`],
+            metadata: { fingerprint: m.fingerprints[i], role: s.role },
+          })),
+        });
+      return;
+    }
     await this.configure(scopeId);
     await sdk.updateBankConfig({
       client: this.raw,
@@ -340,6 +409,16 @@ export class HindsightEngine {
       { signal: AbortSignal.timeout(10000) },
     );
   }
+  async deleteAllProjectionRevisions(
+    scopeId: string,
+    kind: "method" | "experience",
+    id: string,
+  ) {
+    return this.productCall<{ erased: boolean; deleted: number }>(
+      "erase-projections",
+      { scope_id: scopeId, object_kind: kind, object_id: id },
+    );
+  }
   async deleteNativeDocument(scopeId: string, documentId: string) {
     const existing = await this.client.getDocument(
       this.bank(scopeId),
@@ -382,28 +461,18 @@ export class HindsightEngine {
   }
   async index(scopeId: string, ref: ObjectRef, text: string) {
     const bank = this.projectionBank(scopeId);
-    await this.client.createBank(bank, {
-      retainExtractionMode: "chunks",
-      retainChunkSize: 32768,
-      retainStructuredChunkSize: 32768,
-      enableObservations: false,
-      enableGraphRetrieval: false,
-      enableTemporalRetrieval: false,
-      signal: AbortSignal.timeout(10000),
-    });
     const documentId = `${ref.kind}-${ref.id}-${ref.revision}`;
-    const result = await this.client.retain(bank, text, {
-      documentId,
-      async: false,
-      tags: [`kind:${ref.kind}`, "active", `ref:${ref.id}:${ref.revision}`],
-      metadata: {
-        product_id: ref.id,
-        product_revision: String(ref.revision),
-        kind: ref.kind,
+    const result = await this.productCall<{ written: boolean }>(
+      "write-projection",
+      {
+        scope_id: scopeId,
+        object_kind: ref.kind,
+        object_id: ref.id,
+        revision: ref.revision,
+        text,
       },
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!result.success) throw new Error("projection_not_confirmed");
+    );
+    if (!result.written) throw new Error("projection_not_confirmed");
     const read = await this.client.listMemories(bank, {
       documentId,
       limit: 100,

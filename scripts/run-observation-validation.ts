@@ -8,10 +8,7 @@ const secret = JSON.parse(
   await readFile(".local-validation/data/development-secret.json", "utf8"),
 );
 const previous = JSON.parse(
-  await readFile(
-    ".local-validation/results/p0-before-idempotent-submission.json",
-    "utf8",
-  ),
+  await readFile(".local-validation/results/p0-method-path.json", "utf8"),
 );
 const store = new ProductStore(
   `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
@@ -81,3 +78,5 @@ try {
   );
 }
 console.log(JSON.stringify({ status: report.status, error: report.error }));
+
+process.exitCode = report.status === "passed" ? 0 : 1;

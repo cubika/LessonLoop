@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  eventTime,
   promptEnvelope,
   transcriptEvent,
 } from "../src/adapters/copilot/protocol.js";
@@ -33,4 +34,12 @@ test("Copilot transcript roles bind actual host event types", () => {
     transcriptEvent({ type: "unknown", data: { content: "claimed" } }),
     undefined,
   );
+});
+
+test("Copilot event timestamps preserve ISO identity on replay", () => {
+  const iso = "2026-09-15T00:00:00.000Z";
+  assert.equal(eventTime(iso), iso);
+  assert.equal(eventTime(Date.parse(iso)), iso);
+  assert.equal(eventTime("invalid"), undefined);
+  assert.equal(eventTime(undefined), undefined);
 });

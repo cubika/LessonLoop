@@ -133,7 +133,7 @@ export const assessmentJsonSchema = zodToJsonSchema(assessmentSchema, {
 export function learningQuery(materials: Material[], existing: unknown[]) {
   let index = 0;
   const sources = materials.map((m) => ({
-    sourceFamily: m.sourceIdentity,
+    sourceFamily: m.sourceFamily ?? m.sourceIdentity,
     context: m.context,
     segments: m.segments.map((s) => ({ ...s, sourceIndex: index++ })),
   }));

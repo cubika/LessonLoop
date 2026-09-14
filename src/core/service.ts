@@ -38,6 +38,7 @@ import {
 } from "./learning.js";
 import { exportMethod } from "../domain/export.js";
 import { Effects } from "./effects.js";
+import { Reviews } from "./reviews.js";
 
 export interface Principal {
   id: string;
@@ -82,6 +83,7 @@ interface Job {
   error?: string;
   inputDigest: string;
   caseTarget?: ObjectRef;
+  taskSequence?: number;
   sourceRefs?: string[];
   comparedMethodRefs?: ObjectRef[];
   nativeIsolation?: "job";
@@ -108,6 +110,38 @@ interface ScopeBarrier {
   pending: boolean;
   createdAt: string;
 }
+interface EngineBank {
+  id: string;
+  revision: number;
+  scopeId: string;
+  kind: string;
+  sourceRefs: string[];
+  state: string;
+  jobId?: string;
+  reviewId?: string;
+  createdAt: string;
+  cleanupReceipt?: unknown;
+}
+interface SourceCleanup {
+  id: string;
+  revision: number;
+  scopeId: string;
+  sourceId: string;
+  action: "withdraw" | "erase" | "forget";
+  status: string;
+  copyManifest: {
+    banks: Array<{ bankId: string; kind: string }>;
+    documents: Array<{
+      materialId: string;
+      segmentIndex: number;
+      documentId: string;
+    }>;
+  };
+  affectedMethods: ObjectRef[];
+  affectedExperienceIds: string[];
+  historicalMethods?: Array<{ id: string; revision: number }>;
+  lastError?: string;
+}
 interface Projection {
   id: string;
   revision: number;
@@ -123,6 +157,7 @@ interface Task {
   scopeId: string;
   callerId: string;
   ended: boolean;
+  endedAt?: string;
   createdAt: string;
   values: Record<string, string | string[]>;
   observations: Array<{
@@ -142,6 +177,7 @@ interface Task {
     occurredAt: string;
   }>;
   reassessmentCount?: number;
+  erasedObservationHashes?: string[];
 }
 interface RevisionReview {
   id: string;
@@ -216,8 +252,22 @@ export class CoreService {
       )
       .map((j) => j.inputDigest);
     const method = kind === "method" ? (value as Method) : undefined;
+    const experiences = await tx.list<Experience>("experience", [
+      value.scopeId,
+    ]);
     return {
       inputDigests,
+      objectKind: kind,
+      sourceRefs:
+        kind === "experience"
+          ? (value as Experience).sourceFingerprints
+          : [
+              ...new Set(
+                experiences
+                  .filter((e) => method!.supportRefs.some((r) => r.id === e.id))
+                  .flatMap((e) => e.sourceFingerprints),
+              ),
+            ],
       methodDigest: method
         ? digest({
             goal: method.goal,
@@ -284,6 +334,17 @@ export class CoreService {
         notifications: v.notifications,
       };
       await tx.put(entry("settings", next), old.revision || null);
+      if (v.review && !(await tx.get("review_schedule", v.scopeId)))
+        await tx.put(
+          entry("review_schedule", {
+            id: v.scopeId,
+            scopeId: v.scopeId,
+            revision: 1,
+            days: 7,
+            through: new Date().toISOString(),
+          }),
+          null,
+        );
       return next;
     });
   }
@@ -292,6 +353,8 @@ export class CoreService {
     input: unknown,
     key: string,
     sourceIdentity?: string,
+    transaction?: Transaction,
+    sourceFamily?: string,
   ) {
     const parsed = materialInputSchema.parse(input);
     this.authorize(p, parsed.scopeId);
@@ -321,12 +384,28 @@ export class CoreService {
     ]);
     const id = digest([p.id, key]);
     const hash = digest(data);
-    return this.store.transaction(async (tx) => {
+    const receive = async (tx: Transaction) => {
       const prev = await tx.get<{
         hash: string;
         materialId: string;
         jobId: string;
       }>("ingest", id);
+      if (p.channel === "host" && typeof data.context?.taskRef === "string") {
+        const task = await this.owned<Task>(
+          tx,
+          p,
+          "task",
+          data.context.taskRef,
+        );
+        if (task.callerId !== p.id || task.scopeId !== data.scopeId)
+          throw new ApiError("task_identity_mismatch", 403);
+        if (
+          data.segments.some((s) =>
+            task.erasedObservationHashes?.includes(digest(s.text)),
+          )
+        )
+          throw new ApiError("source_erased_from_task", 409);
+      }
       if (prev) {
         if (prev.hash !== hash) throw new Conflict("idempotency_conflict");
         return { ...prev, accepted: true, duplicate: true };
@@ -359,18 +438,72 @@ export class CoreService {
         createdAt: new Date().toISOString(),
         fingerprints: data.segments.map((s) => fingerprint(s, source)),
         sourceIdentity: source,
+        ...(p.channel === "host" && typeof data.context?.taskRef === "string"
+          ? { taskRef: data.context.taskRef }
+          : {}),
+        ...(sourceFamily
+          ? { sourceFamily: digest([data.scopeId, sourceFamily]) }
+          : p.channel === "host" && typeof data.context?.taskRef === "string"
+            ? { sourceFamily: digest([p.id, data.context.taskRef]) }
+            : {}),
       };
+      const blockedSources = new Set(
+        (await tx.list<Source>("source", [data.scopeId]))
+          .filter((s) => s.blocked)
+          .map((s) => s.id),
+      );
+      const taskMaterials =
+        p.channel === "host" && typeof data.context?.taskRef === "string"
+          ? (await tx.list<Material>("material", [data.scopeId]))
+              .filter(
+                (m) =>
+                  m.sourceFamily === material.sourceFamily &&
+                  m.taskRef === data.context!.taskRef &&
+                  !m.fingerprints.some((fp) => blockedSources.has(fp)),
+              )
+              .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          : [];
+      if (
+        taskMaterials.length >= 12 ||
+        byteSize([...taskMaterials, material]) > 131072
+      )
+        throw new ApiError("task_material_budget", 413);
+      if (material.taskRef) {
+        const sequenceId = digest([data.scopeId, material.taskRef]);
+        const counter = await tx.get<{
+          id: string;
+          revision: number;
+          scopeId: string;
+          sequence: number;
+        }>("task_material_sequence", sequenceId);
+        material.taskSequence = (counter?.sequence ?? 0) + 1;
+        await tx.put(
+          entry("task_material_sequence", {
+            id: sequenceId,
+            revision: (counter?.revision ?? 0) + 1,
+            scopeId: data.scopeId,
+            sequence: material.taskSequence,
+          }),
+          counter?.revision ?? null,
+        );
+      }
+      const learningMaterials = [...taskMaterials, material];
       const job: Job = {
         ...identity(data.scopeId),
-        kind: "case_review",
-        stage: "queued",
+        kind: taskMaterials.length ? "synthesis" : "case_review",
+        stage: taskMaterials.length ? "compose" : "queued",
         status: "queued",
-        materialIds: [material.id],
+        materialIds: learningMaterials.map((m) => m.id),
+        ...(material.taskSequence
+          ? { taskSequence: material.taskSequence }
+          : {}),
         results: [],
         decisions: [],
-        inputDigest: hash,
+        inputDigest: digest(learningMaterials.map((m) => m.fingerprints)),
         nativeIsolation: "job",
-        sourceRefs: material.fingerprints,
+        sourceRefs: [
+          ...new Set(learningMaterials.flatMap((m) => m.fingerprints)),
+        ],
         ...(data.caseFor ? { caseTarget: data.caseFor } : {}),
       };
       await tx.put(entry("material", { ...material, revision: 1 }), null);
@@ -382,7 +515,7 @@ export class CoreService {
           scopeId: data.scopeId,
           kind: "learning_job",
           jobId: job.id,
-          sourceRefs: material.fingerprints,
+          sourceRefs: job.sourceRefs!,
           state: "reserved",
           createdAt: job.createdAt,
         }),
@@ -420,7 +553,8 @@ export class CoreService {
         jobId: job.id,
         duplicate: false,
       };
-    });
+    };
+    return transaction ? receive(transaction) : this.store.transaction(receive);
   }
   async getJob(p: Principal, id: string) {
     return this.store.transaction(async (tx) => {
@@ -490,6 +624,97 @@ export class CoreService {
       return next;
     });
   }
+  async retryJob(
+    p: Principal,
+    id: string,
+    key: string,
+    transaction?: Transaction,
+  ) {
+    this.user(p);
+    if (!key || key.length > 128)
+      throw new ApiError("idempotency_key_required");
+    const retry = async (tx: Transaction) => {
+      const old = await this.owned<Job>(tx, p, "job", id);
+      const receiptId = digest([p.id, id, key]);
+      const previous = await tx.get<{ jobId: string }>("job_retry", receiptId);
+      if (previous)
+        return { accepted: true, jobId: previous.jobId, duplicate: true };
+      if (!["failed", "canceled"].includes(old.status))
+        throw new ApiError("job_not_retryable", 409);
+      if (
+        !(await this.settings(tx, old.scopeId)).learning ||
+        (await tx.get<ScopeBarrier>("scope_barrier", old.scopeId))?.pending
+      )
+        throw new ApiError("learning_unavailable", 409);
+      const sources = await tx.list<Source>("source", [old.scopeId]);
+      if (
+        !old.sourceRefs?.length ||
+        old.sourceRefs.some(
+          (fp) => !sources.some((s) => s.id === fp && !s.blocked),
+        )
+      )
+        throw new ApiError("source_reassessment_required", 409);
+      const retries = (await tx.list<Job>("job", [old.scopeId])).filter(
+        (j) =>
+          j.inputDigest === old.inputDigest &&
+          canonical(j.materialIds) === canonical(old.materialIds),
+      );
+      if (
+        retries.some((j) =>
+          ["queued", "running", "uncertain"].includes(j.status),
+        )
+      )
+        throw new ApiError("retry_already_running", 409);
+      if (
+        (await tx.list<Job>("job", [old.scopeId])).filter(
+          (j) =>
+            j.inputDigest === old.inputDigest &&
+            canonical(j.materialIds) === canonical(old.materialIds),
+        ).length >= 4
+      )
+        throw new ApiError("job_retry_budget", 409);
+      const job: Job = {
+        ...identity(old.scopeId),
+        kind: old.kind,
+        stage: old.materialIds.length === 1 ? "queued" : "compose",
+        status: "queued",
+        materialIds: old.materialIds,
+        inputDigest: old.inputDigest,
+        sourceRefs: old.sourceRefs,
+        nativeIsolation: "job",
+        results: [],
+        decisions: [],
+        ...(old.caseTarget ? { caseTarget: old.caseTarget } : {}),
+        ...(old.taskSequence ? { taskSequence: old.taskSequence } : {}),
+      };
+      await tx.put(entry("job", job), null);
+      await tx.put(
+        entry("engine_bank", {
+          id: this.engine.forJob(job.id).bank(job.scopeId),
+          revision: 1,
+          scopeId: job.scopeId,
+          kind: "learning_retry",
+          jobId: job.id,
+          sourceRefs: job.sourceRefs!,
+          state: "reserved",
+          createdAt: job.createdAt,
+        }),
+        null,
+      );
+      await tx.put(
+        entry("job_retry", {
+          id: receiptId,
+          revision: 1,
+          scopeId: job.scopeId,
+          jobId: job.id,
+          retryOf: old.id,
+        }),
+        null,
+      );
+      return { accepted: true, jobId: job.id, duplicate: false };
+    };
+    return transaction ? retry(transaction) : this.store.transaction(retry);
+  }
   async reviewTopic(p: Principal, scopeId: string, topic: string) {
     this.authorize(p, scopeId);
     return this.store.transaction(async (tx) => {
@@ -556,9 +781,11 @@ export class CoreService {
     try {
       if (scopes && Date.now() - this.maintenanceAt > 60000) {
         await new Effects(this.store).maintain(scopes);
+        await new Reviews(this.store).maintain(scopes);
         this.maintenanceAt = Date.now();
       }
       await this.advanceRevisionReviews(scopes);
+      await this.processSourceCleanups(scopes);
       await this.syncProjections(scopes);
       const all = await this.store.transaction((tx) =>
         tx.list<Job>("job", scopes),
@@ -579,6 +806,12 @@ export class CoreService {
           await this.updateJob(j.id, {
             status:
               e instanceof z.ZodError ||
+              (e instanceof ApiError &&
+                [
+                  "task_case_observation_omitted",
+                  "unbound_source_excerpt",
+                  "invalid_model_output",
+                ].includes(e.code)) ||
               (e instanceof HindsightError &&
                 e.statusCode &&
                 e.statusCode >= 400 &&
@@ -601,6 +834,22 @@ export class CoreService {
   private async advance(j: Job) {
     const engine =
       j.nativeIsolation === "job" ? this.engine.forJob(j.id) : this.engine;
+    if (j.cancelRequestedAt && j.nativeIsolation === "job") {
+      const bankId = engine.bank(j.scopeId);
+      await this.store.transaction(async (tx) => {
+        const bank = await tx.get<EngineBank>("engine_bank", bankId);
+        if (!bank) throw new ApiError("bank_registration_missing");
+        if (["reserved", "active"].includes(bank.state))
+          await tx.put(
+            entry("engine_bank", mutate(bank, { state: "closing" })),
+            bank.revision,
+          );
+      });
+      const result = await engine.drainRegisteredBank(bankId);
+      if (result.drained)
+        await this.updateJob(j.id, { status: "canceled", stage: "done" });
+      return;
+    }
     if (
       (
         await this.store.transaction((tx) =>
@@ -689,6 +938,14 @@ export class CoreService {
         ]),
       ].filter((id): id is string => !!id)) {
         const op = await engine.operation(j.scopeId, id);
+        if (op.status === "not_found" && j.nativeIsolation === "job") {
+          const closed = await engine.cancelRetainSubmission(j.scopeId, id);
+          if (
+            closed.submission_canceled &&
+            closed.operation_status === "not_found"
+          )
+            continue;
+        }
         if (op.status === "pending") await engine.cancel(j.scopeId, id);
         if (!["completed", "failed", "cancelled"].includes(op.status)) return;
       }
@@ -722,6 +979,10 @@ export class CoreService {
     if (j.stage === "extract") {
       if (!j.operationId) throw new ApiError("missing_native_operation");
       const op = await engine.operation(j.scopeId, j.operationId);
+      if (op.status === "not_found" && j.nativeIsolation === "job") {
+        await engine.retain(materials[0]!, j.operationId);
+        return;
+      }
       if (op.status === "failed" || op.status === "cancelled") {
         await this.updateJob(j.id, {
           status: "failed",
@@ -741,9 +1002,16 @@ export class CoreService {
         await engine.stageEvidence(j.scopeId, materials);
         j = await this.updateJob(j.id, { evidenceStaged: true }, true);
       }
-      const existing = await this.store.transaction((tx) =>
-        tx.list<Method>("method", [j.scopeId]),
-      );
+      const existing = await this.store.transaction(async (tx) => {
+        const data = await this.eligibility(tx, {
+          id: "learning",
+          channel: "host",
+          scopes: [j.scopeId],
+        });
+        return (await tx.list<Method>("method", [j.scopeId]))
+          .filter((method) => eligible(method, data))
+          .slice(-20);
+      });
       const modelId = `job-${j.id}`;
       if (j.nativeIsolation === "job")
         await this.store.transaction(async (tx) => {
@@ -755,6 +1023,18 @@ export class CoreService {
             sourceRefs: string[];
           }>("engine_bank", bankId);
           if (bank) {
+            const currentJob = await tx.get<Job>("job", j.id);
+            const barrier = await tx.get<ScopeBarrier>(
+              "scope_barrier",
+              j.scopeId,
+            );
+            const ownedBank = bank as EngineBank;
+            if (
+              barrier?.pending ||
+              currentJob?.cancelRequestedAt ||
+              !["reserved", "active"].includes(ownedBank.state)
+            )
+              throw new ApiError("source_cleanup_in_progress", 409);
             const experiences = await tx.list<Experience>("experience", [
               j.scopeId,
             ]);
@@ -771,6 +1051,9 @@ export class CoreService {
                   .flatMap((e) => e.sourceFingerprints),
               ]),
             ];
+            const sources = await tx.list<Source>("source", [j.scopeId]);
+            if (sources.some((s) => s.blocked && sourceRefs.includes(s.id)))
+              throw new ApiError("source_changed_before_compose", 409);
             await tx.put(
               entry("engine_bank", {
                 ...bank,
@@ -891,6 +1174,37 @@ export class CoreService {
         !["running", "uncertain"].includes(j.status)
       )
         return;
+      const inputTask = materials[0]?.taskRef;
+      if (
+        inputTask &&
+        j.taskSequence &&
+        materials.every((m) => m.taskRef === inputTask)
+      ) {
+        const bindingId = digest([j.scopeId, "host-task", inputTask]);
+        const binding = await tx.get<{ taskSequence?: number }>(
+          "case_binding",
+          bindingId,
+        );
+        if ((binding?.taskSequence ?? 0) > j.taskSequence) {
+          await tx.put(
+            entry(
+              "job",
+              mutate(j, {
+                status: "completed",
+                stage: "done",
+                decisions: [
+                  {
+                    disposition: "merge",
+                    reason: "newer_task_materials_already_published",
+                  },
+                ],
+              }),
+            ),
+            j.revision,
+          );
+          return;
+        }
+      }
       const sourceMap = new Map(
         materials.flatMap((m) =>
           m.segments.map((s, i) => [m.fingerprints[i]!, s] as const),
@@ -933,17 +1247,53 @@ export class CoreService {
       const results: ObjectRef[] = [];
       let caseRef: ObjectRef | undefined;
       if (output.workCase) {
-        const caseBindingId = digest([
-          j.scopeId,
-          ...materials.map((m) => m.id).sort(),
-        ]);
+        const taskRef = materials[0]?.taskRef;
+        const sameTask =
+          typeof taskRef === "string" &&
+          materials.every(
+            (m) =>
+              m.sourceFamily &&
+              m.sourceFamily === materials[0]!.sourceFamily &&
+              m.taskRef === taskRef,
+          );
+        const task = sameTask ? await tx.get<Task>("task", taskRef) : undefined;
+        const caseBindingId =
+          task && task.scopeId === j.scopeId
+            ? digest([j.scopeId, "host-task", task.id])
+            : digest([j.scopeId, ...materials.map((m) => m.id).sort()]);
         const existingBinding = await tx.get<{ caseId: string }>(
           "case_binding",
           caseBindingId,
         );
+        const generation = existingBinding as
+          | { caseId: string; materialIds?: string[]; taskSequence?: number }
+          | undefined;
+        if (
+          task &&
+          generation?.taskSequence &&
+          j.taskSequence &&
+          generation.taskSequence > j.taskSequence
+        ) {
+          const stale = mutate(j, {
+            status: "completed",
+            stage: "done",
+            decisions: [
+              {
+                disposition: "merge",
+                reason: "newer_task_materials_already_published",
+              },
+            ],
+          });
+          await tx.put(entry("job", stale), j.revision);
+          return;
+        }
         const oldCase = j.caseTarget
           ? await tx.get<WorkCase>("work_case", j.caseTarget.id)
           : undefined;
+        const taskCase =
+          task && existingBinding
+            ? await tx.get<WorkCase>("work_case", existingBinding.caseId)
+            : undefined;
         if (
           j.caseTarget &&
           (!oldCase ||
@@ -952,6 +1302,33 @@ export class CoreService {
         )
           throw new Conflict("case_target_changed");
         const bound = bindEvidence(output.workCase.evidence);
+        if (taskCase) {
+          const retained = taskCase.evidence.filter((e) =>
+            indexedSources.some((s) => s.fingerprint === e.fingerprint),
+          );
+          if (
+            retained.some(
+              (e) =>
+                !bound.some(
+                  (b) =>
+                    b.fingerprint === e.fingerprint && b.excerpt === e.excerpt,
+                ),
+            ) ||
+            taskCase.attempts.some(
+              (a) =>
+                a.evidenceIndexes.every((i) =>
+                  retained.includes(taskCase.evidence[i]!),
+                ) &&
+                !output.workCase!.attempts.some(
+                  (next) =>
+                    next.action === a.action &&
+                    next.observation === a.observation &&
+                    next.outcome === a.outcome,
+                ),
+            )
+          )
+            throw new ApiError("task_case_observation_omitted", 409);
+        }
         const c: WorkCase = workCaseSchema.parse({
           ...output.workCase,
           evidence: oldCase ? [...oldCase.evidence, ...bound] : bound,
@@ -981,12 +1358,47 @@ export class CoreService {
                 revision: oldCase.revision + 1,
                 createdAt: oldCase.createdAt,
               }
-            : identity(j.scopeId)),
+            : taskCase
+              ? {
+                  ...identity(j.scopeId),
+                  id: taskCase.id,
+                  revision: taskCase.revision + 1,
+                  createdAt: taskCase.createdAt,
+                }
+              : identity(j.scopeId)),
           sourceFamily:
-            oldCase?.sourceFamily ?? digest(materials[0]!.sourceIdentity),
-          methodUses: oldCase?.methodUses ?? [],
+            oldCase?.sourceFamily ??
+            materials[0]!.sourceFamily ??
+            digest(materials[0]!.sourceIdentity),
+          ...(task ? { taskRef: task.id } : {}),
+          methodUses: task
+            ? (
+                await tx.list<WorkCase["methodUses"][number]>("method_use", [
+                  j.scopeId,
+                ])
+              )
+                .filter((use) => use.taskRef === task.id)
+                .slice(-8)
+                .map(
+                  ({
+                    methodUseRef,
+                    taskRef,
+                    callerId,
+                    method,
+                    stepIds,
+                    returnedAt,
+                  }) => ({
+                    methodUseRef,
+                    taskRef,
+                    callerId,
+                    method,
+                    stepIds,
+                    returnedAt,
+                  }),
+                )
+            : (oldCase?.methodUses ?? []),
         });
-        if (existingBinding && !oldCase) {
+        if (existingBinding && !oldCase && !taskCase) {
           const existing = await tx.get<WorkCase>(
             "work_case",
             existingBinding.caseId,
@@ -994,7 +1406,10 @@ export class CoreService {
           if (existing) caseRef = ref("work_case", existing);
         }
         if (!caseRef) {
-          await tx.put(entry("work_case", c), oldCase?.revision ?? null);
+          await tx.put(
+            entry("work_case", c),
+            oldCase?.revision ?? taskCase?.revision ?? null,
+          );
           caseRef = ref("work_case", c);
           if (!existingBinding)
             await tx.put(
@@ -1003,9 +1418,36 @@ export class CoreService {
                 revision: 1,
                 scopeId: j.scopeId,
                 caseId: c.id,
+                ...(task
+                  ? {
+                      materialIds: j.materialIds,
+                      taskSequence: j.taskSequence ?? 0,
+                    }
+                  : {}),
               }),
               null,
             );
+          else if (task) {
+            const binding = await tx.get<{
+              id: string;
+              revision: number;
+              scopeId: string;
+              caseId: string;
+              materialIds?: string[];
+              taskSequence?: number;
+            }>("case_binding", caseBindingId);
+            if (binding)
+              await tx.put(
+                entry(
+                  "case_binding",
+                  mutate(binding, {
+                    materialIds: j.materialIds,
+                    taskSequence: j.taskSequence ?? 0,
+                  }),
+                ),
+                binding.revision,
+              );
+          }
         }
         results.push(caseRef);
       }
@@ -1182,6 +1624,14 @@ export class CoreService {
     );
     for (const projection of pending) {
       try {
+        if (
+          (
+            await this.store.transaction((tx) =>
+              tx.get<ScopeBarrier>("scope_barrier", projection.scopeId),
+            )
+          )?.pending
+        )
+          continue;
         if (projection.objectKind === "experience") {
           const experience = await this.store.transaction((tx) =>
             tx.get<Experience>("experience", projection.id),
@@ -1189,6 +1639,30 @@ export class CoreService {
           if (!experience || experience.revision !== projection.objectRevision)
             continue;
           await this.store.transaction(async (tx) => {
+            const current = await tx.get<Experience>(
+              "experience",
+              experience.id,
+            );
+            const barrier = await tx.get<ScopeBarrier>(
+              "scope_barrier",
+              experience.scopeId,
+            );
+            const sources = await tx.list<Source>("source", [
+              experience.scopeId,
+            ]);
+            if (
+              barrier?.pending ||
+              current?.revision !== experience.revision ||
+              current.state !== "active" ||
+              sources.some(
+                (s) =>
+                  s.blocked && experience.sourceFingerprints.includes(s.id),
+              )
+            )
+              throw new ApiError(
+                "source_changed_before_support_retention",
+                409,
+              );
             for (const evidence of experience.evidence) {
               const id = this.engine.supportBank(
                 experience.scopeId,
@@ -1274,7 +1748,7 @@ export class CoreService {
   async listSources(p: Principal) {
     return this.store.transaction((tx) => tx.list<Source>("source", p.scopes));
   }
-  async controlSource(p: Principal, input: unknown) {
+  async controlSource(p: Principal, input: unknown, transaction?: Transaction) {
     this.user(p);
     const v = z
       .object({
@@ -1284,7 +1758,7 @@ export class CoreService {
       })
       .strict()
       .parse(input);
-    const accepted = await this.store.transaction(async (tx) => {
+    const control = async (tx: Transaction) => {
       const source = await this.owned<Source>(tx, p, "source", v.id);
       if (source.revision !== v.expectedRevision) throw new Conflict();
       const next = mutate(source, {
@@ -1294,11 +1768,49 @@ export class CoreService {
       await tx.put(entry("source", next), source.revision);
       const blocked = new Set<string>();
       const affectedMethods: Method[] = [];
+      const removedMethods: ObjectRef[] = [];
+      for (const control of await tx.list<{
+        id: string;
+        objectKind?: string;
+        sourceRefs?: string[];
+      }>("control", [source.scopeId])) {
+        if (!control.sourceRefs?.includes(source.id)) continue;
+        if (control.objectKind === "experience") blocked.add(control.id);
+        if (control.objectKind === "method")
+          removedMethods.push({ kind: "method", id: control.id, revision: 1 });
+      }
+      const currentExperiences = await tx.list<Experience>("experience", [
+        source.scopeId,
+      ]);
+      const currentMethodIds = new Set(
+        (await tx.list<Method>("method", [source.scopeId])).map((m) => m.id),
+      );
+      const sourceMaterials = (
+        await tx.list<Material>("material", [source.scopeId])
+      ).filter((m) => m.fingerprints.includes(source.id));
+      for (const job of await tx.list<Job>("job", [source.scopeId]))
+        if (
+          job.sourceRefs?.includes(source.id) ||
+          sourceMaterials.some((m) => job.materialIds.includes(m.id))
+        )
+          for (const result of job.results) {
+            if (
+              result.kind === "experience" &&
+              !currentExperiences.some((e) => e.id === result.id)
+            )
+              blocked.add(result.id);
+            if (
+              result.kind === "method" &&
+              !currentMethodIds.has(result.id) &&
+              !removedMethods.some((m) => m.id === result.id)
+            )
+              removedMethods.push(result);
+          }
       for (const e of await tx.list<Experience>("experience", [source.scopeId]))
         if (e.sourceFingerprints.includes(source.id)) {
           blocked.add(e.id);
           const held = mutate(e, {
-            state: "held",
+            state: e.state === "disabled" ? "disabled" : "held",
             review: {
               reason: "source_changed",
               question: "Reassess after source withdrawal",
@@ -1311,7 +1823,7 @@ export class CoreService {
         if (m.supportRefs.some((r) => blocked.has(r.id))) {
           affectedMethods.push(m);
           const held = mutate(m, {
-            state: "held",
+            state: m.state === "disabled" ? "disabled" : "held",
             review: {
               reason: "source_changed",
               question: "Reassess method support after source withdrawal",
@@ -1322,15 +1834,26 @@ export class CoreService {
           await tx.put(entry("method", held), m.revision);
         }
       const jobs = await tx.list<Job>("job", [source.scopeId]);
+      const historicalMethods = (
+        await tx.listHistory<Method>("method", source.scopeId)
+      )
+        .filter((m) => m.supportRefs.some((r) => blocked.has(r.id)))
+        .map((m) => ({ id: m.id, revision: m.revision }));
       const materials = await tx.list<Material>("material", [source.scopeId]);
       const materialIds = new Set(
         materials
           .filter((m) => m.fingerprints.includes(source.id))
           .map((m) => m.id),
       );
-      const affectedMethodIds = new Set(affectedMethods.map((m) => m.id));
+      const affectedMethodIds = new Set(
+        [...affectedMethods, ...historicalMethods].map((m) => m.id),
+      );
+      const banks = await tx.list<EngineBank>("engine_bank", [source.scopeId]);
       const affectedJob = (j: Job) =>
         j.materialIds.some((id) => materialIds.has(id)) ||
+        banks.some(
+          (b) => b.jobId === j.id && b.sourceRefs.includes(source.id),
+        ) ||
         j.comparedMethodRefs?.some((r) => affectedMethodIds.has(r.id)) === true;
       for (const j of jobs)
         if (
@@ -1343,6 +1866,18 @@ export class CoreService {
           });
           await tx.put(entry("job", canceled), j.revision);
         }
+      if (v.action !== "withdraw")
+        for (const bank of await tx.list<EngineBank>("engine_bank", [
+          source.scopeId,
+        ]))
+          if (
+            bank.sourceRefs.includes(source.id) &&
+            !["erasing", "erased"].includes(bank.state)
+          )
+            await tx.put(
+              entry("engine_bank", mutate(bank, { state: "erasing" })),
+              bank.revision,
+            );
       const barrier = await tx.get<ScopeBarrier>(
         "scope_barrier",
         source.scopeId,
@@ -1400,8 +1935,12 @@ export class CoreService {
           nativeHistoryCoverage: "unconfirmed",
           traceCoverage: "unconfirmed",
         },
-        affectedMethods: affectedMethods.map((m) => ref("method", m)),
+        affectedMethods: [
+          ...affectedMethods.map((m) => ref("method", m)),
+          ...removedMethods,
+        ],
         affectedExperienceIds: [...blocked],
+        historicalMethods,
       };
       await tx.put(entry("source_cleanup", operation), null);
       return {
@@ -1411,8 +1950,405 @@ export class CoreService {
         sourceRevision: next.revision,
         scopeId: source.scopeId,
       };
-    });
-    return accepted;
+    };
+    return transaction ? control(transaction) : this.store.transaction(control);
+  }
+  async processSourceCleanups(scopes?: string[]) {
+    const cleanups = await this.store.transaction(async (tx) =>
+      (await tx.list<SourceCleanup>("source_cleanup", scopes))
+        .filter((c) => c.status === "pending")
+        .slice(0, 4),
+    );
+    for (const cleanup of cleanups) {
+      const note = async (reason: string) =>
+        this.store.transaction(async (tx) => {
+          const current = await tx.get<SourceCleanup>(
+            "source_cleanup",
+            cleanup.id,
+          );
+          if (current?.status === "pending" && current.lastError !== reason)
+            await tx.put(
+              entry("source_cleanup", mutate(current, { lastError: reason })),
+              current.revision,
+            );
+        });
+      const banks = await this.store.transaction(async (tx) =>
+        (await tx.list<EngineBank>("engine_bank", [cleanup.scopeId])).filter(
+          (b) => b.sourceRefs.includes(cleanup.sourceId),
+        ),
+      );
+      const jobs = await this.store.transaction((tx) =>
+        tx.list<Job>("job", [cleanup.scopeId]),
+      );
+      const materialIds = new Set(
+        cleanup.copyManifest.documents.map((d) => d.materialId),
+      );
+      if (
+        jobs.some(
+          (j) =>
+            j.nativeIsolation !== "job" &&
+            (j.sourceRefs?.includes(cleanup.sourceId) ||
+              j.materialIds.some((id) => materialIds.has(id))),
+        )
+      ) {
+        await note("legacy_native_cleanup_requires_migration");
+        continue;
+      }
+      if (
+        jobs.some(
+          (j) =>
+            banks.some((b) => b.jobId === j.id) &&
+            ["queued", "running", "uncertain"].includes(j.status),
+        )
+      ) {
+        await note("waiting_for_native_jobs");
+        continue;
+      }
+      let ready = true;
+      for (const bank of banks) {
+        if (bank.state === "erased") continue;
+        try {
+          if (bank.kind === "revision_review") {
+            const drained = await this.engine.drainRegisteredBank(bank.id);
+            if (!drained.drained) {
+              ready = false;
+              await note("waiting_for_revision_review");
+              break;
+            }
+          }
+          const receipt = await this.engine.eraseRegisteredBank(
+            bank.id,
+            bank.revision,
+          );
+          if (!receipt.erased) {
+            ready = false;
+            break;
+          }
+          await this.store.transaction(async (tx) => {
+            const current = await tx.get<EngineBank>("engine_bank", bank.id);
+            if (!current || current.revision !== bank.revision)
+              throw new Conflict();
+            await tx.put(
+              entry(
+                "engine_bank",
+                mutate(current, { state: "erased", cleanupReceipt: receipt }),
+              ),
+              current.revision,
+            );
+          });
+        } catch {
+          await note("native_erasure_unconfirmed");
+          ready = false;
+          break;
+        }
+      }
+      if (!ready) continue;
+      try {
+        for (const id of cleanup.affectedExperienceIds)
+          await this.engine.deleteAllProjectionRevisions(
+            cleanup.scopeId,
+            "experience",
+            id,
+          );
+        for (const object of [
+          ...cleanup.affectedMethods,
+          ...(cleanup.historicalMethods ?? []),
+        ])
+          await this.engine.deleteAllProjectionRevisions(
+            cleanup.scopeId,
+            "method",
+            object.id,
+          );
+      } catch {
+        await note("projection_erasure_unconfirmed");
+        continue;
+      }
+      await this.store.transaction(async (tx) => {
+        const current = await tx.get<SourceCleanup>(
+          "source_cleanup",
+          cleanup.id,
+        );
+        const source = await tx.get<Source>("source", cleanup.sourceId);
+        if (!current || current.status !== "pending" || !source) return;
+        const ledger = (
+          await tx.list<EngineBank>("engine_bank", [cleanup.scopeId])
+        ).filter((b) => b.sourceRefs.includes(source.id));
+        if (ledger.some((b) => b.state !== "erased")) return;
+        const taskCopies = new Map<string, string[]>();
+        // Preserve other segments at the same index; tombstones never re-enter learning.
+        for (const material of await tx.list<Material & { revision: number }>(
+          "material",
+          [cleanup.scopeId],
+        ))
+          if (material.fingerprints.includes(source.id)) {
+            if (typeof material.context?.taskRef === "string") {
+              const texts = taskCopies.get(material.context.taskRef) ?? [];
+              texts.push(
+                ...material.segments
+                  .filter((_, i) => material.fingerprints[i] === source.id)
+                  .map((s) => s.text),
+              );
+              taskCopies.set(material.context.taskRef, texts);
+            }
+            const next = mutate(material, {
+              context:
+                typeof material.context?.taskRef === "string"
+                  ? { taskRef: material.context.taskRef }
+                  : {},
+              segments: material.segments.map((s, i) =>
+                material.fingerprints[i] === source.id
+                  ? { text: "[erased source]", role: s.role }
+                  : s,
+              ),
+            });
+            await tx.put(entry("material", next), material.revision);
+          }
+        for (const experience of await tx.list<Experience>("experience", [
+          cleanup.scopeId,
+        ]))
+          if (experience.sourceFingerprints.includes(source.id)) {
+            const remaining = experience.evidence.map((e) =>
+              e.fingerprint === source.id
+                ? {
+                    excerpt: "[erased source]",
+                    role: e.role,
+                    relation: e.relation,
+                    fingerprint: e.fingerprint,
+                  }
+                : e,
+            );
+            const next = mutate(experience, {
+              conclusion:
+                "Source removed; claim unavailable pending reassessment",
+              evidence: remaining,
+              topics: [],
+              entities: [],
+              conditions: [],
+              exceptions: [],
+              applicability: "unknown",
+              state: "disabled",
+              review: undefined,
+            });
+            delete next.review;
+            await tx.put(entry("experience", next), experience.revision);
+            const projection = await tx.get<Projection>(
+              "projection",
+              experience.id,
+            );
+            if (projection)
+              await tx.remove("projection", experience.id, projection.revision);
+          }
+        for (const object of cleanup.affectedMethods) {
+          const method = await tx.get<Method>("method", object.id);
+          if (method) {
+            const next = mutate(method, {
+              title: "Method unavailable after source removal",
+              goal: "Reassess remaining sources before use",
+              steps: method.steps.map((s) => ({
+                stepId: s.stepId,
+                supportIndexes: s.supportIndexes,
+                instruction: "Source removed; step unavailable",
+              })),
+              topics: [],
+              conditions: [],
+              exceptions: [],
+              applicability: "unknown",
+              completionChecks: [
+                { text: "Source removed; verification unavailable" },
+              ],
+              stopConditions: [],
+              change: {
+                ...method.change,
+                summary: "Source removed",
+                caseRefs: [],
+                predecessors: [],
+              },
+              state: "disabled",
+              review: undefined,
+            });
+            delete next.review;
+            await tx.put(entry("method", next), method.revision);
+            await tx.eraseHistory("method", method.id);
+          }
+          const projection = await tx.get<Projection>("projection", object.id);
+          if (projection)
+            await tx.remove("projection", object.id, projection.revision);
+        }
+        for (const historical of cleanup.historicalMethods ?? []) {
+          await tx.eraseHistoryRevisions("method", historical.id, [
+            historical.revision,
+          ]);
+          if (!cleanup.affectedMethods.some((m) => m.id === historical.id)) {
+            const projection = await tx.get<Projection>(
+              "projection",
+              historical.id,
+            );
+            if (projection)
+              await tx.put(
+                entry("projection", mutate(projection, { confirmed: false })),
+                projection.revision,
+              );
+          }
+        }
+        for (const workCase of await tx.list<WorkCase>("work_case", [
+          cleanup.scopeId,
+        ]))
+          if (workCase.evidence.some((e) => e.fingerprint === source.id)) {
+            const next = mutate(workCase, {
+              evidence: workCase.evidence.map((e) =>
+                e.fingerprint === source.id
+                  ? { ...e, excerpt: "[erased source]" }
+                  : e,
+              ),
+              attempts: [],
+              result: {
+                status: "unknown",
+                summary: "Source removed",
+                evidenceIndexes: [],
+              },
+              goal: "Source removed",
+              topic: "Source removed",
+              coverage: [],
+              unresolved: [],
+              context: {},
+            });
+            await tx.put(entry("work_case", next), workCase.revision);
+          }
+        for (const job of await tx.list<Job>("job", [cleanup.scopeId]))
+          if (
+            job.sourceRefs?.includes(source.id) ||
+            job.materialIds.some((id) => materialIds.has(id)) ||
+            banks.some((b) => b.jobId === job.id)
+          ) {
+            const next = mutate(job, { decisions: [] });
+            delete next.candidate;
+            delete next.verdict;
+            delete next.modelQuery;
+            delete next.assessmentQuery;
+            await tx.put(entry("job", next), job.revision);
+          }
+        for (const review of await tx.list<RevisionReview>("revision_review", [
+          cleanup.scopeId,
+        ]))
+          if (
+            cleanup.affectedMethods.some((m) => m.id === review.target.id) ||
+            banks.some((b) => b.reviewId === review.id)
+          ) {
+            const next = mutate(review, {
+              reason: "Source removed",
+              status: "failed",
+            });
+            await tx.put(entry("revision_review", next), review.revision);
+          }
+        const erasedTaskDigests = new Set<string>();
+        for (const [taskId, texts] of taskCopies) {
+          const task = await tx.get<Task>("task", taskId);
+          if (!task || task.scopeId !== cleanup.scopeId) continue;
+          erasedTaskDigests.add(digest(task.rawObservations ?? []));
+          const hashes = new Set([
+            ...(task.erasedObservationHashes ?? []),
+            ...texts.map((t) => digest(t)),
+          ]);
+          const next = mutate(task, {
+            rawObservations:
+              task.rawObservations?.filter(
+                (o) => !hashes.has(digest(o.text)),
+              ) ?? [],
+            observations: [],
+            values: {},
+            erasedObservationHashes: [...hashes],
+          });
+          await tx.put(entry("task", next), task.revision);
+          this.preparation.endTask(task.callerId, task.id);
+        }
+        for (const kind of ["feedback", "task_assessment"]) {
+          for (const record of await tx.list<{
+            id: string;
+            scopeId: string;
+            revision: number;
+          }>(kind, [cleanup.scopeId])) {
+            if (
+              JSON.stringify(record).includes(cleanup.sourceId) ||
+              (kind === "task_assessment" &&
+                taskCopies.size > 0 &&
+                (!("taskRef" in record) ||
+                  taskCopies.has(String(record.taskRef)))) ||
+              [...erasedTaskDigests].some((d) =>
+                JSON.stringify(record).includes(d),
+              ) ||
+              cleanup.affectedMethods.some((m) =>
+                JSON.stringify(record).includes(m.id),
+              )
+            )
+              await tx.remove(kind, record.id, record.revision);
+          }
+        }
+        for (const effect of await tx.list<{
+          id: string;
+          revision: number;
+          scopeId: string;
+          callerId: string;
+          taskRef: string;
+          events: Array<{ eventId: string; text: string; method?: ObjectRef }>;
+        }>("effect_task", [cleanup.scopeId])) {
+          const texts = taskCopies.get(effect.taskRef) ?? [];
+          const removed = effect.events.filter(
+            (e) =>
+              texts.includes(e.text) ||
+              cleanup.affectedMethods.some((m) => m.id === e.method?.id),
+          );
+          if (!removed.length) continue;
+          for (const event of removed) {
+            const key = digest([
+              effect.callerId,
+              effect.scopeId,
+              event.eventId,
+            ]);
+            const seen = await tx.get<{
+              id: string;
+              revision: number;
+              scopeId: string;
+              cleared: boolean;
+            }>("effect_event", key);
+            if (seen)
+              await tx.put(
+                entry("effect_event", mutate(seen, { cleared: true })),
+                seen.revision,
+              );
+          }
+          await tx.put(
+            entry(
+              "effect_task",
+              mutate(effect, {
+                events: effect.events.filter((e) => !removed.includes(e)),
+              }),
+            ),
+            effect.revision,
+          );
+        }
+        await tx.put(
+          entry("source", mutate(source, { erased: true })),
+          source.revision,
+        );
+        const completed = mutate(current, { status: "completed" });
+        delete completed.lastError;
+        await tx.put(entry("source_cleanup", completed), current.revision);
+        const remaining = (
+          await tx.list<SourceCleanup>("source_cleanup", [cleanup.scopeId])
+        ).some((c) => c.id !== cleanup.id && c.status === "pending");
+        if (!remaining) {
+          const barrier = await tx.get<ScopeBarrier>(
+            "scope_barrier",
+            cleanup.scopeId,
+          );
+          if (barrier)
+            await tx.put(
+              entry("scope_barrier", mutate(barrier, { pending: false })),
+              barrier.revision,
+            );
+        }
+      });
+    }
   }
   async inspect(p: Principal, kind: string, id: string) {
     return this.store.transaction((tx) => this.owned(tx, p, kind, id));
@@ -1651,6 +2587,8 @@ export class CoreService {
       const t = await this.owned<Task>(tx, p, "task", v.taskRef);
       if (t.callerId !== p.id)
         throw new ApiError("task_identity_mismatch", 403);
+      if (t.erasedObservationHashes?.includes(digest(v.text)))
+        throw new ApiError("observation_erased", 409);
       const prior = t.observations.find((o) => o.id === v.eventId);
       const event = {
         id: v.eventId,
@@ -1671,6 +2609,7 @@ export class CoreService {
         values: { ...t.values, ...v.values },
         observations: [...t.observations, event],
         ended: !!v.ended,
+        ...(v.ended ? { endedAt: new Date().toISOString() } : {}),
       });
       if (byteSize(next) > 65536)
         throw new ApiError("task_observations_too_large", 413);
@@ -1686,7 +2625,7 @@ export class CoreService {
         taskRef: z.string(),
         eventId: z.string().max(128),
         text: z.string().min(1).max(16000),
-        occurredAt: z.string().datetime(),
+        occurredAt: z.string().datetime().optional(),
       })
       .strict()
       .parse(input);
@@ -1694,12 +2633,14 @@ export class CoreService {
       const task = await this.owned<Task>(tx, p, "task", v.taskRef);
       if (task.callerId !== p.id || task.ended)
         throw new ApiError("task_unavailable", 409);
+      if (task.erasedObservationHashes?.includes(digest(v.text)))
+        throw new ApiError("observation_erased", 409);
       const raw = task.rawObservations ?? [];
       const old = raw.find((e) => e.eventId === v.eventId);
       if (old) {
         if (
-          digest(old) !==
-          digest({ eventId: v.eventId, text: v.text, occurredAt: v.occurredAt })
+          old.text !== v.text ||
+          (v.occurredAt !== undefined && old.occurredAt !== v.occurredAt)
         )
           throw new Conflict("event_conflict");
         return { accepted: true, duplicate: true };
@@ -1707,7 +2648,11 @@ export class CoreService {
       const next = mutate(task, {
         rawObservations: [
           ...raw,
-          { eventId: v.eventId, text: v.text, occurredAt: v.occurredAt },
+          {
+            eventId: v.eventId,
+            text: v.text,
+            occurredAt: v.occurredAt ?? new Date().toISOString(),
+          },
         ],
       });
       if (byteSize(next) > 65536 || next.rawObservations!.length > 16)
@@ -1890,6 +2835,7 @@ export class CoreService {
           id: key,
           revision: 1,
           scopeId: task.scopeId,
+          taskRef: task.id,
           result,
         }),
         null,
@@ -1963,7 +2909,20 @@ export class CoreService {
           adoption: "unknown",
           outcome: "unknown",
         };
-        await tx.put(entry("method_use", use), null);
+        const storedUse = {
+          ...use,
+          id: digest([
+            t.id,
+            p.id,
+            m.id,
+            m.revision,
+            prepared.methodUseRef,
+            use.stepIds,
+            v.requestId ?? null,
+          ]),
+        };
+        if (!(await tx.get("method_use", storedUse.id)))
+          await tx.put(entry("method_use", storedUse), null);
       }
       return prepared;
     });
@@ -2078,6 +3037,8 @@ export class CoreService {
     return this.store.transaction(async (tx) => {
       const old = await this.owned<Method>(tx, p, "method", id);
       if (old.revision !== expected) throw new Conflict();
+      if ((await tx.get<ScopeBarrier>("scope_barrier", old.scopeId))?.pending)
+        throw new ApiError("source_cleanup_in_progress", 409);
       const next = methodSchema.parse({
         ...old,
         ...(body as object),
@@ -2124,6 +3085,9 @@ export class CoreService {
             .flatMap((e) => e.sourceFingerprints),
         ),
       ];
+      const sources = await tx.list<Source>("source", [old.scopeId]);
+      if (sources.some((s) => s.blocked && sourceRefs.includes(s.id)))
+        throw new ApiError("source_reassessment_required", 409);
       await tx.put(
         entry("engine_bank", {
           id: this.engine.forJob(review.id).bank(old.scopeId),
@@ -2409,6 +3373,7 @@ export class CoreService {
           revision: (control?.revision ?? 0) + 1,
           scopeId: old.scopeId,
           reason: "user_deleted",
+          ...(await this.controlBinding(tx, kind, old)),
           inputDigests,
           methodDigest: method
             ? digest({

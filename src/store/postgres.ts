@@ -89,6 +89,19 @@ export class Transaction {
       [kind, id],
     );
   }
+  async listHistory<T>(kind: string, scopeId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT value FROM lessonloop.history WHERE kind=$1 AND value->>'scopeId'=$2",
+      [kind, scopeId],
+    );
+    return result.rows.map((row) => row.value as T);
+  }
+  async eraseHistoryRevisions(kind: string, id: string, revisions: number[]) {
+    await this.db.query(
+      "DELETE FROM lessonloop.history WHERE kind=$1 AND id=$2 AND revision=ANY($3::bigint[])",
+      [kind, id, revisions],
+    );
+  }
 }
 export class ProductStore {
   private readonly pool: pg.Pool;

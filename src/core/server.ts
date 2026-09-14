@@ -6,6 +6,17 @@ import { z } from "zod";
 import { ApiError, CoreService, type Principal } from "./service.js";
 import { Conflict } from "../store/postgres.js";
 import { Effects } from "./effects.js";
+import { Reviews } from "./reviews.js";
+import { SampleConnector } from "../connectors/sample.js";
+const connectors = new WeakMap<CoreService, SampleConnector>();
+function sample(core: CoreService) {
+  let connector = connectors.get(core);
+  if (!connector) {
+    connector = new SampleConnector(core, core.store);
+    connectors.set(core, connector);
+  }
+  return connector;
+}
 
 export interface Credential {
   token: string;
@@ -24,6 +35,40 @@ export async function dispatch(
 ) {
   const input = raw ?? {};
   switch (operation) {
+    case "connector.add":
+      return sample(core).add(p, input);
+    case "connector.list":
+      return sample(core).list(p);
+    case "connector.sync":
+      return sample(core).sync(p, identifier.parse(input).id);
+    case "connector.bindings":
+      return sample(core).bindings(p, identifier.parse(input).id);
+    case "connector.state": {
+      const v = z
+        .object({
+          id: z.string(),
+          expectedRevision: z.number().int().positive(),
+          status: z.enum(["active", "paused", "removed"]),
+        })
+        .strict()
+        .parse(input);
+      return sample(core).state(p, v.id, v.expectedRevision, v.status);
+    }
+    case "connector.forget": {
+      const v = z
+        .object({ id: z.string(), sourceKey: z.string().min(1).max(128) })
+        .strict()
+        .parse(input);
+      return sample(core).forget(p, v.id, v.sourceKey);
+    }
+    case "reviews.list":
+      return new Reviews(core.store).list(p);
+    case "reviews.configure":
+      return new Reviews(core.store).configure(p, input);
+    case "reviews.notifications":
+      return new Reviews(core.store).notifications(p);
+    case "reviews.dismiss":
+      return new Reviews(core.store).dismiss(p, identifier.parse(input).id);
     case "recordTaskObservation":
       return new Effects(core.store).record(p, input);
     case "getEffectSummary":
@@ -43,10 +88,20 @@ export async function dispatch(
       return core.configure(p, input);
     case "submitMaterial":
       return core.submitMaterial(p, input, key);
+    case "listSources":
+      return core.listSources(p);
+    case "controlSource":
+      return core.controlSource(p, input);
+    case "getSourceCleanup":
+      return core.inspect(p, "source_cleanup", identifier.parse(input).id);
     case "getJob":
       return core.getJob(p, identifier.parse(input).id);
     case "cancelJob":
       return core.cancelJob(p, identifier.parse(input).id);
+    case "retryJob":
+      return core.retryJob(p, identifier.parse(input).id, key);
+    case "connector.retry":
+      return sample(core).retry(p, identifier.parse(input).id, key);
     case "reviewTopic": {
       const v = z
         .object({ scopeId: z.string(), topic: z.string().min(1).max(512) })

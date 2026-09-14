@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir, realpath } from "node:fs/promises";
 import { resolve, relative, isAbsolute, join } from "node:path";
 import { digest } from "../../domain/schema.js";
-import { promptEnvelope, type HookEvent } from "./protocol.js";
+import { promptEnvelope, eventTime, type HookEvent } from "./protocol.js";
 type Config = {
   baseUrl: string;
   token: string;
@@ -77,11 +77,7 @@ async function run() {
         "startTask",
         {
           scopeId: config.scopeId,
-          eventId: digest([
-            event.sessionId,
-            promptDigest,
-            event.timestamp ?? "",
-          ]),
+          eventId: digest([cwd, event.sessionId]),
         },
         "task",
       )) as { taskRef: string };
@@ -102,7 +98,7 @@ async function run() {
           ],
           context: { taskRef: state.taskRef },
         },
-        digest([state.taskRef, "prompt", promptDigest]),
+        digest([state.taskRef, "prompt", event.timestamp ?? promptDigest]),
       );
     if (!setting.recommendation) return {};
     const search = (await call(
@@ -140,6 +136,7 @@ async function run() {
   if (type === "postToolUse" && event.toolResult !== undefined) {
     const text = JSON.stringify({
       toolName: event.toolName,
+      arguments: event.toolArgs,
       result: event.toolResult,
     });
     if (Buffer.byteLength(text) <= 16000)
@@ -153,9 +150,9 @@ async function run() {
             event.toolCallId ?? text,
           ]),
           text,
-          occurredAt: new Date(
-            typeof event.timestamp === "number" ? event.timestamp : Date.now(),
-          ).toISOString(),
+          ...(eventTime(event.timestamp)
+            ? { occurredAt: eventTime(event.timestamp) }
+            : {}),
         },
         "host-observation",
       );
@@ -173,7 +170,7 @@ async function run() {
           ],
           context: { taskRef: state.taskRef },
         },
-        digest([state.taskRef, event.toolCallId ?? text]),
+        digest([state.taskRef, event.toolCallId ?? event.timestamp ?? text]),
       );
   }
   if (type === "sessionEnd") {
@@ -185,9 +182,7 @@ async function run() {
           taskRef: state.taskRef,
           scopeId: config.scopeId,
           kind: "task_ended",
-          occurredAt: new Date(
-            typeof event.timestamp === "number" ? event.timestamp : Date.now(),
-          ).toISOString(),
+          occurredAt: eventTime(event.timestamp) ?? new Date().toISOString(),
           text: "Trusted Copilot session ended; outcome remains unknown.",
         },
       ],

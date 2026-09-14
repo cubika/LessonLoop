@@ -55,7 +55,13 @@ try {
   }
   await core.syncProjections([prior.scope]);
   report.method = await core.inspect(user, "method", method.id);
-  report.status = report.review ? "completed" : "timeout";
+  report.status =
+    (report.review as { status?: string } | undefined)?.status ===
+      "completed" && (report.method as Method).state === "active"
+      ? "passed"
+      : report.review
+        ? "failed"
+        : "timeout";
 } catch (e) {
   report.status = "failed";
   report.error = e instanceof Error ? e.message : "unknown";
@@ -72,3 +78,5 @@ console.log(
     review: (report.review as { status?: string } | undefined)?.status,
   }),
 );
+
+process.exitCode = report.status === "passed" ? 0 : 1;

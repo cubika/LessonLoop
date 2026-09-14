@@ -101,6 +101,9 @@ export type Material = MaterialInput & {
   createdAt: string;
   fingerprints: string[];
   sourceIdentity: string;
+  sourceFamily?: string;
+  taskRef?: string;
+  taskSequence?: number;
 };
 const stepSchema = z
   .object({

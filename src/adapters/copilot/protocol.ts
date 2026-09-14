@@ -13,6 +13,13 @@ export interface HookEvent {
   toolCallId?: string;
   timestamp?: string | number;
 }
+export function eventTime(
+  value: string | number | undefined,
+): string | undefined {
+  if (value === undefined) return;
+  const time = new Date(value);
+  return Number.isFinite(time.getTime()) ? time.toISOString() : undefined;
+}
 export function promptEnvelope(event: HookEvent, context: string) {
   return {
     modifiedTransformedPrompt:
