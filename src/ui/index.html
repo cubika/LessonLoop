@@ -25,8 +25,11 @@
           ><button data-view="materials">提交材料</button
           ><button data-view="settings">设置</button>
           <button data-view="effects">效果回顾</button>
+          <button data-view="sources">来源</button>
+          <button data-view="connections">连接器</button>
         </nav>
         <p id="notice" role="status"></p>
+        <div id="review-notifications" role="status"></div>
         <div id="methods">
           <h1>方法库</h1>
           <form id="search">
@@ -62,6 +65,25 @@
           <p>投递、使用和结果分别记录；缺少结果的任务保持未知。</p>
           <div id="effect-summary"></div>
           <div id="effect-cases"></div>
+          <h2>周期回顾</h2>
+          <div id="periodic-reviews"></div>
+        </div>
+        <div id="sources" hidden>
+          <h1>材料来源</h1>
+          <p>
+            撤回会停止使用该来源。擦除会清除服务中的副本；永久忘记还会拒收该来源的后续输入。
+          </p>
+          <button id="refresh-sources">刷新</button>
+          <div id="source-list"></div>
+        </div>
+        <div id="connections" hidden>
+          <h1>样例连接器</h1>
+          <p>选择本机 JSON 变更文件。添加后先查看范围，再恢复同步。</p>
+          <label>范围<input id="connection-scope" value="personal" /></label>
+          <label>文件完整路径<input id="connection-file" /></label>
+          <button id="add-connection">添加并预览</button
+          ><button id="refresh-connections">刷新</button>
+          <div id="connection-list"></div>
         </div>
       </section>
     </main>

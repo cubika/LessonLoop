@@ -20,7 +20,7 @@ type Config = {
 async function main() {
   if (command === "help") {
     console.log(
-      "LessonLoop development CLI: serve [--initialize], status, rpc <operation> [input.json], method list|show|history|prepare, material submit <file.json>",
+      "LessonLoop development CLI: serve [--initialize], status, rpc <operation> [input.json], method list|show|history|prepare|revise|state|remove|export, source list|control|cleanup, connector add|list|sync|bindings|state|forget|retry, report list|notifications|configure|dismiss, material submit <file.json>",
     );
     return;
   }
@@ -91,9 +91,49 @@ async function main() {
       show: "inspectMethod",
       history: "methodHistory",
       prepare: "prepareMethod",
+      revise: "reviseMethod",
+      state: "setMethodState",
+      remove: "removeMethod",
+      export: "exportMethod",
     };
     operation = map[operation ?? ""];
     if (["inspectMethod", "methodHistory"].includes(operation ?? ""))
+      input = { id: args.shift() };
+    else if (args[0])
+      input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
+  } else if (["source", "connector", "report"].includes(command)) {
+    const maps: Record<string, Record<string, string>> = {
+      source: {
+        list: "listSources",
+        control: "controlSource",
+        cleanup: "getSourceCleanup",
+      },
+      connector: {
+        add: "connector.add",
+        list: "connector.list",
+        sync: "connector.sync",
+        bindings: "connector.bindings",
+        state: "connector.state",
+        forget: "connector.forget",
+        retry: "connector.retry",
+      },
+      report: {
+        list: "reviews.list",
+        notifications: "reviews.notifications",
+        configure: "reviews.configure",
+        dismiss: "reviews.dismiss",
+      },
+    };
+    operation = maps[command]![operation ?? ""];
+    if (
+      [
+        "getSourceCleanup",
+        "connector.sync",
+        "connector.bindings",
+        "connector.retry",
+        "reviews.dismiss",
+      ].includes(operation ?? "")
+    )
       input = { id: args.shift() };
     else if (args[0])
       input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
