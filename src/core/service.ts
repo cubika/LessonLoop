@@ -757,6 +757,14 @@ export class CoreService {
       const results: ObjectRef[] = [];
       let caseRef: ObjectRef | undefined;
       if (output.workCase) {
+        const caseBindingId = digest([
+          j.scopeId,
+          ...materials.map((m) => m.id).sort(),
+        ]);
+        const existingBinding = await tx.get<{ caseId: string }>(
+          "case_binding",
+          caseBindingId,
+        );
         const oldCase = j.caseTarget
           ? await tx.get<WorkCase>("work_case", j.caseTarget.id)
           : undefined;
@@ -802,8 +810,27 @@ export class CoreService {
             oldCase?.sourceFamily ?? digest(materials[0]!.sourceIdentity),
           methodUses: oldCase?.methodUses ?? [],
         });
-        await tx.put(entry("work_case", c), oldCase?.revision ?? null);
-        caseRef = ref("work_case", c);
+        if (existingBinding && !oldCase) {
+          const existing = await tx.get<WorkCase>(
+            "work_case",
+            existingBinding.caseId,
+          );
+          if (existing) caseRef = ref("work_case", existing);
+        }
+        if (!caseRef) {
+          await tx.put(entry("work_case", c), oldCase?.revision ?? null);
+          caseRef = ref("work_case", c);
+          if (!existingBinding)
+            await tx.put(
+              entry("case_binding", {
+                id: caseBindingId,
+                revision: 1,
+                scopeId: j.scopeId,
+                caseId: c.id,
+              }),
+              null,
+            );
+        }
         results.push(caseRef);
       }
       const created = new Map<number, Experience>();
