@@ -1,4 +1,8 @@
 node_modules/
+dist/
+artifacts/
+__pycache__/
+*.pyc
 .local-validation/
 *.tsbuildinfo
 .env

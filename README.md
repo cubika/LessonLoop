@@ -2,7 +2,7 @@
 
 LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、执行L1–L5提炼、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
 
-**当前处于设计与技术验证阶段，没有可安装产品。** 仓库仅有设计文档、Copilot协议探针和评测辅助工具；真实方法学习、Hindsight适配、核心服务、UI和Windows发行均待实现。
+**当前正在实现 P0–P3，尚无通过发行验收的安装包。** 已有领域模型、PostgreSQL 产品存储、官方 Hindsight 适配、最小 API/CLI/页面；真实执行的生成文件案例已产出方法，并完成中文检索与诊断前缀准备。完整宿主接入、方法演进、Connector、回顾和 Windows 发行仍待完成。实际范围见[运行记录](docs/research/2026-09-14-implementation/README.md)。
 
 实现以官方Hindsight自托管和可复用Agent模块为起点。原生提取、归纳、综合和索引尽量直接复用，LessonLoop持有工作案例、产品经验、方法版本和用户控制。MemoryEngine保持可替换，首期只实现Hindsight；模型使用现有Copilot订阅，本地存储不代表推理离线。
 
@@ -25,6 +25,8 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 |---|---|
 | docs/ | 当前方法产品设计 |
 | docs/research/ | 固定来源与历史运行记录 |
+| src/ | 产品领域、存储、Hindsight 适配、核心 API、CLI 和最小页面 |
+| distribution/、config/ | 固定组件、Windows 数据库构建与引擎兼容层；尚非完整安装器 |
 | probes/copilot/ | 固定CLI版本与合成模型的协议探针 |
 | evals/ | Experience子集检查、两个任务和48个待适配材料 |
 | tests/、scripts/ | 辅助代码测试及文档/材料校验 |
@@ -34,7 +36,7 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 
 ## 在源码中运行检查
 
-需要Node.js 22.18+。这些命令检查现有辅助代码和材料，不启动产品或真实模型。
+需要Node.js 22.18+。下面的检查和构建不调用模型。
 
 ```powershell
 npm ci --ignore-scripts
@@ -42,6 +44,9 @@ npm run validate:docs
 npm run validate:evals
 npm run typecheck
 npm test
+npm run build
 ```
+
+开发 CLI 使用 `node dist/cli/main.js help`。真实数据库测试通过 `npm run test:postgres` 执行，要求已按隔离配置启动私有 PostgreSQL。`npm run validate:p0` 会调用现有 Copilot 订阅，经官方 Hindsight 运行实际方法路径；测试需要已配置的隔离引擎，不是安装命令。
 
 报告写入.local-validation/results。真实CLI探针的准备和范围见[说明](probes/copilot/README.md)。计划中的统一Windows安装入口尚无下载地址，设计见[本地发行](docs/10-distribution-and-installation.md)。

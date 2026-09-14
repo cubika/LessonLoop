@@ -1,5 +1,5 @@
 {
-  "name": "lessonloop-validation",
+  "name": "lessonloop",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -7,6 +7,11 @@
     "node": ">=22.18.0"
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node dist/cli/main.js serve",
+    "cli": "node dist/cli/main.js",
+    "test:postgres": "node scripts/test-postgres.mjs",
+    "validate:p0": "node --import tsx scripts/run-p0.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate:docs": "node scripts/validate-docs.mjs",
@@ -15,10 +20,16 @@
     "probe:copilot-hooks": "node --import tsx probes/copilot/host-hook-probe.ts"
   },
   "dependencies": {
-    "zod": "3.25.76"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@vectorize-io/hindsight-client": "0.9.2",
+    "js-tiktoken": "1.0.21",
+    "pg": "8.16.3",
+    "zod": "3.25.76",
+    "zod-to-json-schema": "3.25.1"
   },
   "devDependencies": {
     "@types/node": "22.18.6",
+    "@types/pg": "8.15.6",
     "tsx": "4.20.6",
     "typescript": "5.9.3"
   }

@@ -11,5 +11,5 @@
     "types": ["node"],
     "outDir": ".local-validation/build"
   },
-  "include": ["evals/**/*.ts", "probes/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "evals/**/*.ts", "probes/**/*.ts", "tests/**/*.ts"]
 }

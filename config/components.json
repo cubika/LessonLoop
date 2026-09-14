@@ -1,0 +1,26 @@
+{
+  "profile": "p0-0.1",
+  "releaseReady": false,
+  "platform": "win32-x64",
+  "node": "22.18.0",
+  "python": "3.12.11",
+  "hindsight": "0.9.2",
+  "hindsightClient": "0.9.2",
+  "copilotSdk": "1.0.13",
+  "copilotHostObserved": "1.0.84-5",
+  "pg0": "0.15.1",
+  "postgresql": "18.1.0",
+  "pgvector": "0.8.5",
+  "provider": "github-copilot",
+  "model": "gpt-5.5",
+  "modelSnapshotAvailable": false,
+  "embedding": {
+    "repository": "intfloat/multilingual-e5-small",
+    "commit": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    "onnxSha256": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+    "dimensions": 384
+  },
+  "reranker": "rrf",
+  "compatibilityShim": "distribution/hindsight_compat.py",
+  "limits": { "modelRequestTimeoutSeconds": 120, "assemblyOperations": 2, "hardOutputTokenCap": false, "usage": "measured" }
+}
