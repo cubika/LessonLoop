@@ -23,6 +23,28 @@
 
 官方[CLI/Control Plane][cli-tools]已有记忆管理UI和命令行；统一[coding-agents][coding]的usage/diag日志及stats提供工具调用和引用声明统计。可复用它们的基础工具，方法形成、分支使用和结果推动的内容变化按当前产品合同组织；本记录不声称官方没有任何等价扩展。
 
+### 实现计划所需的复用补充核查
+
+以下能力在同一固定提交的官方文档或源码中核实，仍未运行产品验收。它们属于原生基础，不能把“核心与存储”“方法形成与演进”“历史界面”整块计算为从头开发。
+
+| 能力 | 已核实的原生实现 | 产品仍需处理的差异 |
+|---|---|---|
+| 文档与范围 | [retain API][retain-api]支持稳定document_id、replace/append；[bank API][banks]提供隔离、配置和标签范围 | 产品来源身份、可信角色、scope授权与跨原生重处理的稳定引用 |
+| 后台作业 | [operations API][operations]提供持久async_operations、状态、取消、重试和终态保留 | 产品LearningJob关联原生操作，取消意图、写屏障和方法生效分别确认 |
+| 结构化综合 | [reflect API][reflect-api]的response_schema支持嵌套对象/数组，返回Markdown及structured_output | 方法Schema和语义检查；structured_output_error可能伴随HTTP 200，不能只检查状态码 |
+| 方法生成与演进 | [mental model API][mental-api]保存结构化输出；支持归纳后自动刷新或定时刷新、full/delta、刷新间隔和增量依据 | 选择方法主题、核对支持和范围，将合格变化保存为产品Method修订 |
+| 历史和管理 | 原生mental model历史及[管理组件][mental-ui]已有编辑、刷新、正文/依据比较、结构化内容与失败记录 | 产品历史和删除合同、方法准备、控制回执；复用组件的读写改接产品API |
+| 持续规则 | [directives][banks]按范围作用于reflect | 该机制仅覆盖reflect，不替代产品全部入口的授权、停用和来源控制 |
+| Copilot模型 | [GitHubCopilotLLM][copilot-provider]使用官方Copilot SDK及已有CLI身份或受支持token配置 | 固定版本、隔离学习会话、验证实际调用和用量；不另造同用途provider |
+
+[Mental Model API][mental-api]明确将delta更新用于：
+
+> long-lived "playbook"–style mental models
+
+delta更新通过操作修改文档局部，未触及的章节保持原样；结构化输出对应最终文档。配置Schema后若结构化提取失败，原生刷新失败并保留旧内容。该行为可直接参与方法维护，但不能据此认定已通过产品的分支和证据校验。
+
+自动刷新可按新记忆和作用域判断是否需要执行；删除记忆本身不触发同等stale判断。来源失效时仍需产品先暂停依赖方法，再协调原生清理及重评，不能等待下一次普通刷新。
+
 ### 纠正和长期知识
 
 [Memories 文档][memories]明确写道：
@@ -65,3 +87,10 @@
 [mental]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/mental-models.mdx
 [reflect]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/reflect.mdx
 [cli-tools]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/sdks/cli.md
+[retain-api]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/api/retain.mdx
+[banks]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/api/memory-banks.mdx
+[operations]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/api/operations.mdx
+[reflect-api]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/api/reflect.mdx
+[mental-api]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-docs/docs/developer/api/mental-models.mdx
+[mental-ui]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-control-plane/src/components/mental-model-detail-modal.tsx
+[copilot-provider]: https://github.com/vectorize-io/hindsight/blob/e3efe5dd8b070d00129c5186d111c0bc5f992363/hindsight-api-slim/hindsight_api/engine/providers/github_copilot_llm.py

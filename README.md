@@ -14,6 +14,7 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 | 怎样从工作学出方法 | [自动复盘与分层提炼](docs/02-experience-model.md) |
 | UI、CLI和方法使用 | [方法库](docs/12-method-library.md) |
 | 官方工具怎样接入 | [系统架构](docs/03-architecture.md) |
+| 第一阶段怎样实现P0–P3 | [实现计划](docs/13-implementation-plan.md) |
 | 实现阶段与完成标准 | [实施与验收](docs/05-delivery-and-validation.md) |
 
 完整导航见[文档地图](docs/README.md)。工作学习、自动推荐、效果回顾和提醒分别配置；真实新结果可以学习，统计和周报不作为新的独立证据。
