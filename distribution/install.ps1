@@ -14,6 +14,8 @@ foreach($file in $manifest.files){
   if(-not $target.StartsWith($bundleRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "Bundle path escapes its root"}
   $item=Get-Item -LiteralPath $target
   if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Bundle links are not allowed"}
+  $parent=$item.Directory
+  while($parent -and $parent.FullName.Length -ge $bundleRoot.Length){if($parent.Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Bundle parent links are not allowed"};if($parent.FullName -eq $bundleRoot){break};$parent=$parent.Parent}
   if($item.Length -ne $file.size -or (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256){throw "Component hash mismatch: $($file.path)"}
 }
 if(Test-Path -LiteralPath $installTarget){throw "Existing installation requires the versioned update path"}
