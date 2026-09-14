@@ -1,4 +1,4 @@
-"""Authenticated, manifest-bound residual cleanup for pinned Hindsight 0.9.2."""
+"""Authenticated read-only residual inspection for pinned Hindsight 0.9.2."""
 import hashlib
 import hmac
 import json
@@ -30,7 +30,7 @@ class LessonLoopMaintenance(HttpExtension):
         if not key or not installation_id or schema!="hindsight":raise RuntimeError("Explicit maintenance ownership is required")
         router=APIRouter()
         @router.post("/lessonloop/plan-residuals")
-        async def cleanup(manifest:Manifest,authorization:str=Header(default="")):
+        async def plan(manifest:Manifest,authorization:str=Header(default="")):
             if not hmac.compare_digest(authorization,"Bearer "+key):raise HTTPException(401,"authentication_required")
             if manifest.installation_id!=installation_id or manifest.bank_id not in banks:raise HTTPException(403,"ownership_mismatch")
             payload=manifest.model_dump(mode="json",exclude={"manifest_hash"})
