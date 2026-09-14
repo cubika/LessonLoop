@@ -1279,6 +1279,14 @@ export class CoreService {
         action: v.action,
         status: v.action === "withdraw" ? "suppressed" : "pending",
         copyManifest: {
+          banks: (
+            await tx.list<{ id: string; sourceRefs: string[]; kind: string }>(
+              "engine_bank",
+              [source.scopeId],
+            )
+          )
+            .filter((b) => b.sourceRefs.includes(source.id))
+            .map((b) => ({ bankId: b.id, kind: b.kind })),
           documents: materials.flatMap((m) =>
             m.fingerprints
               .map((fp, i) =>
