@@ -883,7 +883,13 @@ export class CoreService {
             canonical(old.exceptions) === canonical(e.exceptions),
         );
         if (duplicates.length) {
-          created.set(i, duplicates[0]!);
+          const duplicate = duplicates.find(
+            (d) =>
+              d.state === "active" &&
+              canonical(d.sourceFingerprints) ===
+                canonical(e.sourceFingerprints),
+          );
+          if (duplicate) created.set(i, duplicate);
           continue;
         }
         await tx.put(entry("experience", e), null);
