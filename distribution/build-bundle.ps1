@@ -14,7 +14,7 @@ Copy-Tree $Models (Join-Path $bundleRoot "models")
 foreach($name in @("distribution","dist","node_modules","config","third-party")){Copy-Item -Path (Join-Path $repoRoot "$name/*") -Destination (Join-Path $bundleRoot $name) -Recurse}
 Copy-Item -LiteralPath (Join-Path $repoRoot "package.json") -Destination (Join-Path $bundleRoot "package.json")
 $files=Get-ChildItem -LiteralPath $bundleRoot -Recurse -File | ForEach-Object {
-  $relative=$_.FullName.Substring($bundleRoot.Length+1).Replace("","/")
+  $relative=$_.FullName.Substring($bundleRoot.Length+1).Replace([char]92,[char]47)
   @{path=$relative;size=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
 $manifest=@{version="0.0.1-dev";platform="win32-x64";releaseReady=$false;createdAt=[DateTime]::UtcNow.ToString("o");files=@($files)}

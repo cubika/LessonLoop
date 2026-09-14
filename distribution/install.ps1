@@ -9,7 +9,7 @@ $manifest=Get-Content -LiteralPath (Join-Path $bundleRoot "manifest.json") -Raw 
 if($manifest.platform -ne "win32-x64" -or -not [Environment]::Is64BitOperatingSystem){throw "Windows x64 is required"}
 if(-not $manifest.releaseReady -and -not $AllowDevelopmentBuild){throw "This bundle is a development build, not an accepted release"}
 foreach($file in $manifest.files){
-  if([IO.Path]::IsPathRooted($file.path) -or $file.path -match "(^|[\/])..([\/]|$)"){throw "Unsafe bundle path"}
+  if([IO.Path]::IsPathRooted($file.path) -or ($file.path.Replace([char]92,[char]47).Split([char]47) -contains "..")){throw "Unsafe bundle path"}
   $target=[IO.Path]::GetFullPath((Join-Path $bundleRoot $file.path))
   if(-not $target.StartsWith($bundleRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "Bundle path escapes its root"}
   $item=Get-Item -LiteralPath $target
