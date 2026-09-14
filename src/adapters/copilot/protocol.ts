@@ -11,7 +11,7 @@ export interface HookEvent {
   toolArgs?: unknown;
   toolResult?: unknown;
   toolCallId?: string;
-  timestamp?: string;
+  timestamp?: string | number;
 }
 export function promptEnvelope(event: HookEvent, context: string) {
   return {
