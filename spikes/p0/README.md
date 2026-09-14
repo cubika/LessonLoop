@@ -36,6 +36,8 @@ npm run p0:evaluate
 
 入口安排 no_memory、mem0_default、structured_learning 三组，在各自集合/目录执行文件读取、JSON 修改及检查。同一模型用于执行与提炼，固定轮次上限；结构化提炼只接收历史材料，任务答案未注入提取输入。当前仅两组机制样本，结构化支路还不是完整领域准入或核实系统。正式实验需要真实脱敏资料、独立标注、保留集、重复运行和完整成本统计。
 
+该入口尚未实现质量门禁：任务的 `passed:false` 会写入结果，但没有运行异常时仍可报告 `status:completed` 并退出 0；缺少模型配置时退出 2。因此 `completed` 只表示执行结束，不能作为质量达标。接入 CI 前需按[实现质量评估](../../docs/09-quality-evaluation.md#评估状态与退出码)分别计算运行状态和门禁结果；本文只记录待办，代码尚未改变。
+
 ## 发现与限制
 
 - 发布的 Mem0 OSS 包会顶层导入未使用的 `better-sqlite3`/`pg`，只配置 Qdrant 与 disableHistory 仍无法在不安装 SQL 包时导入。P0 的 `mem0-imports.mjs` 仅对这两个未使用模块返回抛错实现；Mem0/Qdrant 算法未修改。正式发布需要解决其模块加载边界，不能称原包无适配即通过。

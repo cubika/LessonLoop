@@ -17,6 +17,8 @@ LessonLoop 从工作材料中提炼可复用经验，保留适用条件和来源
 | [接口与扩展](docs/04-contracts-and-extensions.md) | 核心操作、代理适配、模型接口与 Connector 的边界 |
 | [Connector 持续同步](docs/08-connectors.md) | 外部来源接入、增量更新、游标、来源撤回与管理 |
 | [实施与验收](docs/05-delivery-and-validation.md) | 开发顺序、测试案例、阶段退出条件 |
+| [实现质量评估](docs/09-quality-evaluation.md) | 场景合同、独立判定、对照评测、质量门禁与每次提交应保留的证据 |
+| [开发评测材料](evals/README.md) | 从 ProvenLoop 精简同步的 48 个窗口、16 个快速检查子集、选择理由与待适配内容 |
 | [评审与取舍](docs/06-review-and-decisions.md) | 产品与技术选择的理由、代价及验证要求 |
 | [资料核验](docs/research/2026-09-12/README.md) | Mem0、Qdrant 官方依据及能力边界 |
 | [P0 实测记录](docs/research/2026-09-13-p0/README.md) | 存储、宿主协议的实际结果、兼容性发现和未完成验证 |

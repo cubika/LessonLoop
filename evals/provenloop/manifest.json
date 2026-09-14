@@ -1,0 +1,1595 @@
+{
+  "version": 1,
+  "corpusId": "lessonloop-provenloop-development-v1",
+  "syncedAt": "2026-09-14T03:32:33.959Z",
+  "sourceProject": "ProvenLoop",
+  "sourceRevisionAtSync": "622ce109a2028f902e4961b6fabfe6b150cf3a27",
+  "sourceCodeModifiedAtSync": false,
+  "counts": {
+    "available": 92,
+    "selected": 48,
+    "decisions": {
+      "selected": 48,
+      "deferred": 32,
+      "rebuild": 12
+    },
+    "selectedByCorpus": {
+      "general": 24,
+      "agent": 12,
+      "automatic": 12
+    },
+    "smoke": 16
+  },
+  "outputs": {
+    "materials": {
+      "path": "materials.json",
+      "sha256": "854a292d095bcca278928d505974293b78924b4569809186fd2b03e686b5cb58"
+    },
+    "selections": {
+      "path": "selections.json",
+      "sha256": "bbb9555c4fe1f3ab70b374be675223aba3bf32e54791239dfa7d59c76a418c7b"
+    }
+  },
+  "sources": [
+    {
+      "key": "general",
+      "corpusId": "general-correction-discovery-v1",
+      "count": 40,
+      "artifact": ".provenloop/general-catalog-validation/full-input/corpus.json",
+      "code": "packages/evaluation/src/general-learning-corpus.ts",
+      "artifactSha256": "2b0f099426fd489163e17300a02c89990047017ddc842eaa2752f184196cde67",
+      "codeSha256": "796c022516884baac1a50f2e4ad891a26c5c73aecbf56002a45a62eb4134e43f"
+    },
+    {
+      "key": "agent",
+      "corpusId": "agent-experience-authored-v1",
+      "count": 12,
+      "artifact": ".provenloop/agent-experience-validation/input/corpus.json",
+      "code": "packages/evaluation/src/agent-experience-corpus.ts",
+      "artifactSha256": "fe55fb091605bd8cc1d5e62a8d6d9e3b6cbc8a196202b6c909b1aab13f4ad5b3",
+      "codeSha256": "3028c4ca7ac1e062e17e2af94569ec794847befe676b0aaf4b9e1629f2a9d130"
+    },
+    {
+      "key": "automatic",
+      "corpusId": "automatic-learning-bilingual-v2",
+      "count": 40,
+      "artifact": "evaluation-output/frozen-learning-v2-20260908/corpus.json",
+      "code": "packages/evaluation/src/automatic-learning-corpus.ts",
+      "artifactSha256": "8650b7240493ddae8d4401d30c642450d658223dbd2583e6057fa6b70706be71",
+      "codeSha256": "4ad669b1695967cc20eb2b7f8e11e8c88335b15a305a1e516a91f81e593ffa2d"
+    }
+  ],
+  "inventory": [
+    {
+      "id": "general/INT-07-correction",
+      "originalFamily": "INT-07",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "INT-07-correction",
+        "pointer": "/cases/0",
+        "caseSha256": "5bb36749fd1fc30f19df861dbf9b674b4571df573bf94903f3cb04f1124ccdf3"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/INT-07-negative",
+      "originalFamily": "INT-07",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "INT-07-negative",
+        "pointer": "/cases/1",
+        "caseSha256": "ef7fd4d9e35738f9c950587d6a5036c4e36cf37a84212722e2721a9a7a76017c"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/INT-03-correction",
+      "originalFamily": "INT-03",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "INT-03-correction",
+        "pointer": "/cases/2",
+        "caseSha256": "595d0a2b243599cb63bdda67d85f04d1d0c8ec12454e678adbd5bd7ee6cf85da"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A01"
+      ]
+    },
+    {
+      "id": "general/INT-03-negative",
+      "originalFamily": "INT-03",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "INT-03-negative",
+        "pointer": "/cases/3",
+        "caseSha256": "247caa4a235f122fa7b985f34d4eb346c5d5cbad35004562c529ca6fcaf913a6"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A01"
+      ]
+    },
+    {
+      "id": "general/DAT-01-correction",
+      "originalFamily": "DAT-01",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-01-correction",
+        "pointer": "/cases/4",
+        "caseSha256": "f63f20187e2272160597e5910b1fcac9c33c293233116c056afe48b193f62297"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/DAT-01-negative",
+      "originalFamily": "DAT-01",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-01-negative",
+        "pointer": "/cases/5",
+        "caseSha256": "5f3ca4cdd8c2274df3cd8c88c4004b0207b8afa545a195798082ba0fed1db02a"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/DAT-02-correction",
+      "originalFamily": "DAT-02",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-02-correction",
+        "pointer": "/cases/6",
+        "caseSha256": "b3d30796e13189dbf52304b1761a935f253a6a6bd2ea9edf9dc22bba76fa43e5"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/DAT-02-negative",
+      "originalFamily": "DAT-02",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-02-negative",
+        "pointer": "/cases/7",
+        "caseSha256": "ae9573a25f9eb9f4d33807bff7d47358978972032c0d73bda10e708ada7cf09a"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/DAT-03-correction",
+      "originalFamily": "DAT-03",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-03-correction",
+        "pointer": "/cases/8",
+        "caseSha256": "0ea25901a704c97c5b6fc5d151e8d14deb6936c608654519920daf257dddbce7"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-03-negative",
+      "originalFamily": "DAT-03",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-03-negative",
+        "pointer": "/cases/9",
+        "caseSha256": "c77ec7b050ced8be29fe37874a52dd493761fc90f38427f6989fb8a486a7735f"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-04-correction",
+      "originalFamily": "DAT-04",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-04-correction",
+        "pointer": "/cases/10",
+        "caseSha256": "e9e30985c3e0fdd1d866a58b2643e09c853ed8ab708f39cac8d8ccc765817a1e"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-04-negative",
+      "originalFamily": "DAT-04",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-04-negative",
+        "pointer": "/cases/11",
+        "caseSha256": "8dc6c44cc2431f07cdc948dabceb03253ee1653e7d39e1f457fea94fd45e0d64"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-06-correction",
+      "originalFamily": "DAT-06",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-06-correction",
+        "pointer": "/cases/12",
+        "caseSha256": "844410280165fbd77387df043771adb1cea39df9c09bc10a021eab76fdcc1a22"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-06-negative",
+      "originalFamily": "DAT-06",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-06-negative",
+        "pointer": "/cases/13",
+        "caseSha256": "cba7256203d1d8d33c162bc566d711154dbcbce6c923bd950745474c1b4badd3"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-07-correction",
+      "originalFamily": "DAT-07",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-07-correction",
+        "pointer": "/cases/14",
+        "caseSha256": "4ce25708f47b6e04ae7b44faaa874a3dea15a1c38053b21f05d6e39ef141d4b9"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/DAT-07-negative",
+      "originalFamily": "DAT-07",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-07-negative",
+        "pointer": "/cases/15",
+        "caseSha256": "9bca2563f3bad75a6142356f4dcb121eb16f687b0fdc38d8a3bc62dd7655420e"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/DAT-08-correction",
+      "originalFamily": "DAT-08",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-08-correction",
+        "pointer": "/cases/16",
+        "caseSha256": "2b8da7b4f58167ab92e48e6ddf75c137949e19a2b9d59f146813cb3f6ccba569"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DAT-08-negative",
+      "originalFamily": "DAT-08",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DAT-08-negative",
+        "pointer": "/cases/17",
+        "caseSha256": "91d67aeff62db1583603964666e22111020525fba62a56011f6e56dffcdc36cc"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/API-01-correction",
+      "originalFamily": "API-01",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-01-correction",
+        "pointer": "/cases/18",
+        "caseSha256": "450ba0ec48a05f39becbf428d5de62dcfc5f8c38d4950826e4ff3cf155e64f92"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/API-01-negative",
+      "originalFamily": "API-01",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-01-negative",
+        "pointer": "/cases/19",
+        "caseSha256": "e83d10896917e695611c2a346a4b44f5a0a8e9d2385c4c7087398d5f582c9eeb"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/API-02-correction",
+      "originalFamily": "API-02",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-02-correction",
+        "pointer": "/cases/20",
+        "caseSha256": "88fb4605f844e6c7ff80ca274c24030784e8e7d89e3181c07155b1efcc4872f5"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/API-02-negative",
+      "originalFamily": "API-02",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-02-negative",
+        "pointer": "/cases/21",
+        "caseSha256": "222223050f38e0017d4a63ab2cfe1d0262c544f483532db731b562dd43ff444a"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/API-03-correction",
+      "originalFamily": "API-03",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-03-correction",
+        "pointer": "/cases/22",
+        "caseSha256": "f03be8f0cd46be8efe2bce97edf0e3f753cce22b0443f397abbb6fe9b4b217ef"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/API-03-negative",
+      "originalFamily": "API-03",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-03-negative",
+        "pointer": "/cases/23",
+        "caseSha256": "d4dfa1e88cb5e1b7dcb81a8665987d8b9ae5af4c9f213f6d44f7554cf5cf7432"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/API-05-correction",
+      "originalFamily": "API-05",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-05-correction",
+        "pointer": "/cases/24",
+        "caseSha256": "b9c6132c42e441923f7f725bf5ba7760262ddcba4138da33b0fd58e6513f6d60"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/API-05-negative",
+      "originalFamily": "API-05",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-05-negative",
+        "pointer": "/cases/25",
+        "caseSha256": "88bd92b9ffd9d50aa2881efd2d3c15cfbc1dae8b6a4d381c845e3aa967cedde2"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/API-08-correction",
+      "originalFamily": "API-08",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-08-correction",
+        "pointer": "/cases/26",
+        "caseSha256": "023c4e229495409548d6978570b0561ad1db54225bb3e121783fb6f5f2a0f607"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/API-08-negative",
+      "originalFamily": "API-08",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "API-08-negative",
+        "pointer": "/cases/27",
+        "caseSha256": "94aa47f5f90fa24db6120058fc0a2224a440d014d89dad8b2c087e9b493d8e9f"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/DEV-03-correction",
+      "originalFamily": "DEV-03",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DEV-03-correction",
+        "pointer": "/cases/28",
+        "caseSha256": "dcc20eebd42aefb4a07da4481a9fb20040866849ad8aeaa891acdc45c986eaf5"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/DEV-03-negative",
+      "originalFamily": "DEV-03",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DEV-03-negative",
+        "pointer": "/cases/29",
+        "caseSha256": "9f11367ae424b2b2e9087fb3dc8c5fc1d6dbf58d8b7c2c424255e2cf5d258fa9"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/DEV-07-correction",
+      "originalFamily": "DEV-07",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "DEV-07-correction",
+        "pointer": "/cases/30",
+        "caseSha256": "c2941c0cafff12ae2fc3d53c9f1120617b5fc5f3fd5006a530895bb76eb30c13"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/DEV-07-negative",
+      "originalFamily": "DEV-07",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "DEV-07-negative",
+        "pointer": "/cases/31",
+        "caseSha256": "830b2111ff271ea85326edc0d538dc92ca7562b69f91dd0e0c599ace4a57891c"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/ART-01-correction",
+      "originalFamily": "ART-01",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-01-correction",
+        "pointer": "/cases/32",
+        "caseSha256": "f5701a9653662974ef6c6071ca75ad26c477ac084b6b4518b6895fa0e19a05e4"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/ART-01-negative",
+      "originalFamily": "ART-01",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-01-negative",
+        "pointer": "/cases/33",
+        "caseSha256": "dc398e7ea0a6ed76c5ce9f64bda09356b4144fa8f1fc3faecf72759e24e3f508"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "id": "general/ART-04-correction",
+      "originalFamily": "ART-04",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-04-correction",
+        "pointer": "/cases/34",
+        "caseSha256": "de5f1242923f32758694524782cffa150073dfd42af18eba721ed8041d1e4afc"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/ART-04-negative",
+      "originalFamily": "ART-04",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-04-negative",
+        "pointer": "/cases/35",
+        "caseSha256": "cc3fc7d5523c2aaba38d4e02228cfacecfeeada4520982b09777e512764b1431"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/ART-06-correction",
+      "originalFamily": "ART-06",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-06-correction",
+        "pointer": "/cases/36",
+        "caseSha256": "059430af02270976c16fbdd14633b3258823db167fcb22dc1b2aad348ab32b2d"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/ART-06-negative",
+      "originalFamily": "ART-06",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-06-negative",
+        "pointer": "/cases/37",
+        "caseSha256": "1eb5f1a20b10cbf6718294f1580b3ec77492e74837cc6cabfa57a79b1c246c88"
+      },
+      "decision": "selected",
+      "reason": "保留语义主题的纠正与近似反例。",
+      "acceptanceIds": [
+        "L01",
+        "D03"
+      ]
+    },
+    {
+      "id": "general/ART-08-correction",
+      "originalFamily": "ART-08",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-08-correction",
+        "pointer": "/cases/38",
+        "caseSha256": "d1447a9a8b8b97e88b8be21542e42c957b1936847799006542bc485d2035c0a1"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "general/ART-08-negative",
+      "originalFamily": "ART-08",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "general",
+        "caseId": "ART-08-negative",
+        "pointer": "/cases/39",
+        "caseSha256": "ab471d4886a9da1258313cf42cb85eea2a2221ef71abf25d6f1f6c7f94c63c4e"
+      },
+      "decision": "deferred",
+      "reason": "领域扩展；首批先验证已选择主题中的范围与行动条件。"
+    },
+    {
+      "id": "agent/EXP-01-api-research",
+      "originalFamily": "EXP-01",
+      "language": "en",
+      "originalStratum": "experience",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-01-api-research",
+        "pointer": "/cases/0",
+        "caseSha256": "6967ac34eae5013b8397a1640bdf875022bc3ac71cdaa90af802214ec5fad991"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L02",
+        "A03"
+      ]
+    },
+    {
+      "id": "agent/EXP-01-repository-guide",
+      "originalFamily": "EXP-01",
+      "language": "en",
+      "originalStratum": "experience",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-01-repository-guide",
+        "pointer": "/cases/1",
+        "caseSha256": "d62e59c951c62f0492a4ea923c2ed878a722beb397602cdc41010ecb2a117300"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L02",
+        "D03"
+      ]
+    },
+    {
+      "id": "agent/EXP-03-required-argument",
+      "originalFamily": "EXP-03",
+      "language": "en",
+      "originalStratum": "experience",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-03-required-argument",
+        "pointer": "/cases/2",
+        "caseSha256": "fbbdfca3b4818e726adba827e13f778576c28b382e75284d25548e74054f048d"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L02",
+        "L05"
+      ]
+    },
+    {
+      "id": "agent/EXP-04-test-command",
+      "originalFamily": "EXP-04",
+      "language": "en",
+      "originalStratum": "experience",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-04-test-command",
+        "pointer": "/cases/3",
+        "caseSha256": "ea7c3ef453f735a69506d253c46aa79bd6313630b7c047a73478446f18dc73a4"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L02",
+        "L05",
+        "A03"
+      ]
+    },
+    {
+      "id": "agent/EXP-02-unseen-source",
+      "originalFamily": "EXP-02",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-02-unseen-source",
+        "pointer": "/cases/4",
+        "caseSha256": "b0f9250a9a20486970a1e9fcba3eaf3977dd5260a1a9d07451516f84ab9f5254"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L02",
+        "A06"
+      ]
+    },
+    {
+      "id": "agent/EXP-05-confounded-changes",
+      "originalFamily": "EXP-05",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-05-confounded-changes",
+        "pointer": "/cases/5",
+        "caseSha256": "773d7216d241b57dc1ab447630a8c9b9a66b164371484795ceb3f5d69852734f"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L05",
+        "A06"
+      ]
+    },
+    {
+      "id": "agent/EXP-05-ambiguous-retries",
+      "originalFamily": "EXP-05",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-05-ambiguous-retries",
+        "pointer": "/cases/6",
+        "caseSha256": "1cb8639dcedd42c5abeb31b0003e5f29bc28653832f2b0369d75d81697981031"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L05",
+        "T08"
+      ]
+    },
+    {
+      "id": "agent/EXP-06-premature-summary",
+      "originalFamily": "EXP-06",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-06-premature-summary",
+        "pointer": "/cases/7",
+        "caseSha256": "0f1df71a774751c577022ab48190923901821919bd8828a411a330c83839a4f5"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L05",
+        "A06"
+      ]
+    },
+    {
+      "id": "agent/EXP-07-quoted-activation",
+      "originalFamily": "EXP-07",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-07-quoted-activation",
+        "pointer": "/cases/8",
+        "caseSha256": "a9272a0dfd5023e3e190d51a990ab8673bea4aed2192c8c111532a7f97d8eae0"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "A05",
+        "T08"
+      ]
+    },
+    {
+      "id": "agent/EXP-08-recalled-guidance",
+      "originalFamily": "EXP-08",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-08-recalled-guidance",
+        "pointer": "/cases/9",
+        "caseSha256": "8c3ef8b37a7a07b4e97b9bd052c0bbafc9b8bd9f58b922aa449e7782e8e4a843"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L07",
+        "A10"
+      ]
+    },
+    {
+      "id": "agent/EXP-12-routine-success",
+      "originalFamily": "EXP-12",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-12-routine-success",
+        "pointer": "/cases/10",
+        "caseSha256": "329477eac75c42c6db78152fd4a055d5540b8c0eda7adee47ab018cd99cfc057"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L03",
+        "A11"
+      ]
+    },
+    {
+      "id": "agent/EXP-12-transient-retry",
+      "originalFamily": "EXP-12",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "agent",
+        "caseId": "EXP-12-transient-retry",
+        "pointer": "/cases/11",
+        "caseSha256": "7244e7640a65b874091256a82a9ae3b58a5bc8ed0cd4727b63d4726d353973f4"
+      },
+      "decision": "selected",
+      "reason": "保留自主调查或恢复中的独立边界。",
+      "acceptanceIds": [
+        "L03",
+        "L05"
+      ]
+    },
+    {
+      "id": "automatic/correction-required_path-en",
+      "originalFamily": "required_path",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_path-en",
+        "pointer": "/cases/0",
+        "caseSha256": "2b462cb572a7234d87eb933e4c2fd6fd0c7021a6575e33f2f1253a748542c334"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/correction-required_path-zh",
+      "originalFamily": "required_path",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_path-zh",
+        "pointer": "/cases/1",
+        "caseSha256": "b22234b6aa26ee580c3ed21603dbc3728939e26691d2fc388b4fe5556bfc764f"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/correction-required_repository-en",
+      "originalFamily": "required_repository",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_repository-en",
+        "pointer": "/cases/2",
+        "caseSha256": "00fd015340c0356eea787c5028ac1bbf1ab4b75cdcc62ab153f681dbfca30aaa"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_repository-zh",
+      "originalFamily": "required_repository",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_repository-zh",
+        "pointer": "/cases/3",
+        "caseSha256": "689c04720f6309239a46f201d8776cfc8058ffb0aa71bc69c88fe85034ba01ae"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_project-en",
+      "originalFamily": "required_project",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_project-en",
+        "pointer": "/cases/4",
+        "caseSha256": "ad8449c7a7fa2ae81d3e1ed2000d4bb9bf51c12e835b184f15b688e582f83670"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_project-zh",
+      "originalFamily": "required_project",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_project-zh",
+        "pointer": "/cases/5",
+        "caseSha256": "3b08ea67f89f6c735729b93edb119c9a14d820a762e9449086461397be6d85f2"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_query-en",
+      "originalFamily": "required_query",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_query-en",
+        "pointer": "/cases/6",
+        "caseSha256": "6012336ceaeb400405f9ba042d3aaf2c231afe7a83884c3880fb84f854e60959"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_query-zh",
+      "originalFamily": "required_query",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_query-zh",
+        "pointer": "/cases/7",
+        "caseSha256": "4c68f181a6e62e166b79674c72770390833abf50f824f58f6177dd6adaf78a65"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_format-en",
+      "originalFamily": "required_format",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_format-en",
+        "pointer": "/cases/8",
+        "caseSha256": "3c7e726cd30804adffd8a67d305ff68a083ea4ae129e106def177aafad971adf"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_format-zh",
+      "originalFamily": "required_format",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_format-zh",
+        "pointer": "/cases/9",
+        "caseSha256": "1767ea83f45c84dfcb32fd5bb0d9e0273cd8de123db064cca7733f57cf85167a"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_locale-en",
+      "originalFamily": "required_locale",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_locale-en",
+        "pointer": "/cases/10",
+        "caseSha256": "a7aab0360325ebba5d7a29b59b011dde7845f6c13b09037a56a85190e6e41d2f"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_locale-zh",
+      "originalFamily": "required_locale",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_locale-zh",
+        "pointer": "/cases/11",
+        "caseSha256": "a5eb3514aa193259282173a6450918af8c0a38524659e721dd14dc8bfae52c01"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_workspace-en",
+      "originalFamily": "required_workspace",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_workspace-en",
+        "pointer": "/cases/12",
+        "caseSha256": "2e0a69cc6eed4c19b671e77ae523fe5e4de11d6069c2c85123e049a33bed4e1f"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_workspace-zh",
+      "originalFamily": "required_workspace",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_workspace-zh",
+        "pointer": "/cases/13",
+        "caseSha256": "6446ee21be00f5ce00460d1cdeccb8e16b828f22cad81c27a3f4092ad808669d"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_document-en",
+      "originalFamily": "required_document",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_document-en",
+        "pointer": "/cases/14",
+        "caseSha256": "ad8e3f6ffcdb4d830c65a3199b1638e8de7bd7122e3a2ba558a962271a1558a9"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-required_document-zh",
+      "originalFamily": "required_document",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-required_document-zh",
+        "pointer": "/cases/15",
+        "caseSha256": "eceed19d931419ce6e3938130a20b1e01f3237dfc9cf55e9629476d952bb254d"
+      },
+      "decision": "deferred",
+      "reason": "与 required_path 共享必填参数机制，仅换参数名；按需扩展。"
+    },
+    {
+      "id": "automatic/correction-multistep_correction-en",
+      "originalFamily": "multistep_correction",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-multistep_correction-en",
+        "pointer": "/cases/16",
+        "caseSha256": "e9a9f18ababfc671c091694f99ff9421b4173b9d21a85fc11ec4e707ed627157"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "L05"
+      ]
+    },
+    {
+      "id": "automatic/correction-multistep_correction-zh",
+      "originalFamily": "multistep_correction",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-multistep_correction-zh",
+        "pointer": "/cases/17",
+        "caseSha256": "256205b326aef2d69e9385b331a5c3c481720a0d541884f5bb8341427677e094"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "L05"
+      ]
+    },
+    {
+      "id": "automatic/correction-paraphrased_constraint-en",
+      "originalFamily": "paraphrased_constraint",
+      "language": "en",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-paraphrased_constraint-en",
+        "pointer": "/cases/18",
+        "caseSha256": "7efb2ac19cf8f77fe1fba0d4cd500934eefb408dc3e113fe76685f83cc4c7fde"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/correction-paraphrased_constraint-zh",
+      "originalFamily": "paraphrased_constraint",
+      "language": "zh",
+      "originalStratum": "correction",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "correction-paraphrased_constraint-zh",
+        "pointer": "/cases/19",
+        "caseSha256": "0407a557b1dc3ec133095bf6aee3badd22c60f5b0db8f38e21153693022e3d33"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "L01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/negative-temporary_request-en",
+      "originalFamily": "temporary_request",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-temporary_request-en",
+        "pointer": "/cases/20",
+        "caseSha256": "fe75b6d82ce5903dab2b2fdd2a06de04381ff643462626007488e698caeffb5f"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/negative-temporary_request-zh",
+      "originalFamily": "temporary_request",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-temporary_request-zh",
+        "pointer": "/cases/21",
+        "caseSha256": "1f7787136ad6f0e14daad5e048f1db27878493627d6318d5f40b0949696373cc"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "id": "automatic/negative-question-en",
+      "originalFamily": "question",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-question-en",
+        "pointer": "/cases/22",
+        "caseSha256": "80fecc64f3eb3b81386f3001d7dc03156dc5006d7d05de218ba55fb72f657c23"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A03",
+        "A05"
+      ]
+    },
+    {
+      "id": "automatic/negative-question-zh",
+      "originalFamily": "question",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-question-zh",
+        "pointer": "/cases/23",
+        "caseSha256": "b07901b65bedcd4195642a831bd366b1b892a9dc72b96dd2bca813e3c00d78f6"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A03",
+        "A05"
+      ]
+    },
+    {
+      "id": "automatic/negative-quotation-en",
+      "originalFamily": "quotation",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-quotation-en",
+        "pointer": "/cases/24",
+        "caseSha256": "ee3269bf162967ed759c7e52cba3d414ca852cc8933f2303bd0ac01dcf4bc6a8"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A05",
+        "T08"
+      ]
+    },
+    {
+      "id": "automatic/negative-quotation-zh",
+      "originalFamily": "quotation",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-quotation-zh",
+        "pointer": "/cases/25",
+        "caseSha256": "75ed914e330905ef32e1857377dd256b36f7fbcb3a20ada8ecc6a267ed2b8e27"
+      },
+      "decision": "selected",
+      "reason": "保留代表性参数语义及中英版本。",
+      "acceptanceIds": [
+        "A05",
+        "T08"
+      ]
+    },
+    {
+      "id": "automatic/negative-generic_advice-en",
+      "originalFamily": "generic_advice",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-generic_advice-en",
+        "pointer": "/cases/26",
+        "caseSha256": "38f6206ec01153e4646a6f4834d5a5318cf79f1fa9085df2506512f6c792bb50"
+      },
+      "decision": "deferred",
+      "reason": "首批由 routine-success 和临时/提问样本检查无新增价值，后续再补泛泛建议。"
+    },
+    {
+      "id": "automatic/negative-generic_advice-zh",
+      "originalFamily": "generic_advice",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-generic_advice-zh",
+        "pointer": "/cases/27",
+        "caseSha256": "15e7483259aa21b1947b80315dccf521a75375d52b00d73eae87934ceece9be5"
+      },
+      "decision": "deferred",
+      "reason": "首批由 routine-success 和临时/提问样本检查无新增价值，后续再补泛泛建议。"
+    },
+    {
+      "id": "automatic/negative-synonymous_repeat-en",
+      "originalFamily": "synonymous_repeat",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-synonymous_repeat-en",
+        "pointer": "/cases/28",
+        "caseSha256": "54defc67eda0d030674d9861d8f45d5309e7d97574455c03d9ac41e413ebe5d8"
+      },
+      "decision": "rebuild",
+      "reason": "需要已有经验、同来源重放与支持数，文本说重复不能证明去重。",
+      "acceptanceIds": [
+        "L07",
+        "A10"
+      ]
+    },
+    {
+      "id": "automatic/negative-synonymous_repeat-zh",
+      "originalFamily": "synonymous_repeat",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-synonymous_repeat-zh",
+        "pointer": "/cases/29",
+        "caseSha256": "70c7ffc0dae6a676cad12085fe7c8ce46dcd6de831d8e19537efa16280b34389"
+      },
+      "decision": "rebuild",
+      "reason": "需要已有经验、同来源重放与支持数，文本说重复不能证明去重。",
+      "acceptanceIds": [
+        "L07",
+        "A10"
+      ]
+    },
+    {
+      "id": "automatic/negative-conflicting_constraint-en",
+      "originalFamily": "conflicting_constraint",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-conflicting_constraint-en",
+        "pointer": "/cases/30",
+        "caseSha256": "60d78763e6c10423b3aab16146427ccf9e2d0d86d01cb8a1de3da89503deccaf"
+      },
+      "decision": "rebuild",
+      "reason": "需要两个工具版本、当前上下文和旧经验状态。",
+      "acceptanceIds": [
+        "C01",
+        "D03",
+        "T06"
+      ]
+    },
+    {
+      "id": "automatic/negative-conflicting_constraint-zh",
+      "originalFamily": "conflicting_constraint",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-conflicting_constraint-zh",
+        "pointer": "/cases/31",
+        "caseSha256": "d23f20b253c7f236eee2ef093f2f39089d0a8f3786dcddb141af99c518d97e61"
+      },
+      "decision": "rebuild",
+      "reason": "需要两个工具版本、当前上下文和旧经验状态。",
+      "acceptanceIds": [
+        "C01",
+        "D03",
+        "T06"
+      ]
+    },
+    {
+      "id": "automatic/negative-expired_candidate-en",
+      "originalFamily": "expired_candidate",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-expired_candidate-en",
+        "pointer": "/cases/32",
+        "caseSha256": "3de264e5a3bc086a2d35193857441a2d9d9b702b4e6e23b652bc2ce9905be58b"
+      },
+      "decision": "rebuild",
+      "reason": "需要受控时间、过期记录与迟到复评，文本说过期不能证明失效。",
+      "acceptanceIds": [
+        "A07",
+        "T05"
+      ]
+    },
+    {
+      "id": "automatic/negative-expired_candidate-zh",
+      "originalFamily": "expired_candidate",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-expired_candidate-zh",
+        "pointer": "/cases/33",
+        "caseSha256": "e0421514aa583908061b1cb66c3447889fff2a77dcf007e57b3a999f961f4a66"
+      },
+      "decision": "rebuild",
+      "reason": "需要受控时间、过期记录与迟到复评，文本说过期不能证明失效。",
+      "acceptanceIds": [
+        "A07",
+        "T05"
+      ]
+    },
+    {
+      "id": "automatic/negative-instruction_duplicate-en",
+      "originalFamily": "instruction_duplicate",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-instruction_duplicate-en",
+        "pointer": "/cases/34",
+        "caseSha256": "0c593e1b063240921a189cb59e48d28cb70890cc4443463d4ed05f2fc2cb74a0"
+      },
+      "decision": "rebuild",
+      "reason": "需要真实项目指令及已有经验，避免把复述当新增知识。",
+      "acceptanceIds": [
+        "L07",
+        "A11"
+      ]
+    },
+    {
+      "id": "automatic/negative-instruction_duplicate-zh",
+      "originalFamily": "instruction_duplicate",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-instruction_duplicate-zh",
+        "pointer": "/cases/35",
+        "caseSha256": "056f36a1db14b50ded87ac26896c06f55afa6b93d8c575b8ac76a7a0f7c83596"
+      },
+      "decision": "rebuild",
+      "reason": "需要真实项目指令及已有经验，避免把复述当新增知识。",
+      "acceptanceIds": [
+        "L07",
+        "A11"
+      ]
+    },
+    {
+      "id": "automatic/negative-redacted_secret-en",
+      "originalFamily": "redacted_secret",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-redacted_secret-en",
+        "pointer": "/cases/36",
+        "caseSha256": "8d04c29f60fb03c8687886311ba4cef54fa90ae26ef25e465b98606a3bb1a3b3"
+      },
+      "decision": "rebuild",
+      "reason": "改建脱敏与复制清理断言；来源中的 synthetic 凭据不复制到首批材料。",
+      "acceptanceIds": [
+        "C04"
+      ]
+    },
+    {
+      "id": "automatic/negative-redacted_secret-zh",
+      "originalFamily": "redacted_secret",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-redacted_secret-zh",
+        "pointer": "/cases/37",
+        "caseSha256": "a526ad0d72bccb8d21396ce139c963d82169d817a899e76cb8b71d008e0a821e"
+      },
+      "decision": "rebuild",
+      "reason": "改建脱敏与复制清理断言；来源中的 synthetic 凭据不复制到首批材料。",
+      "acceptanceIds": [
+        "C04"
+      ]
+    },
+    {
+      "id": "automatic/negative-untrusted_injection-en",
+      "originalFamily": "untrusted_injection",
+      "language": "en",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-untrusted_injection-en",
+        "pointer": "/cases/38",
+        "caseSha256": "e2e1d11c7eaf778ecca7136889bc6e6ce83caebbcfc12092528a5fa824b1d57b"
+      },
+      "decision": "rebuild",
+      "reason": "改建真实工具来源及可信宿主绑定；保留的 EXP-07 可作为起点。",
+      "acceptanceIds": [
+        "A05",
+        "T08"
+      ]
+    },
+    {
+      "id": "automatic/negative-untrusted_injection-zh",
+      "originalFamily": "untrusted_injection",
+      "language": "zh",
+      "originalStratum": "negative",
+      "source": {
+        "corpus": "automatic",
+        "caseId": "negative-untrusted_injection-zh",
+        "pointer": "/cases/39",
+        "caseSha256": "7a5ac0769b66205f7195b34c229419eca6e9a642c78e924fb58e0ca87cc720fe"
+      },
+      "decision": "rebuild",
+      "reason": "改建真实工具来源及可信宿主绑定；保留的 EXP-07 可作为起点。",
+      "acceptanceIds": [
+        "A05",
+        "T08"
+      ]
+    }
+  ]
+}
