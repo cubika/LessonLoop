@@ -55,7 +55,7 @@ def call_db(action,secret=None):
 def start_database():
     try:call_db("status");return
     except RuntimeError:call_db("start")
-def config(secret):return {"port":record["corePort"],"databaseUrl":f"postgresql://lessonloop:{secret['password']}@127.0.0.1:{record['databasePort']}/postgres","engineUrl":f"http://127.0.0.1:{record['enginePort']}","engineToken":secret["engineToken"],"credentials":[{"token":secret["userToken"],"principal":{"id":"owner","channel":"user","scopes":[record["scopeId"]]}},{"token":secret["hostToken"],"principal":{"id":"copilot-host","channel":"host","scopes":[record["scopeId"]]}},{"token":secret["agentToken"],"principal":{"id":"copilot-agent","channel":"agent","scopes":[record["scopeId"]]}}]}
+def config(secret):return {"port":record["corePort"],"databaseUrl":f"postgresql://lessonloop:{secret['password']}@127.0.0.1:{record['databasePort']}/postgres","engineUrl":f"http://127.0.0.1:{record['enginePort']}","engineToken":secret["engineToken"],"credentials":[{"token":secret["userToken"],"principal":{"id":"owner","channel":"user","scopes":[record["scopeId"]]}},{"token":secret["hostToken"],"principal":{"id":"copilot-host","channel":"host","scopes":[record["scopeId"]]}},{"token":secret["agentToken"],"principal":{"id":"copilot-agent","channel":"agent","taskOwnerId":"copilot-host","scopes":[record["scopeId"]]}}]}
 def owned_process(saved,expected):
     try:
         import psutil

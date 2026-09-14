@@ -43,6 +43,7 @@ export interface Principal {
   id: string;
   channel: "user" | "agent" | "host" | "connector";
   scopes: string[];
+  taskOwnerId?: string;
 }
 export interface Settings {
   id: string;
@@ -1606,7 +1607,8 @@ export class CoreService {
     return this.store.transaction(async (tx) => {
       const t = await this.owned<Task>(tx, p, "task", v.taskRef);
       if (
-        t.callerId !== p.id ||
+        (t.callerId !== p.id &&
+          !(p.channel === "agent" && p.taskOwnerId === t.callerId)) ||
         t.ended ||
         Date.now() - Date.parse(t.createdAt) >= 86400000
       )
@@ -1623,7 +1625,7 @@ export class CoreService {
       };
       const prepared = this.preparation.prepare(
         m,
-        { callerId: p.id, ...v },
+        { callerId: t.callerId, ...v },
         facts,
         await this.eligibility(tx, p),
       );

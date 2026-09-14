@@ -108,6 +108,22 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   });
   const host = { ...p, channel: "host" as const };
   const effectTask = await core.startTask(host, scope);
+  await assert.rejects(
+    core.prepare(
+      { ...agent, taskOwnerId: "wrong-host" },
+      { methodId: "missing", revision: 1, taskRef: effectTask.taskRef },
+    ),
+    /task_unavailable/,
+  );
+  assert.equal(
+    (
+      await core.prepare(
+        { ...agent, taskOwnerId: host.id },
+        { methodId: "missing", revision: 1, taskRef: effectTask.taskRef },
+      )
+    ).status,
+    "target_unavailable",
+  );
   const event = {
     eventId: "effect-start",
     taskRef: effectTask.taskRef,
