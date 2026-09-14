@@ -15,6 +15,7 @@ const result = spawnSync(
     "tests/postgres.integration.ts",
     "tests/http.integration.ts",
     "tests/connector.integration.ts",
+    "tests/source-control.integration.ts",
   ],
   {
     stdio: "inherit",
