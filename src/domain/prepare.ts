@@ -122,6 +122,13 @@ export class Preparation {
       checks: Map<string, number>;
     }
   >();
+  sweep(now = Date.now()) {
+    for (const [id, s] of this.sessions)
+      if (now - s.touchedAt >= 1800000 || now - s.startedAt >= 86400000)
+        this.sessions.delete(id);
+    for (const [id, t] of this.tasks)
+      if (now - t.startedAt >= 86400000) this.tasks.delete(id);
+  }
   endTask(callerId: string, taskRef: string) {
     const key = `${callerId}:${taskRef}`;
     const t = this.tasks.get(key);
@@ -150,6 +157,7 @@ export class Preparation {
     facts: TaskFacts,
     data: Eligibility,
   ): Record<string, unknown> {
+    this.sweep(data.now);
     if (!method || !data.scopes.has(method.scopeId))
       return { status: "target_unavailable" };
     if (method.revision !== request.revision)
