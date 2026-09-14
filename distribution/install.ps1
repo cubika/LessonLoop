@@ -5,6 +5,11 @@ $installTarget=[IO.Path]::GetFullPath($InstallRoot)
 $dataTarget=[IO.Path]::GetFullPath($DataRoot)
 if($installTarget -eq [IO.Path]::GetPathRoot($installTarget) -or $dataTarget -eq [IO.Path]::GetPathRoot($dataTarget)){throw "Root directories are not valid targets"}
 if($installTarget -eq $dataTarget){throw "Program and data directories must differ"}
+foreach($targetRoot in @($installTarget,$dataTarget)){
+  $ancestor=$targetRoot
+  while($ancestor){if(Test-Path -LiteralPath $ancestor){$existing=Get-Item -LiteralPath $ancestor;if($existing.Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Installation target ancestor is a reparse point"}};$next=Split-Path $ancestor -Parent;if($next -eq $ancestor){break};$ancestor=$next}
+}
+if($installTarget.StartsWith($dataTarget+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $dataTarget.StartsWith($installTarget+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "Program and data roots cannot contain each other"}
 $manifest=Get-Content -LiteralPath (Join-Path $bundleRoot "manifest.json") -Raw | ConvertFrom-Json
 if($manifest.platform -ne "win32-x64" -or -not [Environment]::Is64BitOperatingSystem){throw "Windows x64 is required"}
 if(-not $manifest.releaseReady -and -not $AllowDevelopmentBuild){throw "This bundle is a development build, not an accepted release"}
