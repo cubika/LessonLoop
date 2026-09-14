@@ -81,6 +81,8 @@ interface Job {
   error?: string;
   inputDigest: string;
   caseTarget?: ObjectRef;
+  sourceRefs?: string[];
+  comparedMethodRefs?: ObjectRef[];
 }
 interface Source {
   id: string;
@@ -350,6 +352,7 @@ export class CoreService {
         results: [],
         decisions: [],
         inputDigest: hash,
+        sourceRefs: material.fingerprints,
         ...(data.caseFor ? { caseTarget: data.caseFor } : {}),
       };
       await tx.put(entry("material", { ...material, revision: 1 }), null);
@@ -477,6 +480,7 @@ export class CoreService {
         results: [],
         decisions: [],
         inputDigest: digest(materials.map((m) => m.id)),
+        sourceRefs: [...new Set(materials.flatMap((m) => m.fingerprints))],
       };
       await tx.put(entry("job", j), null);
       return j;
@@ -621,7 +625,15 @@ export class CoreService {
         tx.list<Method>("method", [j.scopeId]),
       );
       const modelId = `job-${j.id}`;
-      j = await this.updateJob(j.id, { modelId, status: "running" }, true);
+      j = await this.updateJob(
+        j.id,
+        {
+          modelId,
+          status: "running",
+          comparedMethodRefs: existing.slice(-20).map((m) => ref("method", m)),
+        },
+        true,
+      );
       const model = await this.engine.createModel(
         j.scopeId,
         modelId,
