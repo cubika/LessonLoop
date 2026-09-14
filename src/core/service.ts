@@ -1487,7 +1487,11 @@ export class CoreService {
       .parse(input);
     return this.store.transaction(async (tx) => {
       const t = await this.owned<Task>(tx, p, "task", v.taskRef);
-      if (t.callerId !== p.id || t.ended)
+      if (
+        t.callerId !== p.id ||
+        t.ended ||
+        Date.now() - Date.parse(t.createdAt) >= 86400000
+      )
         throw new ApiError("task_unavailable", 409);
       const m = await tx.get<Method>("method", v.methodId);
       const latest = t.observations.at(-1);
