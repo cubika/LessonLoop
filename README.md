@@ -2,7 +2,7 @@
 
 LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、执行L1–L5提炼、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
 
-**当前正在实现 P0–P3，尚无通过发行验收的安装包。** 已有领域模型、PostgreSQL 产品存储、官方 Hindsight 适配、最小 API/CLI/页面；真实执行的生成文件案例已产出方法，并完成中文检索与诊断前缀准备。完整宿主接入、方法演进、Connector、回顾和 Windows 发行仍待完成。实际范围见[运行记录](docs/research/2026-09-14-implementation/README.md)。
+**当前正在实现 P0–P3，尚无通过发行验收的安装包。** 已有领域模型、PostgreSQL 产品存储、官方 Hindsight 适配、最小 API/CLI/页面；真实执行的生成文件案例已产出方法，并完成中文检索与诊断前缀准备。已补来源清理、样例 Connector 生命周期、方法编辑/历史页面、周期回顾及后台部分恢复；完整宿主任务、方法演进、旧数据迁移和 Windows 发行仍待完成。实际范围见[运行记录](docs/research/2026-09-14-implementation/README.md)。
 
 实现以官方Hindsight自托管和可复用Agent模块为起点。原生提取、归纳、综合和索引尽量直接复用，LessonLoop持有工作案例、产品经验、方法版本和用户控制。MemoryEngine保持可替换，首期只实现Hindsight；模型使用现有Copilot订阅，本地存储不代表推理离线。
 

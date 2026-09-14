@@ -51,3 +51,19 @@ TypeScript 检查、构建及 28 个现有/新增单元测试通过。真实 Pos
 P1 完整入口、P2 演进与生命周期、P3 Connector/回顾/完整发行和正式质量报告尚未通过。无预装环境安装、升级回滚、永久清理以及 05/09 的冻结质量/收益门槛不能以当前工程测试替代。
 
 本地完整报告保存在 .local-validation/results，包含失败运行；发布证据不得只保留成功部分。
+
+## 2026-09-15 发布准备进展
+
+本轮新增来源副本清理和服务端投影写入/擦除共锁。取消按整个已登记 bank 核对原生在途操作，避免父作业取消后子作业继续写入。历史方法、已删除对象的来源绑定、任务观察及回顾贡献参与清理；旧共享布局缺少迁移时保持 pending 并给出原因。
+
+样例 Connector 已接入 API 和页面，支持快照替换、定向纠正、撤回/擦除、父忘记、失败重试。材料接收和游标原子提交，来源族与修订身份分开。可信宿主同任务材料可形成有界综合；单调任务代次阻止旧结果覆盖新案例，普通代理自报 taskRef 不取得宿主身份。
+
+页面新增方法编辑审查、历史比较、显式任务准备、三种导出格式、来源和 Connector 管理。浏览器中实际验证了编辑提交后的 held 修订与历史差异。周期回顾和应用内提醒已有实现及数据库回归；严重确认问题通知、开发样本导出等 O 系列功能仍待完成。
+
+Windows 管理器可恢复单独退出的核心进程，并保留正在运行的引擎；中文路径隔离安装实测通过。重复停止通过。另做私有数据库退出后恢复：管理器重建失联核心与引擎，实际健康检查均 ready。完整升级/回滚、自启、卸载和最终发行清单仍未完成。
+
+本轮工程验证：32 项单元测试、11 项 PostgreSQL 集成测试、类型检查与构建通过。Python 提交恢复与生命周期故障注入通过。官方原生引擎配合本地 E5 实际保留并擦除了 source bank 和发布投影，11 个被核对原生表的残留计数为零；该运行未调用语言模型。
+
+真实 Copilot provider 重新完成 P0 路径，生成 1 个方法、2 条经验；报告仍为 partial_evidence。当前方法的观察重评返回 guidance；手工修订独立审查 passed；真实 Copilot CLI 回填验证为 injection_observed。曾因沙箱拒绝启动 Copilot 子进程出现失败和重试，保留原生操作身份后恢复，不把该故障算质量通过。
+
+报告：.local-validation/results/native-lifecycle-validation.json、runtime-recovery-validation.json、runtime-database-recovery-validation.json、p0-method-path.json、observation-validation.json、revision-validation.json、host-product-validation.json。以上是对应功能的局部证据，P0–P3 全部退出条件及最终安装字节尚未验收。
