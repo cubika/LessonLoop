@@ -22,5 +22,6 @@
   },
   "reranker": "rrf",
   "compatibilityShim": "distribution/hindsight_compat.py",
+  "nativeRetention": {"llmTraceEnabled":false,"auditLogEnabled":false,"operationRetentionDays":30,"existingTraceCleanup":"not_automatically_migrated"},
   "limits": { "modelRequestTimeoutSeconds": 120, "assemblyOperations": 2, "hardOutputTokenCap": false, "usage": "measured" }
 }

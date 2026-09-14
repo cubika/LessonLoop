@@ -114,6 +114,7 @@ if args.action=="start":
             cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
     env={**os.environ,"PYTHONUTF8":"1","PYTHONIOENCODING":"utf-8","PYTHONUNBUFFERED":"1","HINDSIGHT_API_DATABASE_URL":cfg["databaseUrl"],"HINDSIGHT_API_DATABASE_SCHEMA":"hindsight","HINDSIGHT_API_HOST":"127.0.0.1","HINDSIGHT_API_PORT":str(record["enginePort"]),"HINDSIGHT_API_LLM_PROVIDER":"github-copilot","HINDSIGHT_API_LLM_MODEL":"gpt-5.5","HINDSIGHT_API_EMBEDDINGS_PROVIDER":"onnx","HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH":str(runtime/"models/e5/onnx/model.onnx"),"HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH":str(runtime/"models/e5"),"HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS":"384","HINDSIGHT_API_RERANKER_PROVIDER":"rrf","HINDSIGHT_API_TENANT_EXTENSION":"hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension","HINDSIGHT_API_TENANT_API_KEY":secret["engineToken"],"HF_HUB_OFFLINE":"1","TRANSFORMERS_OFFLINE":"1","COPILOT_SKIP_CLI_DOWNLOAD":"1","HINDSIGHT_API_LOG_LEVEL":"WARNING","HINDSIGHT_API_ACCESS_LOG":"false"}
     copilot=shutil.which("copilot.exe")
+    env.update(HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
     if copilot:env["COPILOT_CLI_PATH"]=str(Path(copilot).resolve())
     with (root/"engine.log").open("ab") as log:
         engine=subprocess.Popen([str(python),str(runtime/"distribution/hindsight_server.py")],env=env,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
