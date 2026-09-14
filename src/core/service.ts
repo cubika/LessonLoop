@@ -1753,7 +1753,10 @@ export class CoreService {
             id,
             scopeId: old.scopeId,
             revision: (oldControl?.revision ?? 0) + 1,
-            reason: "user_disabled",
+            reason:
+              oldControl && oldControl.reason !== "user_disabled"
+                ? oldControl.reason
+                : "user_disabled",
             ...(await this.controlBinding(tx, kind, old)),
           }),
           oldControl?.revision ?? null,

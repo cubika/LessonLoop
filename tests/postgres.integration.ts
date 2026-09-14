@@ -5,6 +5,7 @@ import { ProductStore, Conflict } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { Effects } from "../src/core/effects.js";
+import { identity, methodSchema } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url)
   throw new Error(
@@ -147,6 +148,52 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   assert.equal(
     (await effects.record(host, [event])).results[0]?.status,
     "ignored",
+  );
+  const method = methodSchema.parse({
+    ...identity(scope),
+    title: "Test method",
+    goal: "Test control barrier",
+    topics: [],
+    applicability: "general",
+    conditions: [],
+    exceptions: [],
+    state: "active",
+    steps: [
+      {
+        stepId: "s1",
+        instruction: "Original instruction",
+        supportIndexes: [0],
+      },
+    ],
+    completionChecks: [{ text: "Check result" }],
+    stopConditions: [],
+    supportRefs: [{ kind: "experience", id: "synthetic-support", revision: 1 }],
+    change: {
+      kind: "create",
+      summary: "test fixture",
+      caseRefs: [],
+      predecessors: [],
+    },
+  });
+  await store.transaction((tx) =>
+    tx.put(
+      {
+        kind: "method",
+        id: method.id,
+        scopeId: scope,
+        revision: 1,
+        value: method,
+      },
+      null,
+    ),
+  );
+  await core.revise(p, method.id, 1, {
+    goal: "Changed goal requiring reassessment",
+  });
+  await core.setState(p, "method", method.id, 2, "disabled");
+  await assert.rejects(
+    core.setState(p, "method", method.id, 3, "active"),
+    /reassessment_required/,
   );
   await store.close();
 });
