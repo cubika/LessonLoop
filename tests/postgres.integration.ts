@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ProductStore, Conflict } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { Effects } from "../src/core/effects.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url)
   throw new Error(
@@ -94,6 +95,42 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   await assert.rejects(
     core.observe(agent, obs),
     /trusted_observation_required/,
+  );
+  const effects = new Effects(store);
+  const configured = (await core.getSettings(p))[0]!;
+  await core.configure(p, {
+    scopeId: scope,
+    expectedRevision: configured.revision,
+    learning: true,
+    recommendation: false,
+    review: true,
+    notifications: false,
+  });
+  const host = { ...p, channel: "host" as const };
+  const effectTask = await core.startTask(host, scope);
+  const event = {
+    eventId: "effect-start",
+    taskRef: effectTask.taskRef,
+    scopeId: scope,
+    kind: "task_started",
+    occurredAt: new Date().toISOString(),
+    text: "Task started",
+  };
+  assert.equal(
+    (await effects.record(host, [event])).results[0]?.status,
+    "accepted",
+  );
+  assert.equal(
+    (await effects.record(host, [event])).results[0]?.status,
+    "duplicate",
+  );
+  assert.equal((await effects.summary([scope])).unknownOutcome, 1);
+  assert.equal((await effects.summary([scope])).successRate, 0);
+  await effects.clear(scope);
+  assert.equal((await effects.summary([scope])).successRate, null);
+  assert.equal(
+    (await effects.record(host, [event])).results[0]?.status,
+    "ignored",
   );
   await store.close();
 });

@@ -108,14 +108,51 @@ async function show(id) {
     ),
   );
   d.append(state, history);
+  const exportButton = node("button", "导出 Markdown");
+  exportButton.onclick = handle(async () => {
+    const result = await rpc("exportMethod", {
+      id,
+      revision: current.revision,
+      format: "markdown",
+      includeEvidence: false,
+    });
+    const blob = new Blob([result.content], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = node("a", "下载方法快照");
+    link.href = url;
+    link.download = result.filename;
+    d.append(node("p", "导出是独立快照，后续修订不会同步更新。"), link);
+  });
+  d.append(exportButton);
 }
 document.querySelectorAll("[data-view]").forEach(
   (button) =>
     (button.onclick = handle(async () => {
-      ["methods", "materials", "settings"].forEach(
+      ["methods", "materials", "settings", "effects"].forEach(
         (id) => ($(id).hidden = id !== button.dataset.view),
       );
       if (button.dataset.view === "settings") await renderSettings();
+      if (button.dataset.view === "effects") {
+        const summary = await rpc("getEffectSummary");
+        $("effect-summary").replaceChildren(
+          node(
+            "p",
+            `任务 ${summary.tasks} · 已投递 ${summary.delivered} · 成功 ${summary.succeeded} · 失败 ${summary.failed} · 结果未知 ${summary.unknownOutcome}`,
+          ),
+        );
+        const cases = await rpc("listEffectCases");
+        $("effect-cases").replaceChildren(
+          ...cases.map((c) => {
+            const section = node("section", "");
+            section.className = "card";
+            section.append(node("h2", c.classification), node("p", c.taskRef));
+            c.events.forEach((e) => section.append(node("p", e.text)));
+            return section;
+          }),
+        );
+      }
     })),
 );
 async function renderSettings() {

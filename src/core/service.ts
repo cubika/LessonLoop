@@ -37,6 +37,7 @@ import {
   outputJsonSchema,
 } from "./learning.js";
 import { exportMethod } from "../domain/export.js";
+import { Effects } from "./effects.js";
 
 export interface Principal {
   id: string;
@@ -1295,7 +1296,7 @@ export class CoreService {
   }
   async startTask(p: Principal, scopeId: string, eventId?: string) {
     this.authorize(p, scopeId);
-    return this.store.transaction(async (tx) => {
+    const task = await this.store.transaction(async (tx) => {
       const bindingId = eventId ? digest([p.id, scopeId, eventId]) : undefined;
       if (bindingId) {
         const old = await tx.get<{ taskRef: string }>(
@@ -1324,6 +1325,18 @@ export class CoreService {
         );
       return { taskRef: t.id };
     });
+    if (p.channel === "host")
+      await new Effects(this.store).record(p, [
+        {
+          eventId: `started:${task.taskRef}`,
+          taskRef: task.taskRef,
+          scopeId,
+          kind: "task_started",
+          occurredAt: new Date().toISOString(),
+          text: "Trusted host task started",
+        },
+      ]);
+    return task;
   }
   async observe(p: Principal, input: unknown) {
     if (!["user", "host"].includes(p.channel))

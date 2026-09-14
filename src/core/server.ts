@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { ApiError, CoreService, type Principal } from "./service.js";
 import { Conflict } from "../store/postgres.js";
+import { Effects } from "./effects.js";
 
 export interface Credential {
   token: string;
@@ -23,6 +24,19 @@ export async function dispatch(
 ) {
   const input = raw ?? {};
   switch (operation) {
+    case "recordTaskObservation":
+      return new Effects(core.store).record(p, input);
+    case "getEffectSummary":
+      return new Effects(core.store).summary(p.scopes);
+    case "listEffectCases":
+      return new Effects(core.store).cases(p.scopes);
+    case "clearEffectData": {
+      if (p.channel !== "user")
+        throw new ApiError("user_operation_required", 403);
+      const v = z.object({ scopeId: z.string() }).strict().parse(input);
+      if (!p.scopes.includes(v.scopeId)) throw new ApiError("not_found", 404);
+      return new Effects(core.store).clear(v.scopeId);
+    }
     case "settings.get":
       return core.getSettings(p);
     case "settings.update":
