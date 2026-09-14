@@ -1,10 +1,10 @@
 # Copilot 协议探针
 
-这里保留与记忆引擎无关的宿主验证：固定 Copilot CLI 版本的启动参数、prompt 回填、工具拒绝和 hook 超时行为。Mem0/Qdrant 原型已移除，探针不启动记忆服务。
+这里验证固定Copilot CLI的版本参数、prompt回填、工具拒绝和hook超时行为。探针与记忆引擎独立，不启动Hindsight或LessonLoop产品，也不实现方法学习。
 
 ## 准备与运行
 
-需要 Windows x64、PowerShell 和 Node.js 22.18+。从仓库根目录运行：
+需要Windows x64、PowerShell和Node.js 22.18+，在仓库根目录运行：
 
 ```powershell
 npm ci --ignore-scripts
@@ -13,8 +13,12 @@ npm run probe:copilot
 npm run probe:copilot-hooks
 ```
 
-准备脚本只下载并核验隔离的 Copilot CLI 1.0.83，运行时与临时 profile 存放在 `.local-validation/copilot/`。不安装或修改用户默认 Copilot。
+准备脚本下载并核验隔离Copilot CLI 1.0.83，runtime和临时profile在.local-validation/copilot/，不修改用户默认Copilot。
 
-`probe:copilot` 只执行 version/help 预检。`probe:copilot-hooks` 启动真实 CLI，但推理响应来自本地脚本模型；三个场景分别验证上下文回填、明确拒绝和超时继续执行。它不使用账号凭据或真实模型，不能证明 Agent 正确采用经验或任务收益。
+probe:copilot执行version/help预检；probe:copilot-hooks启动真实CLI但使用本地脚本模型，检查上下文回填、明确拒绝和超时继续三个场景。没有账号凭据或真实模型调用，不能据此判断Agent正确使用方法或任务收益。
 
-报告写入 `.local-validation/copilot/results/`。历史结果见[2026-09-13 记录](../../docs/research/2026-09-13-p0/README.md)，迁移代码保留当时的协议标记，路径迁移本身不算重新完成宿主实测。更换 CLI 版本要重新准备和验证。
+## 报告与产品验收
+
+报告在.local-validation/copilot/results/，历史范围见[2026-09-13记录](../../docs/research/2026-09-13-p0/README.md)。更换CLI版本需重新准备和验证，移动脚本路径不算重新完成实测。
+
+方法产品仍需真实trustedCapture、searchMethods/prepareMethod回填、可关联步骤刷新、结果回传和异步回执验收。工具前hook不意味着能观察模型内部采用；能力定义见[Agent接入](../../docs/04-contracts-and-extensions.md#copilot-适配)。
