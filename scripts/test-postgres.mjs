@@ -14,6 +14,7 @@ const result = spawnSync(
     "--test-concurrency=1",
     "tests/postgres.integration.ts",
     "tests/http.integration.ts",
+    "tests/connector.integration.ts",
   ],
   {
     stdio: "inherit",
