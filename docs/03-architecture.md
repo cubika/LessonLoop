@@ -1,10 +1,10 @@
 # 架构与 Mem0 边界
 
-日期：2026-09-13。采用 Mem0 OSS + Qdrant，当前为待实施验证的架构设计。技术依据见[核验记录](research/2026-09-12/README.md)。
+日期：2026-09-14。本文保留 Mem0 OSS + Qdrant 原型的存储与恢复设计，技术依据见[核验记录](research/2026-09-12/README.md)。目标记忆层按[重新选型与接入抽象](research/2026-09-14-memory-selection/README.md)推进 Hindsight 适配；正式发布与进程部署按[安装设计](10-distribution-and-installation.md)，两者均待实现。
 
-部分 P0 路径已有[运行证据](research/2026-09-13-p0/README.md)：Mem0 3.1.8 配 Qdrant client 1.18.0 / server 1.19.1 和本地嵌入可完成隔离存储检查。原包顶层导入未用 SQL provider 需要加载适配；只设置 disableHistory 不足以使无 SQL 依赖环境直接 import。此适配和客户端版本约束是发布前待解决事项，不改变 Qdrant 单数据库方案。
+部分路径已有 [P0 运行结果](research/2026-09-13-p0/README.md)。Mem0 3.1.8、Qdrant client 1.18.0 / server 1.19.1 配合本地嵌入，通过了隔离存储检查。Mem0 发布包会在顶层导入未使用的 SQL provider，因此无 SQL 依赖时，仅设置 disableHistory 仍无法 import，需要加载适配。该原型存储只使用 Qdrant；保留 Mem0 适配时仍须解决模块加载并固定兼容版本，不将这些限制套到 Hindsight。
 
-## 选择
+## 现有原型选择
 
 采用 TypeScript 本地服务，Mem0 管理经验，Qdrant 是唯一数据库。当前经验、向量、字段索引和必要的运行状态都留在 Qdrant。没有 SQLite、独立全文数据库或第二份当前经验。
 
@@ -31,13 +31,16 @@ flowchart LR
 
 ## 交付与运行形式
 
-核心以独立本地后台服务运行，每个用户数据目录只允许一个写者。CLI 负责初始化、启动、停止、状态检查和修复；后台学习不依赖某个 Copilot 会话存活。首期服务通过仅监听 loopback 的版本化 HTTP API 提供能力，使用本地凭据认证；Qdrant 由该服务统一访问。端口与进程管理细节在安装验证中固定。
+正式产品通过固定版本 `irm` bootstrap 下载预构建组件并安装到当前用户目录。核心独立运行在本地后台，每个用户数据目录只允许一个管理实例。CLI 管理初始化、启动、停止、状态和修复，Copilot 会话或安装终端结束不会停止已接收的学习作业。首期提供带版本号的 HTTP API，只监听 loopback，并用本地凭据认证。
+
+默认 Hindsight 发行配置由后台管理进程启动私有 Python/Hindsight、PostgreSQL 与本地模型组件；核心仍提供统一 API。部署不要求用户手工安装 Docker、数据库或开发工具链。数据库进程与数据路径、隐藏窗口、所有权核验、分项健康和升级顺序以[发布与安装](10-distribution-and-installation.md)为准。此部署方案须先通过干净 Windows 的发行切片，不能由 Mem0 P0 通过结果替代。
 
 | 交付单元 | 形式 | 边界 |
 |---|---|---|
+| 安装与组件清单 | 固定 tag 的 PowerShell bootstrap、平台 zip 与摘要 | 预构建私有运行依赖、用户 PATH/稳定 launcher、版本切换和恢复；不现场从源码安装依赖 |
 | 核心实现 | TypeScript 模块，由后台服务加载 | 经验提炼、生命周期、检索、单写者和存储网关 |
-| 后台服务与 CLI | 本地程序 | 服务独占运行状态；CLI 管理或调用服务，不另起一套引擎 |
-| 本地 Web UI | 随核心安装包提供的浏览器界面 | 核心服务提供静态资源及同源 API；搜索、管理和配置均调用核心，不直连 Qdrant |
+| 后台服务与 CLI | 当前用户本地程序，私有 runtime | 管理实际后端组件；关闭终端继续运行；可选登录自启，不使用机器级服务 |
+| 本地 Web UI | 随核心安装包提供的浏览器界面 | 核心服务提供静态资源及同源 API；搜索、管理和配置均调用核心，不直连数据库 |
 | 客户端 SDK | 薄 TypeScript API 客户端 | 类型、认证、序列化和错误处理；不加载 Mem0、不直接连 Qdrant |
 | MCP bridge | stdio 工具进程 | 把代理工具请求转给同一服务；不保存经验或启动独立写者 |
 | Copilot 扩展 | GitHub Copilot CLI plugin | 插件清单、hooks、MCP 配置与必要 skills，使用 SDK/bridge 接入 |
@@ -45,7 +48,9 @@ flowchart LR
 
 核心可以按库组织代码和测试，但首期不把嵌入式引擎 SDK 作为第二种部署方式。安装多个代理插件或关闭某个插件，不会创建或销毁核心经验库。可选 Copilot SDK 模型提供商由服务在通用 ExtractionModel 接口后加载，与 Copilot plugin 分开。
 
-CLI 提供打开本地 UI 的入口，页面关闭与服务生命周期独立。UI 使用经认证的浏览器会话，状态修改沿用核心权限与来源校验；仅监听 loopback 不替代身份检查。前端只缓存展示状态，不持久保存另一份经验库。首期不需要额外 UI 后端、桌面壳或云服务。
+CLI 可以打开本地 UI，关闭页面不停止服务。浏览器会话须认证，修改操作沿用核心的权限和来源校验；监听 loopback 不能代替认证。前端只缓存展示状态，不持久保存经验副本。首期不另设 UI 后端、桌面壳或云服务。安装与更新分别报告程序、服务、模型和代理接入状态；缺 Copilot 登录不启动自动学习，不要求额外模型 API key。
+
+下文存储、索引和故障恢复继续描述现有 Mem0/Qdrant 原型。实现 Hindsight 时，产品规则保持，物理存储和 operation 合同须按实际适配器重新设计、测试；不能用原型的 Qdrant 单数据库约定限制发行依赖。
 
 ## 能力分工
 

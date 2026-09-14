@@ -1,6 +1,6 @@
 # 接口与扩展
 
-日期：2026-09-13。以下为应用接口设计，不是 Mem0 SDK 的原生参数。字段语义以[经验模型](02-experience-model.md)为准。
+日期：2026-09-14。以下为应用接口设计，不是 Mem0 SDK 的原生参数。字段语义以[经验模型](02-experience-model.md)为准；安装、后台管理与组件更新以[发布设计](10-distribution-and-installation.md)为准。Mem0 专用调用仍描述当前原型。
 
 ## 调用边界
 
@@ -186,11 +186,11 @@ getJob 不能只根据历史 completed 结果宣布当前生效。服务按当�
 
 AgentAdapter 对接代理会话，可实现 SourceAdapter、ConsumerAdapter 或两者，Copilot plugin 属于此类。Connector 对接长期外部来源，提供增量读取、转换与来源变化；ConnectorRuntime 统一处理定时、重试、接收确认和游标。[持续同步合同](08-connectors.md)定义拉取与认证推送。ExtractionModel 单独提供模型推理，与来源接入独立。
 
-扩展清单声明 id、版本、输入能力、可用范围及可选条件评估能力。首期使用显式注册模块，无需插件市场、自动发现总线或热加载框架。持久同步状态通过网关保存到同一 Qdrant 的扩展私有命名空间；凭据使用系统凭据设施，不额外引入数据库。卸载后既有经验仍可查询，是否删除由用户明确选择。
+扩展清单声明 id、版本、输入能力、可用范围及可选条件评估能力。首期使用显式注册模块，无需插件市场、自动发现总线或热加载框架。持久同步状态由核心管理，原型保存在 Qdrant 的扩展私有命名空间；凭据使用系统凭据设施。随引擎替换调整存储映射，不让插件直接读写数据库。卸载接入后既有经验仍可查询，是否删除由用户明确选择。
 
 ### Copilot 适配
 
-交付形式为 GitHub Copilot CLI plugin。它是可安装的插件目录/包，不是 VS Code VSIX，也不是替代 Copilot 的自定义代理。首期按官方 Agent Plugins 1.0 格式组织：根目录 plugin.json、mcp.json、skills/，Copilot 专属 hooks 位于 com.github.copilot/hooks/。最终 manifest 与 hook 事件清单须在固定 CLI 版本上校验，不把宿主文档支持等同于已完成采集。
+Copilot 接入以 GitHub Copilot CLI plugin 目录或包随 LessonLoop 发行组件交付，由统一 setup/agent 命令注册，用户不必从源码复制脚本。首期不提供 VS Code VSIX 或替代代理。按 Agent Plugins 1.0 格式组织：plugin.json、mcp.json 和 skills/ 放根目录，Copilot hooks 放 com.github.copilot/hooks/。manifest 和 hook 事件须在固定 CLI 版本上验证，官方文档列出支持项并不等于采集已完成。
 
 插件包含以下内容：
 
@@ -200,7 +200,7 @@ AgentAdapter 对接代理会话，可实现 SourceAdapter、ConsumerAdapter 或�
 - 必要的 skills：说明 guidance/lead、验证权限和结果分流；用途保留、预算与状态刷新由适配代码和实际运行验收保证，不只依赖提示词。
 - 适配配置与诊断：核心连接、授权集合映射、能力检测、超时与兼容版本检查。
 
-使用根插件目录中的 bridge/脚本作为入口，具体编译输出路径在打包阶段固定。插件不包含另一套 Mem0/Qdrant 实例或经验生命周期。核心未运行时返回明确不可用，不把每次 MCP 启动变成创建新核心进程。卸载插件只移除宿主接入。
+插件通过用户安装目录中的稳定 launcher 启动 bridge/脚本，locator 解析当前兼容版本，不把 versions/<version> 硬编码到宿主配置。插件不包含另一套记忆引擎或经验生命周期。核心未运行时返回明确不可用，不把每次 MCP 启动变成创建新核心进程。卸载插件只移除宿主接入，应用卸载和数据清理分别处理。升级后旧进程需要宿主重载时明确报告，不承诺热切换。
 
 Copilot 适配负责宿主接入、短时排队、超时取消和上下文格式，将可用内容映射到通用材料接口。宿主事件只用于采集与关联，不成为核心材料的必填字段。
 
@@ -215,7 +215,7 @@ Copilot 适配负责宿主接入、短时排队、超时取消和上下文格式
 | 采用前刷新 | 新动作前复核目标修订与当前上下文 | 陈旧/不可用结果不能靠本地缓存继续取得资格 |
 | 纠正 | 绑定明确目标，提交并跟踪服务 receipt | 区分已接收、旧目标已暂停和新修订生效，不要求用户查内部 ID |
 
-可另复用 Copilot SDK 作为提取模型提供商。它使用用户已授权的登录环境、模型额度、截止时间与取消；这是模型配置，不是核心要求。不能把“Copilot 可消费经验”与“已有内置 Mem0 Copilot provider”混为一谈。当前官方核验没有该内置 provider。
+首版模型默认复用现有 Copilot SDK 登录和订阅，无需独立模型 API key；它与工作代理 Copilot plugin 是两个独立接入。Hindsight 已有 github-copilot provider，Mem0 路线需要对应模型适配，不能混为同一种内置支持。模型调用使用同用户的正常认证并与采集 hooks 隔离；截止时间、取消和有效参数按 provider 实际能力报告，登录不可用时保留待处理作业并提示修复。
 
 ### 自动召回触发表
 

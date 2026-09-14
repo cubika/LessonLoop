@@ -2,6 +2,8 @@
 
 日期：2026-09-13。状态：首版设计契约，待 P0 实现验证。本文定义持久化对象、字段形状、检索用途与大小限制；经验层次和学习规则见[经验模型](02-experience-model.md)，组件与恢复流程见[架构](03-architecture.md)。
 
+2026-09-14 补充：下文 collection/point 映射保留 Mem0/Qdrant 原型。目标引擎按[可替换接入设计](research/2026-09-14-memory-selection/README.md)重新映射；[发布与安装](10-distribution-and-installation.md)将 runtime 版本目录与 DataRoot 分开，正常升级不清数据，旧程序回滚不能恢复过时的删除记录。Hindsight document/chunks 与短期材料的保留须单独验收，不能假定自动满足原型的短摘录策略。
+
 ## 经验、来源和运行状态
 
 数据层使用 Mem0 + Qdrant。长期保留的主体是一条可独立使用的经验，附少量来源线索；完整材料只用于短期学习，不变成永久的第二份内容库。
