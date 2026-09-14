@@ -1,5 +1,6 @@
 node_modules/
 .p0/
+.local-validation/
 *.tsbuildinfo
 .env
 .env.*

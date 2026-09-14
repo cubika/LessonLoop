@@ -42,16 +42,17 @@ export interface ProbePaths {
 
 export function probePaths(workspace: string): ProbePaths {
   const root = resolve(workspace);
-  const host = join(root, ".p0", "host");
+  const validation = join(root, ".local-validation", "copilot");
+  const host = join(validation, "preflight");
   return {
     workspace: root,
-    executable: join(root, ".p0", "runtime", `copilot-${COPILOT_VERSION}`, "copilot.exe"),
+    executable: join(validation, "runtime", `copilot-${COPILOT_VERSION}`, "copilot.exe"),
     profile: join(host, "profile"),
     cache: join(host, "cache"),
     logs: join(host, "logs"),
     temp: join(host, "temp"),
     scratch: join(host, "scratch"),
-    report: join(root, ".p0", "results", "host-preflight.json"),
+    report: join(validation, "results", "host-preflight.json"),
   };
 }
 

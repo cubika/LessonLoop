@@ -210,7 +210,7 @@ async function runCase(workspace: string, root: string, mode: ProbeCase) {
 }
 
 export async function runHostHookProbe(workspace: string) {
-  const root = join(resolve(workspace), ".p0", "host-hooks", randomUUID());
+  const root = join(resolve(workspace), ".local-validation", "copilot", "hook-runs", randomUUID());
   const cases: Array<Awaited<ReturnType<typeof runCase>>> = [];
   for (const mode of ["context", "deny", "timeout"] as const) {
     cases.push(await runCase(workspace, root, mode));
@@ -224,7 +224,7 @@ if (entry !== undefined && pathToFileURL(resolve(entry)).href === import.meta.ur
   const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   try {
     const report = await runHostHookProbe(workspace);
-    const path = join(workspace, ".p0", "results", "host-hooks.json");
+    const path = join(dirname(probePaths(workspace).report), "host-hooks.json");
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, `${JSON.stringify(report, null, 2)}\n`);
     console.log(JSON.stringify({ classification: report.classification, cases: report.cases.length, report: path, observations: report.cases.map((entry) => ({ case: entry.case, exitCode: entry.exitCode, ...entry.observations })) }));

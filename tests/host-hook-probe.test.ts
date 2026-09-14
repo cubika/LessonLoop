@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { findViewTool, HOOK_SCRIPT, modelMarkers } from "../spikes/p0/host-hook-probe.js";
+import { findViewTool, HOOK_SCRIPT, modelMarkers } from "../probes/copilot/host-hook-probe.js";
 
 test("generated hook is valid JavaScript before a host session starts", () => {
   const result = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: HOOK_SCRIPT, encoding: "utf8", windowsHide: true, timeout: 5000 });

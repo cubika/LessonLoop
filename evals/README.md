@@ -2,6 +2,12 @@
 
 日期：2026-09-14。已从 ProvenLoop 的 92 个手写学习窗口中选择 48 个，保存为不依赖旧运行时的本地材料。它们还需要 LessonLoop 的输入适配、独立标签和具体任务判定器，当前状态是 `needs_oracle_review`。
 
+## 通用评测工具
+
+`lib/experience.ts` 保留字段校验与确定性的适用性判断，`fixtures/experience.ts` 提供配套样本；它们是待实现产品合同的参考检查，不是正式核心。`lib/task-runner.ts` 根据实际文件和检查结果判断任务，两个生成文件/手写反例保存在 `fixtures/tasks.ts`，模型调用工具在 `lib/model-client.ts`。相关单元测试随 `npm test` 执行。
+
+这些代码已从旧原型迁出并解除 Mem0 依赖。原三组 Mem0 对照入口已删除；Hindsight 的实际学习与任务对照仍待接入，现有 runner 通过不代表产品质量已达标。
+
 ## 为什么精简
 
 首批保留能暴露不同错误的材料。通用语义集覆盖有持续用途的纠正和相近反例；Agent 集保留自主调查与恢复；参数集保留少量中英对照。原始选择、暂缓原因和文件 hash 见[来源清单](provenloop/manifest.json)，实际材料见[开发集](provenloop/materials.json)。没有迁移旧 runner、模型输出、通过记录或人工标签。
@@ -48,7 +54,7 @@ automatic 保留 `required_path`、`multistep_correction`、`paraphrased_constra
 [选择配置](provenloop/selections.json)包含两个材料子集：`smoke-16` 用于后续开发时快速检查主要差异，`development-48` 用于较完整的开发回归。它们只选择材料，还不是带阈值的可执行评测 profile。
 
 ```powershell
-node scripts/validate-eval-corpus.mjs
+npm run validate:evals
 ```
 
 该命令只检查材料数量、身份、来源与内容 hash、关联组、选择配置和验收 ID。校验通过不表示提炼正确，也不会启动模型或写入经验库。
@@ -57,7 +63,7 @@ node scripts/validate-eval-corpus.mjs
 
 ```powershell
 node scripts/sync-provenloop-corpus.mjs --source ../ProvenLoop
-node scripts/validate-eval-corpus.mjs
+npm run validate:evals
 ```
 
 同步先检查三个来源都是 `authored_replay`，拒绝未知 case；未使用 `--overwrite` 时不覆盖已有材料。来源 JSON 的路径、原始字节 hash 与生成代码 hash 均进入清单。校验已同步文件无需访问 ProvenLoop；重新同步需要清单中列出的本地来源文件。

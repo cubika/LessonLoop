@@ -1,43 +1,47 @@
-# LessonLoop 产品规划
+# LessonLoop
 
-LessonLoop 从工作材料中提炼可复用经验，保留适用条件和来源，在后续任务中检索，并随新证据修订。Copilot 是首个代理适配；Connector 将外部材料与经验持续同步到记忆，邮件只是来源示例。
+LessonLoop 从日常调查、用户纠正和外部资料中提炼经验，保留来源、适用条件与例外，在后续任务中帮助代理少做重复调查。
 
-本目录定义产品目标、领域模型、架构、接口与验收标准，并包含[发布前 P0 验证原型](spikes/p0/README.md)。`LessonLoop` 暂用作工作名称；当前已有隔离存储与宿主协议探针，真实模型对照尚未执行。对照实验用于开发验证，不是用户日常任务的执行方式。
+**当前处于设计与技术验证阶段，还没有可安装的产品。** 仓库包含设计文档、Copilot 协议探针和通用评测工具。目标引擎选择 Hindsight 自托管，模型使用现有 Copilot 订阅；引擎适配、正式服务、UI 和 Windows 安装包均待实现。Mem0/Qdrant 原型已移除，研究与实测记录保留供查证。
 
-产品运行在本地后台。Windows 用户通过一条 `irm` 命令安装固定版本的 CLI、Web UI、私有运行依赖和代理接入。安装器统一管理本地组件，模型使用已有 Copilot 订阅。当前尚无可用安装器或下载地址，详见[发布与本地运行方案](docs/10-distribution-and-installation.md)。
+例如，代理发现直接修改生成客户端会被覆盖，就应记住修改生成源的做法。下次遇到类似任务，先判断目标是否为生成文件；手写文件不套用这条经验。来源更新或用户纠正后，旧建议要及时停止使用。
 
-## 阅读顺序
+## 从哪里开始
 
-| 文档 | 回答的问题 |
+| 想了解什么 | 阅读入口 |
 |---|---|
-| [产品定义](docs/01-product.md) | 服务谁，解决什么问题，首版包含什么，用户怎样使用 |
-| [经验模型与学习](docs/02-experience-model.md) | L1–L5、多维字段、来源、提取、整合和修订的语义 |
-| [存储数据模型](docs/07-storage-model.md) | 全部持久化对象、字段形状、适用范围、索引与容量上限 |
-| [架构与 Mem0 边界](docs/03-architecture.md) | 数据归属、组件职责、检索和故障处理怎样实现 |
-| [接口与扩展](docs/04-contracts-and-extensions.md) | 核心操作、代理适配、模型接口与 Connector 的边界 |
-| [Connector 持续同步](docs/08-connectors.md) | 外部来源接入、增量更新、游标、来源撤回与管理 |
-| [实施与验收](docs/05-delivery-and-validation.md) | 开发顺序、测试案例、阶段退出条件 |
-| [实现质量评估](docs/09-quality-evaluation.md) | 场景合同、独立判定、对照评测、质量门禁与每次提交应保留的证据 |
-| [开发评测材料](evals/README.md) | 48 个开发窗口、16 个快速检查子集、材料来源、选择理由与待适配内容 |
-| [发布、安装与本地运行](docs/10-distribution-and-installation.md) | irm 安装、私有组件包、后台进程、Copilot 登录、升级回滚和卸载 |
-| [评审与取舍](docs/06-review-and-decisions.md) | 产品与技术选择的理由、代价及验证要求 |
-| [资料核验](docs/research/2026-09-12/README.md) | Mem0、Qdrant 官方依据及能力边界 |
-| [P0 实测记录](docs/research/2026-09-13-p0/README.md) | 存储、宿主协议的实际结果、兼容性发现和未完成验证 |
-| [记忆引擎选型与可替换接入层](docs/research/2026-09-14-memory-selection/README.md) | 本地免费与 Copilot 订阅约束下的横向比较、Hindsight 推荐依据、接入抽象与迁移边界 |
+| 产品有什么用、计划怎样使用 | [产品定义](docs/01-product.md) |
+| 经验怎样形成、什么时候能用 | [经验模型与学习规则](docs/02-experience-model.md) |
+| 核心、记忆引擎和代理怎样配合 | [系统架构](docs/03-architecture.md) |
+| 下一步实现什么、如何判断完成 | [实施与验收](docs/05-delivery-and-validation.md) |
 
-## 设计原则
+其余接口、数据结构、同步和发布文档按需查阅，完整导航见[文档地图](docs/README.md)。已有结果与选型依据见[研究及验证记录](docs/research/README.md)，历史报告只说明所记录版本的实测范围。
 
-以下存储原则描述现有 Mem0 原型。2026-09-14 的重新选型建议采用 Hindsight 自托管，并在产品 API 下增加可替换记忆引擎接口；依据及待验证事项见上方研究文档，尚未迁移实现。
+## 目录说明
 
-- 数据层采用 Mem0 + Qdrant。Mem0 管理经验，Qdrant 是唯一数据库，必要运行状态也存入 Qdrant。
-- 领域层输出结构化经验，再逐条通过 `infer: false` 写入 Mem0；领域提取与去重由应用实现。
-- L1–L5 表示抽象层次，可信程度、使用范围和用途分别表达。首版支持五层表达，并验证有边界的跨案例提炼。
-- 核心以材料、经验和学习作业为基本对象。输入不要求宿主事件身份或完整会话。
-- 新用户任务开始自动召回，采用经验前定向刷新，关键上下文变化按需补召回；纠正回执区分可靠接收、旧建议暂停和新修订生效。
-- 每条经验保留一个修订号、必要来源与适用边界，支持纠错、停用和删除。准入检查持续用途与证据，held 有有限复评计划。召回区分可采用经验与待核实线索，本次适用性不改变经验的持久状态。
-- AgentAdapter 连接代理工作流；Connector 接入外部来源。通用 ConnectorRuntime 管理定时、重试与同步进度，外部协议由各 Connector 实现。
-- 发布采用当前用户目录中的版本化安装，程序与数据分离；模型、工作代理和记忆引擎分别适配，升级保留用户配置与删除意图。
+| 路径 | 内容 |
+|---|---|
+| docs/ | 当前产品设计、合同、实施与验收要求 |
+| docs/research/ | 有日期的选型依据、原型设计与运行证据 |
+| probes/copilot/ | 与记忆引擎无关的 CLI 及 hook 协议验证 |
+| evals/ | 通用适用性检查、任务 runner、两例任务及 48 个待适配学习窗口 |
+| tests/ | 协议探针与通用评测工具的单元测试 |
+| scripts/ | 校验、Copilot 探针准备及材料同步工具 |
+| .local-validation/ | 当前工具的隔离运行时、临时数据和报告，不提交 Git |
+| .p0/ | 已停止维护的原型本地输出，仅保留历史日志或清理记录 |
 
-## 文档状态
+`evals/fixtures/tasks.ts` 的两个可执行任务与 48 个学习窗口用途不同：前者检查简化任务执行，后者等待标签、输入适配和具体判定器。
 
-日期：2026-09-14。设计仍待实施验证。性能预算和质量门槛是验收目标，已测结果另见 P0 记录。Mem0/Qdrant 原型已有部分测试；Hindsight 适配、Windows 组件打包、irm 安装及完整场景集和 CI 门禁尚待实现。
+## 在源码中运行检查
+
+需要 Node.js 22.18+；宿主探针的运行环境为 Windows x64 与 PowerShell。以下命令安装开发依赖并检查文档、材料及局部代码，不启动模型或产品服务。
+
+```powershell
+npm ci --ignore-scripts
+npm run validate:docs
+npm run validate:evals
+npm run typecheck
+npm test
+```
+
+文档报告写入 `.local-validation/results/document-validation.json`。Copilot 协议探针的准备及运行步骤见[探针说明](probes/copilot/README.md)。正式产品拟采用 Windows `irm` 安装入口，当前没有下载地址，设计见[发布与本地运行](docs/10-distribution-and-installation.md)。

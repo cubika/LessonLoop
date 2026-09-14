@@ -1,54 +1,38 @@
 # 存储数据模型
 
-日期：2026-09-13。状态：首版设计契约，待 P0 实现验证。本文定义持久化对象、字段形状、检索用途与大小限制；经验层次和学习规则见[经验模型](02-experience-model.md)，组件与恢复流程见[架构](03-architecture.md)。
+日期：2026-09-14。状态：持久数据合同与待实现的引擎映射。本文维护字段、容量、来源指纹和保留期限；领域判断见[经验模型](02-experience-model.md)，请求响应见[接口合同](04-contracts-and-extensions.md)。
 
-2026-09-14 补充：下文 collection/point 映射保留 Mem0/Qdrant 原型。目标引擎按[可替换接入设计](research/2026-09-14-memory-selection/README.md)重新映射；[发布与安装](10-distribution-and-installation.md)将 runtime 版本目录与 DataRoot 分开，正常升级不清数据，旧程序回滚不能恢复过时的删除记录。Hindsight document/chunks 与短期材料的保留须单独验收，不能假定自动满足原型的短摘录策略。
+产品对象与后端物理对象分开。Mem0/Qdrant 原型代码已删除，专用映射见[历史设计](research/2026-09-13-p0/mem0-architecture.md)；Hindsight 接入和 engine_binding 尚未实现。正常升级不清 DataRoot，程序回滚不能回滚删除与停用意图，路径行为见[发布与安装](10-distribution-and-installation.md)。
 
 ## 经验、来源和运行状态
 
-数据层使用 Mem0 + Qdrant。长期保留的主体是一条可独立使用的经验，附少量来源线索；完整材料只用于短期学习，不变成永久的第二份内容库。
+LessonLoop 保存对外发布的经验、来源线索和必要控制状态。引擎管理原生事实、索引及归纳；这些内部产物通过映射参与准入，不直接成为可采用经验。
 
-| 对象 | 保存位置 | 保存内容 | 生命周期 |
+| 对象 | 逻辑记录 | 保存内容 | 生命周期 |
 |---|---|---|---|
-| Experience | Mem0 管理的经验 collection | 当前结论、适用边界、分类、少量 evidence、推导引用 | 修改递增 revision；停用保留；删除清理 |
-| ScopeDefinition | 管理 collection，scope_config | 集合名称、所有者、可信适配授权与默认映射 | 用户配置，模型不可修改 |
-| LearningJob | 管理 collection，learning_job | 脱敏 Material、阶段、结果 id/revision、纠正目标与已确认暂停事实、有限原因 | 短期保存；不建立永久通知或投递历史 |
-| WriteOperation | 管理 collection，write_operation | 未确认操作、目标 ID/nonce、暂存待写内容 | 完成确认后清理，uncertain 保留到修复 |
-| 来源控制标记 | 管理 collection，delete_marker | 目标 ID/指纹、reason 与处理动作 | 区分忘记、擦除、撤回与版本替代，临时失效不等于永久删除 |
-| ExtensionCheckpoint | 管理 collection，extension_state | 代理适配私有的有限原生状态 | 按适配政策更新，不进入召回 |
-| Connection 配置/状态 | 管理 collection，connection_config / connection_state | 来源实例、计划、确认游标、接收与学习进度 | 用户配置，暂停/移除遵守同步合同 |
-| SourceBinding | 管理 collection，source_binding | 每连接+源对象的 current/pending 修订、指纹和任务绑定 | 有限当前同步映射，不保存完整源历史 |
+| Experience | 发布经验 | 当前结论、适用边界、分类、少量 evidence、推导引用 | 修改递增 revision；停用保留；删除清理 |
+| EngineBinding | engine_binding，待实现 | 产品经验与引擎实例、原生产物及依据关系的映射 | 重处理后核对，不能借新原生 ID 绕过用户意图 |
+| ScopeDefinition | scope_config | 集合名称、所有者、可信适配授权与默认映射 | 用户配置，模型不可修改 |
+| LearningJob | learning_job | 脱敏 Material、阶段、结果 id/revision、纠正目标与已确认暂停事实、有限原因 | 短期保存；不建立永久通知或投递历史 |
+| WriteOperation | write_operation | 未确认操作、目标身份、暂存待写内容 | 完成确认后清理，uncertain 保留到修复 |
+| 来源控制标记 | delete_marker | 目标 ID/指纹、reason 与处理动作 | 区分忘记、擦除、撤回与版本替代，临时失效不等于永久删除 |
+| ExtensionCheckpoint | extension_state | 代理适配私有的有限原生状态 | 按适配政策更新，不进入召回 |
+| Connection 配置/状态 | connection_config / connection_state | 来源实例、计划、确认游标、接收与学习进度 | 用户配置，暂停/移除遵守同步合同 |
+| SourceBinding | source_binding | 每连接+源对象的 current/pending 修订、指纹和任务绑定 | 有限当前同步映射，不保存完整源历史 |
 
-Qdrant 仍只有一个应用经验 collection 和一个 `lessonloop_operations` 管理 collection。管理集合按 recordType 区分对象，不计算语义嵌入；Mem0 的内部辅助集合由 Mem0 管理。身份凭据放系统凭据设施，普通配置文件可保存连接参数，均不含第二份经验。
+管理对象按 recordType 区分，不参与语义召回。实际存储映射由适配实现验证；凭据存入系统凭据设施。
 
 不永久保存完整邮件、完整会话、工具输出日志、每次投递记录、模型推理过程、逐级经验晋升链或完整修订历史。来源原件由外部系统保存，inspect 不会自动联网读取。
 
-## 范围有两种不同含义
-
-`scopeId` 表示知识归属和访问边界；`applicability`、`conditions` 和 `exceptions` 表示经验在什么情况下有用。二者不能合并成一个 repo/branch 层级。
-
-| 例子 | 归属集合 scopeId | 适用性 |
-|---|---|---|
-| 个人写作偏好 | personal:writing | 无额外限制时 general；与代码仓库无关 |
-| 有生成流程的客户端应修改生成源 | work:engineering | conditional，生成产物、生成方式及手写例外 |
-| 某项目只用 pnpm 安装依赖 | work:project-a | conditional，可限定 code.repo；通常不限定 branch |
-| 仅在一次迁移分支使用兼容步骤 | work:project-a | conditional，code.repo + code.branch + 有效期 |
-| 某客户验收材料的要求 | work:client-a | conditional，业务任务/客户/材料类型 |
-| 超时后重试外部写操作的风险 | work:engineering | conditional，外部副作用、幂等条件；可跨多个仓库 |
-
-集合可以是个人资料、工作领域或具体项目，不内置 repository、branch、team 的固定树。初期单用户，集合仍限制不同扩展可访问的内容。general 只表示没有已知的额外适用限制，不代表对所有用户公开，也不代表原则已普遍证实。
-
-采集时的 repo、branch、path 是来源上下文，只有当结论依赖它们时才进入条件。一次调查发生在某分支，不应把以后都成立的经验锁定到该分支。L1–L5、归属集合和适用范围相互独立：L1 可以跨项目有用，L5 也可以只适用于一种系统。
-
-消费方只从其明确授权的集合检索。扩大适用条件不扩大访问权限；在更广集合发布经验必须由用户发起新 proposal，检查脱敏、来源与判定，不能删掉私有来源后原样继承 supported/active。首版 derivedFrom 仅允许同一 scope 内引用。
+`scopeId` 表示归属与授权，适用条件另行保存。集合没有固定的 repo/branch 树；跨集合发布及使用规则见[领域模型](02-experience-model.md#核实结果的两条去向)。
 
 ## Experience 字段契约
 
-容量以 UTF-8 字节计。必填数组允许为空，除下文的来源非空约束。ID、时间和状态由服务设置，模型只提交可校验的内容 proposal。具体限额是产品预算，不是 Mem0/Qdrant 的最大能力。
+容量按 UTF-8 字节计算。除来源非空要求外，必填数组可为空。ID、时间和状态由服务设置，模型只提出内容 proposal。下列限额是产品预算，不是数据库技术上限。
 
 | 字段 | 类型与必选性 | 容量/规则 | 写入者 |
 |---|---|---|---|
-| id | string，必填 | Mem0 ID，最大 128 B；不复制进 ll_record | Mem0 |
+| id | string，必填 | 稳定产品 ID，最大 128 B；后端原生 ID 在映射中保存 | 服务 |
 | revision | integer，必填 | 从 1 递增；正安全整数 | 服务 |
 | scopeId | string，必填 | 最大 128 B，引用可访问 ScopeDefinition | 服务 |
 | conclusion | string，必填 | 最大 2 KiB，一个主要主张 | 提炼器，经校验 |
@@ -69,84 +53,78 @@ Qdrant 仍只有一个应用经验 collection 和一个 `lessonloop_operations` 
 | createdAt, updatedAt | UTC 时间字符串，必填 | RFC 3339，最大 32 B/项 | 服务 |
 | validFrom, validUntil | UTC 时间字符串，可选 | 省略表示该方向不设边界；区间必须有序 | 策略/用户，经校验 |
 
-所有领域内容或使用边界的变化都递增 revision，包括 evidence 与适用性。sourceFingerprints 是直接 evidence 指纹及所有 derivedFrom 父经验根指纹的并集，不能用其数量当独立支持数；超过 32 项时不能截断后继续使用，须缩小主张或暂缓整理。
+领域内容或使用边界改变都会递增 revision，evidence 和适用性也包含在内。sourceFingerprints 取直接 evidence 指纹与 derivedFrom 父经验根指纹的并集，数量不等于独立支持数。超过 32 项须缩小主张或暂缓整理，不得截断后继续使用。产品 ID 与后端引用通过下文 engine_binding 关联。
 
 可持久化经验要求 evidence 与 derivedFrom 至少一者非空。纯派生记录可以 evidence=[]，不复制父经验的摘录；直接提供的原则保留其来源摘录。支持来源无法保持时，该 proposal 不作为 active 经验写入。
 
 ## 准入与复评字段约束
 
-purpose 不新增分类树。constraint 表示真实用户为本人或有权管理范围设定的要求，涵盖长期偏好；外部规范的陈述通常是 fact/procedure，不能因命令式措辞转换成用户要求。详细例子以[准入规则](02-experience-model.md)为准。
+状态组合须通过[领域准入矩阵](02-experience-model.md#价值筛选与可执行判定)，不能只检查枚举合法。外部草稿不提供受信状态、角色或验证结果。
 
-active 的允许组合为：通过价值与证据检查的 supported；或 purpose=constraint、basis=reported、assessment=attributed 且保留对应真实用户声明。该身份和范围由服务核验，不能仅凭 JSON 中 role=user 决定。hypothesis/contested 不允许 active；归属明确但无事实支持的 attributed 客观断言也不允许 active。
+review.reason 取 verification_requested/conflict/source_changed/scope_unclear。question 用 1–512 B 写明待核实的问题，reviewBy 为 UTC 时间；整个 review 最多 1 KiB，计入 Experience 的 16 KiB 上限。question 只供阅读，不是命令。held 必须带 review，active 必须清除它；disabled 可保留已结束计划，说明停用原因。
 
-review.reason 为 verification_requested/conflict/source_changed/scope_unclear；question 为 1–512 B 的具体缺口，reviewBy 为 UTC 时间，整个 review 最多 1 KiB并计入 Experience 16 KiB。question 是供检查者阅读的问题，不是命令。held 必须有 review，active 不允许残留 review；disabled 可保留已结束计划解释停用原因。
-
-复评默认从进入本轮 held 起 30 天，用户显式设定的期限可以覆盖默认。新证据可提前重评；普通重试、浏览、重复输入或无关编辑不续期。到期 unresolved 转 disabled，停止自动复评而非自动删除正文；普通 Connector 同步不能重新启用。日期字段与状态变化都使用 expectedRevision，防止到期旧任务误停新修订。
-
-reviewBy 与 validUntil 独立：前者是等待核实的期限，后者是结论适用的截止时间。未到 reviewBy 也不能自动使用 held；validUntil 到期的 active 也不能送入正常召回。期限到达不会变成支持证据。
+复评默认期限为本轮进入 held 后 30 天，用户可以显式另设期限。reviewBy 与经验有效期 validUntil 独立，状态转换与防止无效续期的规则统一见[暂缓与复评](02-experience-model.md#暂缓复评与停止使用)。
 
 ## 可判断的适用条件
 
-Condition 的形状是 `{text, match?}`。text 必填，说明完整条件；match 可选，形状为 `{key, values}`，语义固定为 one_of。key 最大 64 B，values 为 1–4 个字符串，每值最大 128 B。核心不提供任意规则 DSL、正则、版本表达式或路径前缀匹配。
+Condition 使用 `{text, match?}`。text 必填，写明完整条件；可选 match 为 `{key, values}`，只支持 one_of。key 最多 64 B，values 为 1–4 个字符串，每值最多 128 B。核心不实现任意规则 DSL、正则、版本表达式或路径前缀匹配。
 
-可选 key 使用命名空间，例如 `code.repo`、`code.branch`、`runtime.os`、`task.kind`、`document.kind`、`business.customer`。这是上下文协议，不是权限模型。核心比较规范化精确值或集合交集；缺值就是 unknown。分支条件必须同时限定 repo，避免相同分支名在不同仓库串配。路径与复杂版本条件由适配评估器解释，不能把字符串前缀当成目录关系。
+key 使用命名空间，例如 `code.repo`、`code.branch`、`runtime.os`、`task.kind`、`document.kind`、`business.customer`。它们描述上下文，不授予权限。核心比较规范化后的精确值或集合交集，缺值为 unknown。分支条件必须同时限定 repo，以免同名分支串配。路径和复杂版本交给适配评估器，字符串前缀不能当作目录关系。
 
-本次匹配先通过授权、active/准入合法、有效期、当前来源与依赖门槛。不同 conditions 为 AND，exceptions 任一成立就排除；已知条件不满足/例外命中优先于其他未知项。本次全部条件满足且例外均排除为 applicable/guidance；无明确冲突但缺可核实当前信息为 undetermined，只在显式启用且满足线索标准时 lead。持久 applicability=unknown 不能当作这种上下文缺失。
+conditions 之间为 AND，exceptions 任一成立即排除；已知不满足或命中例外优先于其他未知项。返回用途与核实协议见[查询与结果](04-contracts-and-extensions.md#查询与结果)。
 
-match 必须完整表达该条 text。表达不全时拆为结构化条件与自由文本条件；单条评估返回 match/no_match/unknown。自由文本评估器只能使用本次实际上下文或短 contextEvidence，说明判断依据；不能执行来源指令或猜缺失值。未配置或无法确认是 unknown；若没有具体可回答的核实问题，也不能为了给结果而包装成 lead。
+match 必须完整表达对应 text，否则拆成结构化条件和自由文本条件。单条判断返回 match/no_match/unknown。自由文本评估器只能使用本次真实上下文或短 contextEvidence，并说明依据；不执行来源指令，不猜缺失值。没有评估器或无法确认时为 unknown，没有具体可回答的问题时也不返回 lead。
 
-来源上下文并非永远可信：code.repo 等由绑定宿主确定；contextEvidence.keys 只声称涉及哪些键，不能证明键值成立。服务核对真实归属、当前对象/版本/时间与材料关系，不接受自报 role=tool 获得观察身份。模型不能覆盖宿主值或通过 context 改写授权。
+## Evidence 与来源指纹
 
-## 召回与核实的瞬时合同
+Evidence 必填 `excerpt`、`role`、`relation`、`fingerprint`，可选 `locator`、`author`、`observedAt`。role 取 user/agent/external/tool，relation 取 supports/contradicts。单项限制为 excerpt 512 B、locator 256 B、author 128 B、observedAt 32 B；所有条目的完整 JSON 合计最多 2 KiB。
 
-这些字段只属于请求、响应或消费端任务缓存，不写入 Experience、Mem0 metadata 或 Qdrant 管理记录。现有持久 state/basis/assessment/applicability 不新增枚举。
+excerpt 必须是脱敏输入中的连续原文，通常保留一句足以支持或反驳主张的话。不另存模型 evidence summary，不把改写当原文。
 
-| 字段 | 形状与初始限制 | 用途 |
-|---|---|---|
-| recall.includeLeads | boolean，可选，默认 false | 明确要求并能够处理待核实线索 |
-| recall.target | 可选 {id, revision}，id≤128 B，正安全整数 | 精确重评当前项，不跳过 query/scope/context 与资格检查 |
-| recall.context | 0–32 个命名空间 key；每 key≤64 B、每值≤128 B，可为最多4项数组 | 本次环境信息，与材料 context 形状相同，不授权 |
-| recall.contextEvidence | 最多4项 {keys,excerpt,role,locator?}，keys 1–4 项，excerpt≤512 B、locator≤256 B | 请求内可核验短材料，沿用真实通道归属规则 |
-| item.usage | guidance/lead，所有自动返回项必填 | 可采用经验或待核实线索 |
-| item.taskApplicability | applicable/undetermined，返回项必填 | 本次适用性，not_applicable 只作内部判定/定向空结果原因 |
-| item.relevanceReason | lead 必填，1–256 B | 说明任务与经验的具体关联，不使用相似分数代替 |
-| item.missingChecks | lead 必填，1–4 项 {field,index,question,contextKey?} | field 为 conditions/exceptions，index 是目标修订数组下标；question≤256 B，不是命令 |
+服务在材料持久化前生成 fingerprint：正文先脱敏、Unicode NFC 规范化、换行统一 LF，保留大小写及其余空白。按下列有序字段的 UTF-8 字节长度分隔编码计算 SHA-256，保存为小写 hex：
 
-完整 recall 请求 JSON 最大 16 KiB，含 query（≤4 KiB）、scopeIds（最多8个，每个≤128 B）、context、contextEvidence 与其他参数。超过预算返回 request_too_large，不截断出处或把未核实值填成成立；原有 Material 32 KiB 和 Experience 16 KiB 预算独立。
+| 材料来源 | 有序输入 |
+|---|---|
+| 手动材料 | scopeId、完整规范化片段正文 |
+| Connector | scopeId、服务确定的 bindingId、sourceRevision、partKey、完整规范化片段正文 |
 
-所有 returned item 仍含结论、条件/例外、purpose/basis/assessment 和有效区间。lead 最多1项、missingChecks 最多4个；若未知项超过4个且不能保持完整性，暂不返回该线索，不遗漏未检查例外。两类合计≤3项/约800 token，guidance 优先；guidance 的 missingChecks 必须为空或省略。
+长度前缀的具体字节格式须由实现固定并用跨重启测试校验，不能依赖字符串拼接分隔符。经验与作业沿用同一指纹；派生经验继承根指纹，不对短摘录或摘要重新计算。Connector 的绑定和版本规则见[源对象身份](08-connectors.md#源对象身份与经验来源)，原生对象键和账号细节不进入 Experience。
 
-缺口引用始终与 item.id/revision 一起解释。确认材料先转换成可信当前上下文，再定向 recall；结果不保存为支持来源、不改经验修订。当前自动资格（授权、state/依据、有效期、来源/依赖和屏障）失败或不存在时统一 target_unavailable；全部通过后修订不符才 target_changed。消费端丢弃旧检查项，有效性检查优先于披露变更。
+Evidence 默认不生成 embedding，也不随自动上下文返回，用户通过 inspect 查看原文、归属和位置。较长论证按需展开父经验引用，不向每条高层经验复制完整资料。
 
-每任务+经验 ID 的检查预算由客户端短期缓存维护，最多两轮、有新信息才继续，重排/换修订不重置；缓存丢失后不自动续查旧任务。检查计划、question 与返回结果都不构成执行授权。持续的新支持/反例才按 verificationFor 进入现有准入。
+提取器须选择足够支持主张的短原文，必要时缩小或拆分主张。预算放不下时，返回需要更聚焦材料的原因，不能删掉影响含义的限定词或反例后仍沿用 supported。有效摘录可以没有 URL；有 URL 也不证明已经读过内容。
 
-## Evidence 保持短小
+## 材料与派生产物保留
 
-Evidence 必填字段为 `excerpt`、`role`、`relation`、`fingerprint`；可选 `locator`、`author`、`observedAt`。role 为 user/agent/external/tool，relation 为 supports/contradicts。每个 excerpt 最大 512 B，locator 最大 256 B，author 最大 128 B，observedAt 最大 32 B。所有条目的完整 JSON 合计不超过 2 KiB，不是每项各有 2 KiB。
+| 内容 | 保留与清理合同 |
+|---|---|
+| 已完成 LearningJob 的完整脱敏材料、短期 proposal 与结果 | 默认完成后 7 天清理；不建立永久候选库或通知历史 |
+| 明确失败作业的材料 | 最多 30 天；到期前保留可定位来源的失败状态，界面不能显示已学会 |
+| 已接收未完成材料、uncertain 所需材料与拟写内容 | 不套用完成清理期限；保留到确认完成或修复，避免丢失恢复依据 |
+| 当前 Experience | 长期保留主张、短摘录和引用；停用仍可查看，用户删除按清理合同处理 |
+| 来源控制与引擎映射 | 有引用、可能重放或需维持删除/停用意图时保留；不得随普通作业到期清理 |
 
-excerpt 必须是脱敏输入中的连续原文，通常保留一句足以支持或反驳主张的话。手动 fingerprint 按 scope+规范化完整片段计算；Connector 来源还绑定 bindingId/sourceRevision/partKey 以区分来源与修订，公式见[持续同步](08-connectors.md)。原生 ID 不进入经验。不另存模型 evidence summary，不把改写当原文。
+Hindsight 的 document/chunks、原生事实、observations 和其他派生产物是独立副本。接入前须逐类核对默认保留、删除 API、来源传播及重处理行为，验证短期材料到期后哪些内容仍存储。不能只清理 LessonLoop 作业就宣称全文已删除，也不能为满足期限删除支撑仍有效经验的依据。
 
-Evidence 默认不进入 embedding，不随自动上下文返回。inspect 才展开原文、归属和可用位置。较长论证通过少量父经验引用按需展开；无需给每条高层经验复制一遍完整资料。
+若引擎必须保留全文才能维持有效经验，须明确形成产品保留策略及用户可见设置后验收；当前不承诺 Hindsight 已满足上述短期全文策略。显式 erase 检查所有受控副本和派生结果，withdraw 只取消对应来源支持；重启和重处理不得恢复已撤回或遗忘的资格。
 
-不能为了满足预算删除改变含义的限定词或反例。提取器应选择足够且短的原文，或缩小/拆分主张；确实放不下则返回需要更聚焦材料的原因。不得机械截断后沿用原 supported 判定。没有 URL 也可保存有效摘录，有 URL 不证明该内容已读。
+## 产品经验与引擎映射
 
-## 搜索与索引映射
+`engine_binding` 是待实现的内部产品记录，不向普通客户端暴露，不复制原生产物全文。它维护已发布 Experience 与厂商产物的对应关系；具体持久后端和原生引用编码由适配器实现后验证。
 
-| 字段组 | 默认语义检索 | 显式查询/过滤 |
-|---|---|---|
-| conclusion、conditions.text、topics、entities | 组成 Mem0 memory 正向文本 | conclusion/conditions 指定 text 查询；topics/entities keyword |
-| exceptions.text | 否 | browse(query, field=exceptions) 仅调查；recall 不接受该字段，自动召回仍检查例外 |
-| scopeId、state、level、purpose、applicability、basis、assessment | 否 | Qdrant 精确过滤；scope 强制从身份解析 |
-| review.reason、reviewBy | 否 | 详情/复评管理；reviewBy 数值投影用于有界到期扫描，不参与相关性 |
-| createdAt、updatedAt、validFrom、validUntil | 否 | 数值时间投影和范围过滤 |
-| evidence 原文、作者、来源位置 | 否 | 首版 inspect；不承诺任意正文/作者搜索 |
-| sourceFingerprints、derivedFrom.id | 否 | Qdrant keyword 查来源副本和反向依赖 |
-| id、revision | 否 | 精确读取/修订检查 |
-| match.key/values | 否 | 在有限候选上判断；首版不自动为任意上下文 key 建索引 |
+| 字段 | 必须表达的内容 |
+|---|---|
+| experienceId / experienceRevision / scopeId | 当前产品经验与授权归属；产品 ID 不由厂商重处理重新分配 |
+| backendInstanceId / engineType / processingConfigVersion | 实际引擎实例、种类和生效处理配置；旧实例回调不能修改新实例绑定 |
+| nativeRefs | 原生产物 ID 与类型、命名空间、可核对的原生修订或内容摘要；允许拆分/合并造成多项映射 |
+| sourceRefs / dependencyCoverage | 已知来源身份与修订、父产物关系及完整性；不能把几条引用当作完整依赖 |
+| checkState / checkedAt | 最近核对是否可用、已变化、不可用或尚未确认及时间；不替代实时资格检查 |
 
-常用的扁平索引字段从 ll_record 机械生成：ll_scope、ll_state、ll_level、ll_purpose、ll_applicability、ll_basis、ll_assessment、ll_topics、ll_entities、ll_source_fingerprints、ll_parent_ids 与数值时间字段，包括可选 ll_review_by_ms。字段名是映射，不是独立当前数据。
+原生产物变化后先阻断受影响建议，再重新准入并更新领域 revision。无法确定新产物是否继承用户停用/忘记意图时保持暂停。内容、来源及限制未变的索引重建不自动增加领域 revision。
 
-不能因为当前任务有 repo 就加一个必须匹配 repo 的全局候选过滤，否则会丢掉未限定 repo 的通用经验。后续若把上下文条件移到前置筛选，须同时保留 general 与没有该维度限制的记录，验证嵌套 key/value 不串配。
+映射的字段枚举、数量/字节上限、分页和原子更新方式仍待适配实现冻结并测试；在依赖覆盖和当前性无法核实时不得发布 guidance/lead。历史原型结果不能替代这项验收。
+
+各适配器须声明检索、索引和完成确认的实际能力，并分别测试容量。Mem0 的索引投影及检索文本/payload 旧预算只保留在[历史映射](research/2026-09-13-p0/mem0-architecture.md#历史索引映射与专用预算)，厂商字段不进入公开 API。
 
 ## 总大小与超限处理
 
@@ -154,72 +132,68 @@ Evidence 默认不进入 embedding，不随自动上下文返回。inspect 才�
 |---|---|---|
 | 应用 Experience JSON | 16 KiB | UTF-8 紧凑序列化完整对象，包含 evidence/关系/元数据；不是磁盘占用 |
 | evidence 完整数组 | 2 KiB，最多 3 项 | 已包含在 16 KiB 内 |
-| Mem0 memory 检索文本 | 4 KiB | 同时不得超过选定 embedding 模型的 token 限制 |
-| 应用控制的持久 payload | 32 KiB | memory 文本、ll_record、索引投影和应用控制 metadata 合计；不含向量/引擎内部附加字段 |
 | Material 输入 | 32 KiB | 脱敏后的完整请求 JSON，包含最多 16 个 segments 及上下文 |
-| 自动召回输出 | 约 800 token，最多 3 条，其中最多 1 条 lead | guidance 优先，完整保留用途、边界与缺口；默认不含 evidence |
+| 自动召回输出 | 见[查询与结果](04-contracts-and-extensions.md#查询与结果) | 瞬时响应预算，不计入持久存储 |
 
-这些是本产品的初始预算，并非数据库最大记录限制。中文通常占多个 UTF-8 字节；byte、字符和 token 不能互换。完整 limits 必须同时满足，单字段允许的最大值不能简单相加当成一条记录的容量。
+表中是产品预算。中文字符通常占多个 UTF-8 字节，byte、字符和 token 不能互换；各项限额须同时满足，不能把字段最大值相加当成单条容量。后端原生记录、索引及模型 token 容量待适配器分别测量，不继承历史 Mem0 的 4/32 KiB 限额。
 
-单向量的原始存储量还与维度和数据类型有关，例如 float32 向量的原始数值部分为维度乘 4 字节；索引、引擎字段和存储开销另计。P0 记录真实 payload 与磁盘增长，不用 16/32 KiB 宣称物理记录最大占用。
+各后端按实际检索路径验证写入与可查询事实，不能把引擎仅接收任务当成已可检索。
 
-超限在调用 Mem0 前返回 record_too_large、evidence_too_large、search_text_too_large 或 input_too_large。token 超限同样拒绝，不用自动截断改变结论。模型可重新提炼更小的独立主张；无法在预算内完整表达则保留作业失败原因，不发布该经验。
+单向量的原始存储量还与维度和数据类型有关，例如 float32 数值部分为维度乘 4 字节；索引、引擎字段和存储开销另计。容量验收须测真实存储增长，产品 JSON 上限不代表物理记录大小。
+
+领域记录超限在调用后端前返回 record_too_large、evidence_too_large 或 input_too_large。适配器声明并检查额外容量与模型 token 限制。模型可重新提炼更小的独立主张；无法完整表达时保留失败原因，不截断后发布。
 
 ## 管理记录的最小合同
 
-Material 请求必填 scopeId 与 segments，可选 verificationFor={id,revision} 关联经验主张的补证目标。当次适用性核实走 recall.target/contextEvidence，不自动写入 Material 或支持来源。目标必须同 scope、在调用方授权内且修订明确；最大 256 B，计入 32 KiB 材料总预算。它不赋予执行权、不授予 observed 或 supported；目标已变时不自动解除新修订 held。segments 为 1–16 项，每项包含非空 text 与声明的 role，可选 locator、author、observedAt，来源字段沿用 Evidence 的长度限制。可选 context 是最多 32 个命名空间 key 的映射，每个值为字符串或最多 4 个字符串的数组；key 最大 64 B、值最大 128 B。整个脱敏请求仍须满足 32 KiB，而不是每个 text 各有 32 KiB。
+Material 必填 scopeId 和 segments，可选 verificationFor={id,revision} 用于主张补证。目标须在同 scope、调用方授权内且修订明确；该字段最多 256 B，计入材料的 32 KiB 总预算。它不授予执行权、observed 或 supported 身份，目标已变时也不自动解除新版 held。当次适用性核实走 recall.target/contextEvidence，不自动保存为 Material 或支持来源。
+
+segments 为 1–16 项，每项包含非空 text 和声明的 role，可选 locator、author、observedAt，来源字段沿用 Evidence 的长度限制。context 可包含最多 32 个命名空间 key，每值为字符串或最多 4 项字符串数组；key 最多 64 B，值最多 128 B。整个脱敏请求合计最多 32 KiB。
 
 服务校验可信通道角色、规范化文本并生成片段 fingerprint 后写入 LearningJob；模型不得提供这些权威字段。context 仅辅助提炼与当前查询，不自动全部复制进 Experience；只有确实影响适用性的限制转入 conditions/exceptions。
 
-管理 point ID 是服务生成的稳定 UUID，重试使用同一个操作身份。共享字段为 recordType、ownerId、createdAt、updatedAt、可选 scopeId；模型不能设置这些字段。payload 按 recordType 校验，不放进 Mem0.add。
+管理对象由服务生成稳定 ID，重试沿用同一操作身份。共享字段为 recordType、ownerId、createdAt、updatedAt、可选 scopeId；模型不能设置这些字段。下表维护产品记录预算，物理映射与写入确认由实际后端验证。
 
 | recordType | 必需内容 | 容量与清理 |
 |---|---|---|
 | scope_config | scopeId、name、allowedAdapters、绑定的默认消费集合 | 8 KiB；名称 128 B，映射最多 32 项；用户配置长期保存 |
-| learning_job | scopeId、material、stage、status、results、attempts；admissionDecisions、可选 correction/复评目标/触发原因 | 64 KiB；results/决策最多8项；完成内容与结果默认7天清理，确定失败最多30天 |
+| learning_job | scopeId、material、stage、status、results、attempts；admissionDecisions、可选 correction/复评目标/触发原因 | 64 KiB；每作业最多8条 proposal，results/决策最多8项；清理按材料保留表 |
 | write_operation | scopeId、operation、nonce、status；add/update/disable 的拟写内容；非 add 的 targetId/expectedRevision；作业来源的 jobId/itemIndex | 48 KiB；一个操作针对一条经验，写入和所属作业进度均确认后清理 |
 | delete_marker | scopeId、target(id 或 fingerprint)、status、reason、action；Connector 来源另含 bindingId | 2 KiB；区分忘记/替代/撤回/擦除，保留源归属供整对象清理，不含正文 |
 | extension_state | adapterId、key、代理私有 state | 8 KiB/项；不保存正文或凭据 |
-| connection_config / connection_state | 来源实例配置、已确认游标、运行与学习统计 | 各 16 KiB，秘密只保存引用；详见 Connector 合同 |
-| source_binding | connectionId+sourceKey、current/pending 修订/摘要、指纹与 job 映射、excluded | 32 KiB，不存源正文或事件历史；详见 Connector 合同 |
+| connection_config | Connector 类型/版本、transformRevision、目标 scope、来源筛选、计划、删除政策、凭据引用 | 16 KiB，秘密只保存引用 |
+| connection_state | 已确认 cursor、当前运行、重试时间、接收/学习计数、连接与来源使用状态 | 16 KiB；cursor 最大 8 KiB，不保存正文 |
+| source_binding | connectionId+sourceKey、内容摘要、sourceRevision、current/pending 指纹与 job 映射、excluded | 32 KiB；仅两份修订元信息，每份最多 8 个作业、128 个片段指纹；不存源正文或事件历史 |
+| engine_binding，待实现 | 产品经验修订、引擎实例、原生产物与依据映射 | 字段见上文；容量与后端更新合同待实现冻结 |
 
-每个短期 admissionDecision 最多 1 KiB，包含 intent（temporary/normative/factual/causal/mixed）、persistence（task/window/durable/unclear）、futureUse（一句话，最多 256 B）、newValue/scopeComplete/supportAdequate 检查结果（pass/fail/unknown）、disposition（reject/merge/retain_active/retain_held）及 reason（最多 256 B）。服务对模型提案做校验；用户明确保留意图来自实际输入，不接受模型自报授权。决策仅用于解释为何存/不存，不是经验置信分或永久审计日志。
+引擎可能在生成 Experience 前就接受异步处理，不能只靠发布后的 engine_binding 恢复。LearningJob 须持久绑定 engineOperation/sourceJob：稳定产品作业身份、backendInstanceId、来源绑定与来源/处理配置修订、provider operation ID（无法确认时明确为 unknown），以及实际处理阶段和最近核对状态。提交前先保存关联身份；请求超时或重启后，先向原实例核对已有操作，不能直接重提材料。缺少可核对身份且无法确认结果时保留 uncertain。字段形状、阶段枚举、容量和后端更新方式待实现冻结，沿用产品管理存储，不增加独立数据库。
 
-新增 retain_active 要求 supportAdequate=pass；retain_held 只允许证据尚未确定的 unknown，并要求 newValue/scopeComplete=pass、明确 futureUse、真实用户保留意图与 review。已被否定或来源无效的 fail 走 reject，不用 held 保存已知错误主张。该矩阵针对新增准入；既有经验的暂停/纠错按生命周期规则执行。
+短期 admissionDecision 最多 1 KiB，包含 intent（temporary/normative/factual/causal/mixed）、persistence（task/window/durable/unclear）、futureUse（一句话，最多 256 B）、newValue/scopeComplete/supportAdequate（pass/fail/unknown）、disposition（reject/merge/retain_active/retain_held）及 reason（最多 256 B）。
 
-learning_job 只保留材料与进度，不永久复制 8 份完整 proposal；逐条形成 write_operation，结果统一为 results: {id,revision}[]，不同时维护重复 resultIds。纠正可有 correction: {target?:{id,revision}, pauseConfirmed?:{id,revision}}，仅当服务已确认目标暂停时写 pauseConfirmed；它是完成事实，不是当前有效性凭据。queued/running/completed/failed/uncertain 表示作业结果；有限错误信息最多 512 B，不包含原始模型响应。明确失败材料到期可清理，uncertain 所需内容在修复前不能清理。
+服务校验模型提案，保留意图须来自用户实际输入，不能由模型自报授权。该记录只解释本次为何保存或拒绝，不作经验置信分或永久审计日志。
+
+admissionDecision 的合法组合按[价值筛选矩阵](02-experience-model.md#价值筛选与可执行判定)验证；这里的字段记录判定结果，不另定义准入策略。
+
+learning_job 保存材料和进度，不长期复制 8 份完整 proposal。逐条建立 write_operation，结果统一写为 results: {id,revision}[]，不另存重复 resultIds。
+
+纠正可带 correction: {target?:{id,revision}, pauseConfirmed?:{id,revision}}。服务确认暂停后才写 pauseConfirmed，它记录已完成的事实，不能代替当前有效性检查。作业状态取 queued/running/completed/failed/uncertain，错误信息最多 512 B，不保存原始模型响应。明确失败的材料按期清理，uncertain 所需内容保留至修复完成。
 
 stage 使用 extract/assess/consolidate/write，assess 表示准入或复评；write_operation.operation 为 add/update/disable/delete，状态为 prepared/uncertain/confirmed。add/update/disable 保存完整拟写经验或精确待写 payload，用于核对目标修订；delete 只需要目标。
 
 Connector 来源的 LearningJob 另有 bindingId、sourceRevision、partKey，服务以它们确定稳定接收身份，写入前验证来源仍有效。一份源对象修订最多 8 个材料作业，每作业仍最多 8 条 proposal。
 
-由学习作业生成的 write_operation 必须携带 jobId 与 itemIndex（0–7），管理记录 ID 按该对稳定生成或由作业提前绑定。Mem0 写确认后先持久化 job 的已完成项与结果 id/revision，暂停事实也先登记到 job，再清理对应操作；任何一个结果尚未确认都保留操作。重启先核对已绑定操作，不能为相同条目重新提取并 add。关联只存在于短期管理对象，不进入经验模型。
+sourceKey 原值最多 512 B，超限时 Connector 提供稳定可逆定位或声明不支持，不静默截断。bindingId 使用服务确定性映射。同步来源的 bindingId/sourceRevision/partKey 必填，原生版本顺序及绑定清理条件见[同步生命周期](08-connectors.md)。
+
+学习作业产生的 write_operation 必须带 jobId 和 itemIndex（0–7）。管理记录 ID 按这组值稳定生成，或由作业预先绑定。写确认后，先持久化 job 的已完成项、产品结果 id/revision 和已确认暂停事实，再清理操作；任何结果未确认时都保留操作。重启先核对已有绑定，不为同一条目重新提取并 add。这些关联只留在短期管理对象中。
 
 ScopeDefinition 的 allowedAdapters 和默认集合映射仅由已认证用户配置，任务中的 scopeId 不能给适配器新增授权。
 
-同一数据库的多个 point 也不具备应用事务。管理写确认前不修改经验，管理记录缺失或不可用按架构要求进入维护；持久化幂等身份不能自动解决迟到更新。运行时队列容量和每日模型预算可配置，满载返回 backpressure，不丢弃已确认接收的材料。
+后端须证明管理记录与经验写入的确认和恢复行为，幂等身份本身不能解决迟到更新。运行时队列容量和每日模型预算可配置，满载返回 backpressure，不丢弃已确认接收的材料。
 
-## 纠正回执的响应合同
-
-receipt 由写响应或 getJob 基于现有短期 job、写操作和当前经验生成，不单独持久化通知流。适用于 revise 与 corrective feedback；普通 helpful/irrelevant 不生成虚假的规则更新结果。字段总量最大 2 KiB，错误原因≤512 B，经验正文从当前授权记录读取，不在回执表再复制。
-
-| 字段 | 形状 | 语义 |
-|---|---|---|
-| accepted | boolean | true 仅表示处理输入可靠持久化；记录到期后无法查询不能反推未接收 |
-| target | 可选 {id,revision} | 已明确的被纠正版本；歧义或无权限不捏造/泄露目标 |
-| previousUse | not_targeted/not_confirmed/suppressed/superseded/unknown | 无旧目标、未确认暂停、目标已不可投递、被后续版本替代、当前无法确认 |
-| replacement | {status,id?,revision?} | status=pending/effective/not_effective/unknown，id/revision 必须来自已登记结果 |
-| reason | 可选短代码与说明 | 如 awaiting_evidence、temporary_only、target_ambiguous、version_conflict、failed、scheduled、updated_again |
-
-accepted、previousUse 和 replacement 是独立事实。job.completed 可以表示零经验、held 或已写入未来生效记录，不能直接映射 effective。只有结果修订、文本/向量/metadata 完成确认、屏障解除、当前来源/依赖与有效时间满足自动资格，才能 replacement.status=effective；它不要求当前任务必须 applicable，更不保证任意搜索命中。
-
-getJob 的 receipt 每次重读当前权限和结果。若结果又被修订则不继续把该历史结果标 effective，reason=updated_again；删除/权限不足不返回隐藏文本；无法确认时 unknown。previousUse=suppressed 只表明指定旧版当前不能投递，不能把它解释为所有替代经验都被停用。已确认暂停而更新失败时，可同时是 suppressed 和 not_effective。
-
-前端跟踪 jobId 的显示状态使用短期请求序号去重，丢弃过期、取消或被新读取替代的响应。快速完成仅一次最终确认；长作业把同一进行中显示更新为最终结果。会话已关闭时保留 UI/CLI 可查结果至作业保留期，不启动新 Agent 补发通知；没有新永久消息记录或投递事件表。
+receipt 不另设持久表，按作业、写操作与当前经验生成；响应字段和展示时机统一见[纠正回执](04-contracts-and-extensions.md#纠正回执与展示时机)。
 
 ## 示例
 
-下面示例表示用户明确采用的工程约束，归属工作集合并可跨仓库使用。它是 reported/attributed 的本人要求，不宣称用户原话已证明一个普遍因果原则。内容仅说明字段；若原话只是转述客观结论，应改用相应 purpose 并按证据核验后才决定 active。
+下面用一条用户明确采用的工程约束说明字段。它归属工作集合，可以跨仓库使用，身份是 reported/attributed 的本人要求。如果原话是在转述客观结论，则须改用相应 purpose，并按证据判断能否 active，不能从用户原话推导出普遍因果结论。
 
 ```json
 {

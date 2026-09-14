@@ -41,7 +41,7 @@ export interface RecallInput {
 }
 export type Decision = { usage: "guidance" | "lead"; taskApplicability: "applicable" | "undetermined"; missingChecks: Array<{ field: "conditions" | "exceptions"; index: number; question: string; contextKey?: string }> } | { reason: string };
 
-// Deterministic P0 checks only: no claim to infer relevance or verify source truth.
+// Deterministic evaluation checks only: no claim to infer relevance or verify source truth.
 export function decide(record: Experience, input: RecallInput, records: ReadonlyMap<string, Experience>): Decision {
   const now = input.now ?? Date.now();
   let visited = 0;
@@ -77,16 +77,4 @@ export function decide(record: Experience, input: RecallInput, records: Readonly
     return { usage: "lead", taskApplicability: "undetermined", missingChecks: missing };
   }
   return { usage: "guidance", taskApplicability: "applicable", missingChecks: [] };
-}
-
-export function searchText(record: Experience): string {
-  const value = [`Conclusion: ${record.conclusion}`, `Conditions: ${record.conditions.map(c => c.text).join("; ")}`, `Topics: ${record.topics.join(", ")}`, `Entities: ${record.entities.join(", ")}`].join("\n");
-  if (Buffer.byteLength(value, "utf8") > 4096) throw new Error("Search text exceeds 4 KiB");
-  return value;
-}
-export function metadata(record: Experience, nonce: string): Record<string, unknown> {
-  const { id: _id, revision, ...body } = record;
-  const result = { ll_schema: 1, ll_revision: revision, ll_record: body, ll_scope: record.scopeId, ll_state: record.state, ll_level: record.level, ll_purpose: record.purpose, ll_assessment: record.assessment, ll_applicability: record.applicability, ll_topics: record.topics, ll_entities: record.entities, ll_source_fingerprints: record.sourceFingerprints, ll_parent_ids: record.derivedFrom.map(p => p.id), ll_valid_from_ms: record.validFrom ? Date.parse(record.validFrom) : 0, ll_valid_until_ms: record.validUntil ? Date.parse(record.validUntil) : Number.MAX_SAFE_INTEGER, ll_write_nonce: nonce };
-  if (Buffer.byteLength(JSON.stringify({ memory: searchText(record), metadata: result })) > 32768) throw new Error("Application payload exceeds 32 KiB");
-  return result;
 }

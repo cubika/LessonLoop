@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ModelClient, parseJsonResponse } from "../spikes/p0/model-client.js";
-import { runTask } from "../spikes/p0/task-runner.js";
-import { taskFixtures } from "../spikes/p0/task-fixtures.js";
+import { ModelClient, parseJsonResponse } from "../evals/lib/model-client.js";
+import { runTask } from "../evals/lib/task-runner.js";
+import { taskFixtures } from "../evals/fixtures/tasks.js";
 
 class ScriptedProtocol extends ModelClient {
   constructor(private actions: string[]) { super("http://127.0.0.1:1/v1", "test-double", undefined); }

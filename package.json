@@ -10,23 +10,16 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate:docs": "node scripts/validate-docs.mjs",
-    "p0:storage": "node --import tsx spikes/p0/storage-probe.ts",
-    "p0:host": "node --import tsx spikes/p0/host-probe.ts",
-    "p0:host-hooks": "node --import tsx spikes/p0/host-hook-probe.ts",
-    "p0:evaluate": "node --import tsx spikes/p0/evaluate.ts"
+    "validate:evals": "node scripts/validate-eval-corpus.mjs",
+    "probe:copilot": "node --import tsx probes/copilot/host-probe.ts",
+    "probe:copilot-hooks": "node --import tsx probes/copilot/host-hook-probe.ts"
   },
   "dependencies": {
-    "@huggingface/transformers": "3.8.1",
-    "@qdrant/js-client-rest": "1.18.0",
-    "mem0ai": "3.1.8",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "22.18.6",
     "tsx": "4.20.6",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "sharp": "0.35.4"
   }
 }

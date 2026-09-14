@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import type { TaskFixture } from "./task-fixtures.js";
+import type { TaskFixture } from "../fixtures/tasks.js";
 import { ModelClient, parseJsonResponse, type ChatMessage } from "./model-client.js";
 
 const actionSchema = z.discriminatedUnion("tool", [

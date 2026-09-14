@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decide, experienceSchema, type RecallInput } from "../spikes/p0/experience.js";
-import { sample } from "../spikes/p0/fixtures.js";
+import { decide, experienceSchema, type RecallInput } from "../evals/lib/experience.js";
+import { sample } from "../evals/fixtures/experience.js";
 const input = (extra: Partial<RecallInput> = {}): RecallInput => ({ scopes: new Set(["p0:engineering"]), context: {}, trustedContextKeys: new Set(), includeLeads: true, relevant: true, trustedUserConstraint: false, ...extra });
 
 test("missing current context yields a lead without mutating experience", () => {

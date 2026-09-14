@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "types": ["node"],
-    "outDir": ".p0/build"
+    "outDir": ".local-validation/build"
   },
-  "include": ["spikes/p0/**/*.ts", "tests/**/*.ts"]
+  "include": ["evals/**/*.ts", "probes/**/*.ts", "tests/**/*.ts"]
 }

@@ -1,6 +1,6 @@
 # 资料核验记录
 
-日期：2026-09-12。核验方式：读取公开官方文档和固定提交源码。本文区分已核实的接口行为与待运行验证的产品能力。
+日期：2026-09-12。本文记录当时 Mem0/Qdrant 原型路线的官方文档与固定提交源码核验，运行结果另行保存。当前目标架构见[系统架构](../../03-architecture.md)，本文不作为 Hindsight 的能力或实现证据。
 
 ## Mem0 OSS
 
@@ -17,13 +17,13 @@
 | [Qdrant list](https://github.com/mem0ai/mem0/blob/c7ee362aff94a369af70f13f2b4f853f6793ff4c/mem0-ts/src/oss/src/vector_stores/qdrant.ts#L457) | 单次 scroll，未传递或返回 next-page offset；不能视作完整分页导出 |
 | [LLM factory](https://github.com/mem0ai/mem0/blob/c7ee362aff94a369af70f13f2b4f853f6793ff4c/mem0-ts/src/oss/src/utils/factory.ts#L108) | 没有内置 Copilot provider；应用使用独立 ExtractionModel |
 
-Mem0 Platform 与 OSS 分开。LessonLoop 使用 OSS，不依赖 Platform Dream，也不将其托管能力视为本地产品已具备的合并、抽象或自动纠错能力。
+当时的原型使用 Mem0 OSS，不依赖 Platform Dream。托管平台提供的合并、抽象或自动纠错能力，不能计入该原型的实现结果。
 
 ## Qdrant 与运行配置
 
 Qdrant 官方文档仓库核验提交为 `c341e980866afc423e7cb49da7d681e04f3b55ae`：payload 字段可建索引；keyword 是完整值精确匹配；text 使用分词处理，文本过滤不等于通用 BM25 排序。Mem0 源码的 `disableHistory` 分支构建 DummyHistoryManager。
 
-数据层仅使用 Qdrant，需要显式配置 Qdrant provider 并关闭 Mem0 history。管理 collection 的实际持久化、无 SQLite 数据文件的运行行为及重启恢复尚未验证。
+该原型数据层只使用 Qdrant，须显式配置 Qdrant provider 并关闭 Mem0 history。本次静态核验未测试管理 collection 持久化、SQLite 数据文件或重启行为；后续小样本结果见 [P0 实测](../2026-09-13-p0/README.md)。
 
 ## 保存的证据
 
@@ -38,19 +38,9 @@ Qdrant 官方文档仓库核验提交为 `c341e980866afc423e7cb49da7d681e04f3b55
 - [Qdrant payload 索引依据](qdrant-payload.json)
 - [Qdrant 精确和文本过滤依据](qdrant-text-filtering.json)
 - [Qdrant collection 依据](qdrant-collections.json)
-- [文档检查结果](document-validation.json)
 
 ## Copilot CLI 包装机制
 
-2026-09-13 补充读取 GitHub 官方 [Copilot CLI 插件创建文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating)与 [hooks 使用文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks)。文档确认插件可包含 skills、MCP 配置和宿主 hooks；Agent Plugins 1.0 使用根 plugin.json、mcp.json，以及 com.github.copilot 下的专属组件。这里核实的是可用包装机制；LessonLoop 的 hook 数据覆盖、自动回填和安装兼容性尚待固定宿主版本运行验收。
+2026-09-13 补充读取 GitHub 官方 [Copilot CLI 插件创建文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating)与 [hooks 使用文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks)。文档确认插件可包含 skills、MCP 配置和宿主 hooks；Agent Plugins 1.0 使用根 plugin.json、mcp.json，以及 com.github.copilot 下的专属组件。这些资料说明插件怎样组织。后续 [P0 宿主测试](../2026-09-13-p0/README.md)已验证部分时序，完整 hook 数据覆盖、自动回填和安装兼容性仍需验收。
 
-## 文档验证
-
-检查器验证本地链接、围栏语言与闭合、JSON 示例、来源摘录行范围及 Markdown 基本间距。Mermaid 仅检查基本结构，未渲染；没有运行应用、Mem0/Copilot 集成、模型质量或容量测试。
-
-```powershell
-node --check scripts/validate-docs.mjs
-node scripts/validate-docs.mjs
-```
-
-公开资料和静态控制流不能替代实际运行。版本锁定、metadata round-trip、前置过滤、超时隔离、删除与重启是 [P0](../../05-delivery-and-validation.md) 的验收项。
+日常文档校验见[仓库检查入口](../../../README.md#在源码中运行检查)，生成报告不属于这批历史证据。版本锁定、写入读回、前置过滤、超时隔离、删除和重启须按[原型合同](../../05-delivery-and-validation.md#mem0-原型合同)实测。

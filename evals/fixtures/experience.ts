@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { experienceSchema, type Experience } from "./experience.js";
+import { experienceSchema, type Experience } from "../lib/experience.js";
 
 export function sample(overrides: Partial<Experience> = {}): Experience {
   const fingerprint = createHash("sha256").update("authored-p0-fixture:not-production-evidence").digest("hex");

@@ -10,7 +10,7 @@ import {
   runHostPreflight,
   type Invocation,
   type Runner,
-} from "../spikes/p0/host-probe.js";
+} from "../probes/copilot/host-probe.js";
 
 test("child environment excludes credentials and executable injection settings", () => {
   const paths = probePaths("probe-workspace");
