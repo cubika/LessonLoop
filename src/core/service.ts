@@ -176,6 +176,7 @@ export class CoreService {
   private ticking = false;
   private tickOffset = 0;
   private revisionOffset = 0;
+  private maintenanceAt = 0;
   constructor(
     readonly store: ProductStore,
     readonly engine: HindsightEngine,
@@ -504,7 +505,10 @@ export class CoreService {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      if (scopes) await new Effects(this.store).maintain(scopes);
+      if (scopes && Date.now() - this.maintenanceAt > 60000) {
+        await new Effects(this.store).maintain(scopes);
+        this.maintenanceAt = Date.now();
+      }
       await this.advanceRevisionReviews(scopes);
       await this.syncProjections(scopes);
       const all = await this.store.transaction((tx) =>
