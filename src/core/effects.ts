@@ -294,4 +294,32 @@ export class Effects {
       return { accepted: true, clearedAt: boundary.clearedAt };
     });
   }
+  async maintain(scopes: string[]) {
+    return this.store.transaction(async (tx) => {
+      const cutoff = Date.now() - 30 * 86400000;
+      for (const task of await tx.list<EffectTask>("effect_task", scopes)) {
+        const events = task.events.filter(
+          (e) => Date.parse(e.occurredAt) > cutoff,
+        );
+        if (events.length === task.events.length) continue;
+        if (!events.length)
+          await tx.remove("effect_task", task.id, task.revision);
+        else
+          await tx.put(
+            entry("effect_task", {
+              ...task,
+              revision: task.revision + 1,
+              events,
+              createdAt: events.reduce(
+                (a, e) =>
+                  Date.parse(e.occurredAt) < Date.parse(a) ? e.occurredAt : a,
+                events[0]!.occurredAt,
+              ),
+            }),
+            task.revision,
+          );
+      }
+      return { status: "completed" };
+    });
+  }
 }

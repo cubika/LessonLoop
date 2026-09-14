@@ -500,6 +500,7 @@ export class CoreService {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      if (scopes) await new Effects(this.store).maintain(scopes);
       await this.advanceRevisionReviews(scopes);
       await this.syncProjections(scopes);
       const all = await this.store.transaction((tx) =>
