@@ -24,7 +24,22 @@ async function main() {
     );
     return;
   }
-  const config = JSON.parse(await readFile(configPath, "utf8")) as Config;
+  let configText: string;
+  if (process.env.LESSONLOOP_CONFIG_STDIN === "1") {
+    configText = "";
+    for await (const chunk of process.stdin) configText += chunk;
+  } else configText = await readFile(configPath, "utf8");
+  const config = JSON.parse(configText) as Config;
+  if (command === "initialize") {
+    const store = new ProductStore(config.databaseUrl);
+    try {
+      await store.open(true);
+    } finally {
+      await store.close();
+    }
+    console.log("Product schema initialized");
+    return;
+  }
   if (command === "serve") {
     const store = new ProductStore(config.databaseUrl);
     await store.open(args.includes("--initialize"));

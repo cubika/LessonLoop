@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 const config = JSON.parse(
-  await readFile(process.env.LESSONLOOP_AGENT_CONFIG ?? "", "utf8"),
+  process.env.LESSONLOOP_AGENT_CONFIG_JSON ??
+    (await readFile(process.env.LESSONLOOP_AGENT_CONFIG ?? "", "utf8")),
 ) as { baseUrl: string; token: string };
 const server = new McpServer({ name: "lessonloop", version: "0.0.1" });
 const tools = {

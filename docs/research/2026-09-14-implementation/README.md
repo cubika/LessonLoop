@@ -30,6 +30,9 @@ TypeScript 检查、构建及 28 个现有/新增单元测试通过。真实 Pos
 3. 原生迁移在 hindsight schema 创建 pg_trgm，但实体查询使用的 search_path 看不到其操作符。私有数据库把 pg_trgm 安装到 public，原作业按原身份重试后完成。发行初始化需先创建相同扩展。
 4. 官方结构化转换丢失 anyOf/enum 等语义，并传 skip_validation=True。真实结果缺少必填 applicability 仍被原生保存，产品 Zod 拒绝。新增 [兼容层](../../../distribution/hindsight_compat.py)只修复该转换入口，向官方 provider 传原始 Schema，并完整验证返回；嵌套必填、枚举、nullable 回归通过。
 5. 模型重写证据 role 会失真。候选改为 sourceIndex+连续摘录，由产品绑定原始角色、来源和指纹。
+6. 官方 PostgreSQL Windows 二进制不能直接处理部分中文路径。DataRoot 保持用户路径，对 PostgreSQL 调用使用系统返回的短路径；中文空格目录实际 init/start/stop 通过，未开启短路径的卷仍需另测。
+
+完整私有 Python、Node、PostgreSQL 和 E5 已复制到独立开发 bundle。新的中文空格 DataRoot 使用 DPAPI 保存凭据并初始化产品/引擎独立 schema；核心与引擎最终健康，停止验证通过。第一次冷启动超过 120 秒，管理器报告失败但进程后来就绪，需继续完善可恢复启动。安装器尚未完成正式发行验收。
 
 官方源码依据：[结构化提取](https://github.com/vectorize-io/hindsight/blob/v0.9.2/hindsight-api-slim/hindsight_api/engine/reflect/agent.py)、[原文 chunks](https://github.com/vectorize-io/hindsight/blob/v0.9.2/hindsight-api-slim/hindsight_api/engine/retain/fact_extraction.py)、[前置检索过滤](https://github.com/vectorize-io/hindsight/blob/v0.9.2/hindsight-api-slim/hindsight_api/engine/sql/postgresql.py)。
 

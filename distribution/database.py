@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import ctypes
 
 parser = argparse.ArgumentParser()
 parser.add_argument("action", choices=["init", "start", "stop", "status"])
@@ -18,6 +19,12 @@ runtime = Path(args.runtime).resolve()
 db = root / "storage" / "postgres"
 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 root.mkdir(parents=True, exist_ok=True)
+def windows_path(path):
+    value=str(path)
+    if os.name!="nt":return value
+    buffer=ctypes.create_unicode_buffer(32768)
+    length=ctypes.windll.kernel32.GetShortPathNameW(value,buffer,len(buffer))
+    return buffer.value if length else value
 owner = root / "database-owner.json"
 def run(name, options):
     with (root / "database-manager.log").open("ab") as log:
@@ -35,7 +42,8 @@ if args.action == "init":
         secret.write(password + "\n")
         secret_path = Path(secret.name)
     try:
-        run("initdb", ["-D", str(db), "-U", "lessonloop", "--pwfile", str(secret_path), "--auth=scram-sha-256", "--encoding=UTF8", "--locale=C"])
+        db.mkdir(exist_ok=True)
+        run("initdb", ["-D", windows_path(db), "-U", "lessonloop", "--pwfile", windows_path(secret_path), "--auth=scram-sha-256", "--encoding=UTF8", "--locale=C"])
     finally:
         secret_path.unlink(missing_ok=True)
     with (db / "postgresql.conf").open("a", encoding="utf-8") as out:
@@ -46,9 +54,10 @@ else:
     if record["dataRoot"] != str(root) or record["runtime"] != str(runtime) or record["database"] != str(db):
         raise SystemExit("Database ownership does not match.")
     if args.action == "start":
-        run("pg_ctl", ["-D", str(db), "-l", str(root / "postgres.log"), "-w", "start"])
+        (root/"postgres.log").touch(exist_ok=True)
+        run("pg_ctl", ["-D", windows_path(db), "-l", windows_path(root / "postgres.log"), "-w", "start"])
     elif args.action == "stop":
-        run("pg_ctl", ["-D", str(db), "-m", "fast", "-w", "stop"])
+        run("pg_ctl", ["-D", windows_path(db), "-m", "fast", "-w", "stop"])
     else:
-        run("pg_ctl", ["-D", str(db), "status"])
+        run("pg_ctl", ["-D", windows_path(db), "status"])
 print(json.dumps({"action": args.action, "status": "confirmed", "port": args.port}))

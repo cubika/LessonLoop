@@ -11,7 +11,8 @@ type Config = {
 };
 async function run() {
   const config = JSON.parse(
-    await readFile(process.env.LESSONLOOP_HOST_CONFIG ?? "", "utf8"),
+    process.env.LESSONLOOP_HOST_CONFIG_JSON ??
+      (await readFile(process.env.LESSONLOOP_HOST_CONFIG ?? "", "utf8")),
   ) as Config;
   let raw = "";
   for await (const part of process.stdin) {
