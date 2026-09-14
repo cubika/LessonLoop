@@ -483,7 +483,12 @@ export class CoreService {
         throw new ApiError("learning_disabled", 409);
       if ((await tx.get<ScopeBarrier>("scope_barrier", scopeId))?.pending)
         throw new ApiError("source_cleanup_in_progress", 409);
+      const sources = await tx.list<Source>("source", [scopeId]);
+      const blockedSources = new Set(
+        sources.filter((s) => s.blocked).map((s) => s.id),
+      );
       const materials = (await tx.list<Material>("material", [scopeId]))
+        .filter((m) => !m.fingerprints.some((fp) => blockedSources.has(fp)))
         .filter((m) =>
           JSON.stringify(m).toLowerCase().includes(topic.toLowerCase()),
         )
