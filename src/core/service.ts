@@ -1728,8 +1728,13 @@ export class CoreService {
         await tx.remove("control", id, oldControl.revision);
       if (kind === "method") await tx.snapshot(entry(kind, old));
       await tx.put(entry(kind, parsed), old.revision);
-      if (state === "active")
-        await this.project(tx, kind, parsed, JSON.stringify(parsed));
+      if (state === "active") {
+        const text =
+          kind === "method"
+            ? `${(parsed as Method).title} ${(parsed as Method).goal} ${(parsed as Method).topics.join(" ")}`
+            : `${(parsed as Experience).conclusion} ${(parsed as Experience).topics.join(" ")} ${(parsed as Experience).entities.join(" ")}`;
+        await this.project(tx, kind, parsed, text);
+      }
       return {
         accepted: true,
         target: ref(kind, parsed),
