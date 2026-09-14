@@ -1325,7 +1325,13 @@ export class CoreService {
           operations: jobs
             .filter(affectedJob)
             .flatMap((j) =>
-              [j.operationId, j.assessmentOperationId].filter(Boolean),
+              [
+                ...new Set([
+                  ...(j.engineOperations ?? []),
+                  j.operationId,
+                  j.assessmentOperationId,
+                ]),
+              ].filter(Boolean),
             ),
           nativeHistoryCoverage: "unconfirmed",
           traceCoverage: "unconfirmed",
