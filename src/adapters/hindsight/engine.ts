@@ -12,7 +12,11 @@ export const LEARNING_MISSION =
 export class HindsightEngine {
   readonly client: HindsightClient;
   private readonly raw;
-  constructor(baseUrl: string, apiKey: string) {
+  constructor(
+    private readonly baseUrl: string,
+    private readonly apiKey: string,
+    private readonly nativeNamespace?: string,
+  ) {
     const url = new URL(baseUrl);
     if (
       !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
@@ -31,7 +35,17 @@ export class HindsightEngine {
     });
   }
   bank(scopeId: string) {
-    return `lessonloop-${digest(scopeId).slice(0, 32)}`;
+    return this.nativeNamespace ?? `lessonloop-${digest(scopeId).slice(0, 32)}`;
+  }
+  forJob(jobId: string) {
+    return new HindsightEngine(
+      this.baseUrl,
+      this.apiKey,
+      `lessonloop-job-${jobId}`,
+    );
+  }
+  supportBank(scopeId: string, fingerprint: string) {
+    return `lessonloop-support-${digest([scopeId, fingerprint]).slice(0, 32)}`;
   }
   async health() {
     const version = await this.client.getVersion({
@@ -45,6 +59,42 @@ export class HindsightEngine {
       reflectMission: LEARNING_MISSION,
       signal: AbortSignal.timeout(10000),
     });
+  }
+  async retainSupport(
+    scopeId: string,
+    reference: ObjectRef,
+    evidence: Array<{ excerpt: string; fingerprint: string; role: string }>,
+  ) {
+    for (const e of evidence) {
+      const bank = this.supportBank(scopeId, e.fingerprint);
+      await this.client.createBank(bank, {
+        retainExtractionMode: "chunks",
+        enableObservations: false,
+        enableGraphRetrieval: false,
+        enableTemporalRetrieval: false,
+        signal: AbortSignal.timeout(10000),
+      });
+      const documentId = `${reference.id}-${reference.revision}-${digest(e.excerpt).slice(0, 16)}`;
+      await this.client.retain(bank, e.excerpt, {
+        documentId,
+        async: false,
+        tags: [`source:${e.fingerprint}`],
+        metadata: {
+          fingerprint: e.fingerprint,
+          role: e.role,
+          product_id: reference.id,
+          product_revision: String(reference.revision),
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+      const memories = await this.client.listMemories(bank, {
+        documentId,
+        limit: 16,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!memories.items.some((m) => m.text === e.excerpt))
+        throw new Error("support_readback_failed");
+    }
   }
   async retain(material: Material, operationId: string) {
     const r = await this.client.retainBatch(

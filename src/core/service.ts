@@ -83,6 +83,7 @@ interface Job {
   caseTarget?: ObjectRef;
   sourceRefs?: string[];
   comparedMethodRefs?: ObjectRef[];
+  nativeIsolation?: "job";
 }
 interface Source {
   id: string;
@@ -353,11 +354,25 @@ export class CoreService {
         results: [],
         decisions: [],
         inputDigest: hash,
+        nativeIsolation: "job",
         sourceRefs: material.fingerprints,
         ...(data.caseFor ? { caseTarget: data.caseFor } : {}),
       };
       await tx.put(entry("material", { ...material, revision: 1 }), null);
       await tx.put(entry("job", job), null);
+      await tx.put(
+        entry("engine_bank", {
+          id: this.engine.forJob(job.id).bank(data.scopeId),
+          revision: 1,
+          scopeId: data.scopeId,
+          kind: "learning_job",
+          jobId: job.id,
+          sourceRefs: material.fingerprints,
+          state: "reserved",
+          createdAt: job.createdAt,
+        }),
+        null,
+      );
       for (const fp of material.fingerprints) {
         const old = await tx.get<Source>("source", fp);
         if (!old)
@@ -550,6 +565,8 @@ export class CoreService {
     }
   }
   private async advance(j: Job) {
+    const engine =
+      j.nativeIsolation === "job" ? this.engine.forJob(j.id) : this.engine;
     if (
       (
         await this.store.transaction((tx) =>
@@ -568,16 +585,13 @@ export class CoreService {
       return rows;
     });
     if (j.modelId && j.stage === "compose") {
-      const found = await this.engine.findModelOperation(j.scopeId, j.modelId);
+      const found = await engine.findModelOperation(j.scopeId, j.modelId);
       if (!found) throw new ApiError("native_model_identity_unconfirmed");
       if (found !== j.operationId)
         j = await this.updateJob(j.id, { operationId: found });
     }
     if (j.assessmentId && !j.assessmentOperationId) {
-      const found = await this.engine.findModelOperation(
-        j.scopeId,
-        j.assessmentId,
-      );
+      const found = await engine.findModelOperation(j.scopeId, j.assessmentId);
       if (!found) throw new ApiError("assessment_identity_unconfirmed");
       j = await this.updateJob(j.id, { assessmentOperationId: found });
     }
@@ -585,8 +599,8 @@ export class CoreService {
       for (const id of [j.operationId, j.assessmentOperationId].filter(
         (id): id is string => !!id,
       )) {
-        const op = await this.engine.operation(j.scopeId, id);
-        if (op.status === "pending") await this.engine.cancel(j.scopeId, id);
+        const op = await engine.operation(j.scopeId, id);
+        if (op.status === "pending") await engine.cancel(j.scopeId, id);
         if (!["completed", "failed", "cancelled"].includes(op.status)) return;
       }
       await this.updateJob(j.id, { status: "canceled", stage: "done" });
@@ -601,19 +615,19 @@ export class CoreService {
       return;
     }
     if (j.stage === "queued") {
-      await this.engine.configure(j.scopeId);
+      await engine.configure(j.scopeId);
       const operationId = randomUUID();
       j = await this.updateJob(
         j.id,
         { stage: "extract", status: "running", operationId },
         true,
       );
-      await this.engine.retain(materials[0]!, operationId);
+      await engine.retain(materials[0]!, operationId);
       return;
     }
     if (j.stage === "extract") {
       if (!j.operationId) throw new ApiError("missing_native_operation");
-      const op = await this.engine.operation(j.scopeId, j.operationId);
+      const op = await engine.operation(j.scopeId, j.operationId);
       if (op.status === "failed" || op.status === "cancelled") {
         await this.updateJob(j.id, {
           status: "failed",
@@ -629,6 +643,43 @@ export class CoreService {
         tx.list<Method>("method", [j.scopeId]),
       );
       const modelId = `job-${j.id}`;
+      if (j.nativeIsolation === "job")
+        await this.store.transaction(async (tx) => {
+          const bankId = engine.bank(j.scopeId);
+          const bank = await tx.get<{
+            id: string;
+            revision: number;
+            scopeId: string;
+            sourceRefs: string[];
+          }>("engine_bank", bankId);
+          if (bank) {
+            const experiences = await tx.list<Experience>("experience", [
+              j.scopeId,
+            ]);
+            const supportIds = new Set(
+              existing
+                .slice(-20)
+                .flatMap((m) => m.supportRefs.map((r) => r.id)),
+            );
+            const sourceRefs = [
+              ...new Set([
+                ...(j.sourceRefs ?? []),
+                ...experiences
+                  .filter((e) => supportIds.has(e.id))
+                  .flatMap((e) => e.sourceFingerprints),
+              ]),
+            ];
+            await tx.put(
+              entry("engine_bank", {
+                ...bank,
+                revision: bank.revision + 1,
+                sourceRefs,
+                state: "active",
+              }),
+              bank.revision,
+            );
+          }
+        });
       j = await this.updateJob(
         j.id,
         {
@@ -638,7 +689,7 @@ export class CoreService {
         },
         true,
       );
-      const model = await this.engine.createModel(
+      const model = await engine.createModel(
         j.scopeId,
         modelId,
         learningQuery(materials, existing.slice(-20)),
@@ -651,7 +702,7 @@ export class CoreService {
     if (j.stage === "compose") {
       if (!j.operationId || !j.modelId)
         throw new ApiError("native_model_identity_unconfirmed");
-      const op = await this.engine.operation(j.scopeId, j.operationId);
+      const op = await engine.operation(j.scopeId, j.operationId);
       if (op.status === "failed") {
         await this.updateJob(j.id, {
           status: "failed",
@@ -660,7 +711,7 @@ export class CoreService {
         return;
       }
       if (op.status !== "completed") return;
-      const model = await this.engine.model(j.scopeId, j.modelId);
+      const model = await engine.model(j.scopeId, j.modelId);
       const native = model as unknown as Record<string, unknown>;
       const response = native.reflect_response as
         | Record<string, unknown>
@@ -675,7 +726,7 @@ export class CoreService {
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = `assess-${j.id}`;
       j = await this.updateJob(j.id, { assessmentId }, true);
-      const assessment = await this.engine.createModel(
+      const assessment = await engine.createModel(
         j.scopeId,
         assessmentId,
         `Assess the proposal against authorized source data. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check the actual evidence for each L1-L5 claim rather than counting sources. Return acceptedExperienceIndexes and methodSupported. Data: ${JSON.stringify({ materials, proposal: j.candidate })}`,
@@ -690,10 +741,7 @@ export class CoreService {
     if (j.stage === "assess") {
       if (!j.assessmentOperationId || !j.assessmentId)
         throw new ApiError("assessment_identity_unconfirmed");
-      const op = await this.engine.operation(
-        j.scopeId,
-        j.assessmentOperationId,
-      );
+      const op = await engine.operation(j.scopeId, j.assessmentOperationId);
       if (op.status === "failed") {
         await this.updateJob(j.id, {
           status: "failed",
@@ -702,7 +750,7 @@ export class CoreService {
         return;
       }
       if (op.status !== "completed") return;
-      const model = (await this.engine.model(
+      const model = (await engine.model(
         j.scopeId,
         j.assessmentId,
       )) as unknown as { reflect_response?: { structured_output?: unknown } };
@@ -1023,6 +1071,39 @@ export class CoreService {
     );
     for (const projection of pending) {
       try {
+        if (projection.objectKind === "experience") {
+          const experience = await this.store.transaction((tx) =>
+            tx.get<Experience>("experience", projection.id),
+          );
+          if (!experience || experience.revision !== projection.objectRevision)
+            continue;
+          await this.store.transaction(async (tx) => {
+            for (const evidence of experience.evidence) {
+              const id = this.engine.supportBank(
+                experience.scopeId,
+                evidence.fingerprint,
+              );
+              if (!(await tx.get("engine_bank", id)))
+                await tx.put(
+                  entry("engine_bank", {
+                    id,
+                    revision: 1,
+                    scopeId: experience.scopeId,
+                    kind: "source_support",
+                    sourceRefs: [evidence.fingerprint],
+                    state: "reserved",
+                    createdAt: new Date().toISOString(),
+                  }),
+                  null,
+                );
+            }
+          });
+          await this.engine.retainSupport(
+            experience.scopeId,
+            ref("experience", experience),
+            experience.evidence,
+          );
+        }
         await this.engine.index(
           projection.scopeId,
           {
