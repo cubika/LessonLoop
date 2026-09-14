@@ -156,6 +156,22 @@ async function run() {
   }
   if (type === "sessionEnd") {
     await call(
+      "recordTaskObservation",
+      [
+        {
+          eventId: `ended:${state.taskRef}`,
+          taskRef: state.taskRef,
+          scopeId: config.scopeId,
+          kind: "task_ended",
+          occurredAt: new Date(
+            typeof event.timestamp === "number" ? event.timestamp : Date.now(),
+          ).toISOString(),
+          text: "Trusted Copilot session ended; outcome remains unknown.",
+        },
+      ],
+      "effect-ended",
+    );
+    await call(
       "observeTask",
       {
         taskRef: state.taskRef,
