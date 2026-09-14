@@ -124,6 +124,35 @@ export class HindsightEngine {
       throw new Error("retain_not_confirmed");
     return r;
   }
+  async stageEvidence(scopeId: string, materials: Material[]) {
+    await this.configure(scopeId);
+    await sdk.updateBankConfig({
+      client: this.raw,
+      path: { bank_id: this.bank(scopeId) },
+      body: {
+        updates: {
+          retain_strategies: {
+            retained_support: { retain_extraction_mode: "chunks" },
+          },
+        },
+      },
+      signal: AbortSignal.timeout(10000),
+      throwOnError: true,
+    });
+    for (const material of materials)
+      for (const [index, segment] of material.segments.entries())
+        await this.client.retain(this.bank(scopeId), segment.text, {
+          documentId: `support-${material.id}-${index}`,
+          strategy: "retained_support",
+          async: false,
+          tags: [`source:${material.fingerprints[index]}`],
+          metadata: {
+            fingerprint: material.fingerprints[index]!,
+            role: segment.role,
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+  }
   async operation(scopeId: string, operationId: string) {
     const r = await sdk.getOperationStatus({
       client: this.raw,

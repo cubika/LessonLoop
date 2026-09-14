@@ -84,6 +84,7 @@ interface Job {
   sourceRefs?: string[];
   comparedMethodRefs?: ObjectRef[];
   nativeIsolation?: "job";
+  evidenceStaged?: boolean;
 }
 interface Source {
   id: string;
@@ -497,8 +498,22 @@ export class CoreService {
         decisions: [],
         inputDigest: digest(materials.map((m) => m.id)),
         sourceRefs: [...new Set(materials.flatMap((m) => m.fingerprints))],
+        nativeIsolation: "job",
       };
       await tx.put(entry("job", j), null);
+      await tx.put(
+        entry("engine_bank", {
+          id: this.engine.forJob(j.id).bank(scopeId),
+          revision: 1,
+          scopeId,
+          kind: "topic_review",
+          jobId: j.id,
+          sourceRefs: j.sourceRefs,
+          state: "reserved",
+          createdAt: j.createdAt,
+        }),
+        null,
+      );
       return j;
     });
   }
@@ -639,6 +654,14 @@ export class CoreService {
       j = await this.updateJob(j.id, { stage: "compose", status: "queued" });
     }
     if (j.stage === "compose" && !j.modelId) {
+      if (
+        j.nativeIsolation === "job" &&
+        j.kind === "synthesis" &&
+        !j.evidenceStaged
+      ) {
+        await engine.stageEvidence(j.scopeId, materials);
+        j = await this.updateJob(j.id, { evidenceStaged: true }, true);
+      }
       const existing = await this.store.transaction((tx) =>
         tx.list<Method>("method", [j.scopeId]),
       );
