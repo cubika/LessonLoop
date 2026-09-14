@@ -180,6 +180,30 @@ export class HindsightEngine {
       { signal: AbortSignal.timeout(10000) },
     );
   }
+  async deleteNativeDocument(scopeId: string, documentId: string) {
+    const existing = await this.client.getDocument(
+      this.bank(scopeId),
+      documentId,
+      { signal: AbortSignal.timeout(10000) },
+    );
+    if (existing)
+      await this.client.deleteDocument(this.bank(scopeId), documentId, {
+        signal: AbortSignal.timeout(10000),
+      });
+    const read = await this.client.getDocument(this.bank(scopeId), documentId, {
+      signal: AbortSignal.timeout(10000),
+    });
+    const memories = await this.client.listMemories(this.bank(scopeId), {
+      documentId,
+      limit: 1,
+      signal: AbortSignal.timeout(10000),
+    });
+    return {
+      documentAbsent: read === null,
+      memoriesAbsent: memories.items.length === 0,
+      remainingHistoryCoverage: "unconfirmed",
+    };
+  }
   async hasPendingOperations(scopeId: string) {
     for (const status of ["pending", "processing"]) {
       const r = await sdk.listOperations({
