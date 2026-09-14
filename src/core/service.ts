@@ -86,6 +86,7 @@ interface Job {
   comparedMethodRefs?: ObjectRef[];
   nativeIsolation?: "job";
   evidenceStaged?: boolean;
+  engineOperations?: string[];
 }
 interface Source {
   id: string;
@@ -618,9 +619,13 @@ export class CoreService {
       j = await this.updateJob(j.id, { assessmentOperationId: found });
     }
     if (j.cancelRequestedAt) {
-      for (const id of [j.operationId, j.assessmentOperationId].filter(
-        (id): id is string => !!id,
-      )) {
+      for (const id of [
+        ...new Set([
+          ...(j.engineOperations ?? []),
+          j.operationId,
+          j.assessmentOperationId,
+        ]),
+      ].filter((id): id is string => !!id)) {
         const op = await engine.operation(j.scopeId, id);
         if (op.status === "pending") await engine.cancel(j.scopeId, id);
         if (!["completed", "failed", "cancelled"].includes(op.status)) return;
@@ -641,7 +646,12 @@ export class CoreService {
       const operationId = randomUUID();
       j = await this.updateJob(
         j.id,
-        { stage: "extract", status: "running", operationId },
+        {
+          stage: "extract",
+          status: "running",
+          operationId,
+          engineOperations: [...(j.engineOperations ?? []), operationId],
+        },
         true,
       );
       await engine.retain(materials[0]!, operationId);
@@ -726,7 +736,10 @@ export class CoreService {
         materials.flatMap((m) => m.fingerprints),
         outputJsonSchema,
       );
-      await this.updateJob(j.id, { operationId: model.operation_id });
+      await this.updateJob(j.id, {
+        operationId: model.operation_id,
+        engineOperations: [...(j.engineOperations ?? []), model.operation_id],
+      });
       return;
     }
     if (j.stage === "compose") {
@@ -765,6 +778,10 @@ export class CoreService {
       );
       await this.updateJob(j.id, {
         assessmentOperationId: assessment.operation_id,
+        engineOperations: [
+          ...(j.engineOperations ?? []),
+          assessment.operation_id,
+        ],
       });
       return;
     }
