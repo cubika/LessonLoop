@@ -118,6 +118,11 @@ async function run() {
         methodId: method.id,
         revision: method.revision,
         taskRef: state.taskRef,
+        requestId: digest([
+          event.sessionId,
+          event.timestamp ?? "",
+          promptDigest,
+        ]),
       },
       "prepare",
     )) as { status: string; methodUseRef?: string };
@@ -137,6 +142,23 @@ async function run() {
       toolName: event.toolName,
       result: event.toolResult,
     });
+    if (Buffer.byteLength(text) <= 16000)
+      await call(
+        "recordHostObservation",
+        {
+          taskRef: state.taskRef,
+          eventId: digest([
+            event.sessionId,
+            event.timestamp,
+            event.toolCallId ?? text,
+          ]),
+          text,
+          occurredAt: new Date(
+            typeof event.timestamp === "number" ? event.timestamp : Date.now(),
+          ).toISOString(),
+        },
+        "host-observation",
+      );
     if (setting.learning && Buffer.byteLength(text) <= 30000)
       await call(
         "submitMaterial",

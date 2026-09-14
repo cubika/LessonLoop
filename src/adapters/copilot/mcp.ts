@@ -12,6 +12,8 @@ const tools = {
   getJob: "Read current learning status",
   searchMethods: "Search currently published method summaries",
   prepareMethod: "Prepare a method for a core-bound task",
+  reassessTask:
+    "Reassess method conditions using observations already captured by the trusted host",
   inspectMethod: "Read current method details",
   recall: "Recall eligible experiences",
   inspect: "Inspect a product experience",

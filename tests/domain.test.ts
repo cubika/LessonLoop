@@ -242,3 +242,18 @@ test("ending a task and restarting preparation invalidate continuation", () => {
     "unavailable",
   );
 });
+test("duplicate preparation rechecks current eligibility without spending another budget", () => {
+  const { m, p, d, f } = setup();
+  const request = {
+    callerId: "c",
+    taskRef: "t",
+    revision: 1,
+    requestId: "event-1",
+  };
+  for (let i = 0; i < 12; i++)
+    assert.equal(p.prepare(m, request, f, d).status, "guidance");
+  assert.equal(
+    p.prepare(m, request, f, { ...d, blockedObjects: new Set([m.id]) }).status,
+    "target_unavailable",
+  );
+});

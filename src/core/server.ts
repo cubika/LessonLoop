@@ -139,6 +139,10 @@ export async function dispatch(
     }
     case "observeTask":
       return core.observe(p, input);
+    case "recordHostObservation":
+      return core.recordHostObservation(p, input);
+    case "reassessTask":
+      return core.reassessTask(p, input);
     case "prepareMethod":
       return core.prepare(p, input);
     case "setMethodState": {

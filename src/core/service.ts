@@ -87,6 +87,8 @@ interface Job {
   nativeIsolation?: "job";
   evidenceStaged?: boolean;
   engineOperations?: string[];
+  modelQuery?: string;
+  assessmentQuery?: string;
 }
 interface Source {
   id: string;
@@ -130,7 +132,16 @@ interface Task {
     completedStepIds: string[];
     conditionResults: Record<string, boolean>;
     ended: boolean;
+    rawDigest?: string;
+    methodRef?: ObjectRef;
+    methodUseRef?: string;
   }>;
+  rawObservations?: Array<{
+    eventId: string;
+    text: string;
+    occurredAt: string;
+  }>;
+  reassessmentCount?: number;
 }
 interface RevisionReview {
   id: string;
@@ -445,7 +456,7 @@ export class CoreService {
         });
       }
       const published = results.filter((r) => r.effective !== null);
-      const { candidate, verdict, ...visible } = j;
+      const { candidate, verdict, modelQuery, assessmentQuery, ...visible } = j;
       return {
         ...visible,
         results,
@@ -607,16 +618,67 @@ export class CoreService {
       }
       return rows;
     });
+    let modelSubmissionClosed = false;
+    let assessmentSubmissionClosed = false;
     if (j.modelId && j.stage === "compose") {
-      const found = await engine.findModelOperation(j.scopeId, j.modelId);
-      if (!found) throw new ApiError("native_model_identity_unconfirmed");
-      if (found !== j.operationId)
+      let found = await engine.findModelOperation(j.scopeId, j.modelId);
+      if (!found && j.cancelRequestedAt && j.nativeIsolation === "job") {
+        const canceled = await engine.cancelModelSubmission(
+          j.scopeId,
+          j.modelId,
+        );
+        found = canceled.operation_id ?? undefined;
+        modelSubmissionClosed = canceled.submission_canceled && !found;
+      }
+      if (
+        !found &&
+        j.nativeIsolation === "job" &&
+        j.modelQuery &&
+        !j.cancelRequestedAt
+      ) {
+        const accepted = await engine.createModel(
+          j.scopeId,
+          j.modelId,
+          j.modelQuery,
+          j.sourceRefs ?? materials.flatMap((m) => m.fingerprints),
+          outputJsonSchema,
+        );
+        found = accepted.operation_id;
+      }
+      if (!found && !modelSubmissionClosed)
+        throw new ApiError("native_model_identity_unconfirmed");
+      if (found && found !== j.operationId)
         j = await this.updateJob(j.id, { operationId: found });
     }
     if (j.assessmentId && !j.assessmentOperationId) {
-      const found = await engine.findModelOperation(j.scopeId, j.assessmentId);
-      if (!found) throw new ApiError("assessment_identity_unconfirmed");
-      j = await this.updateJob(j.id, { assessmentOperationId: found });
+      let found = await engine.findModelOperation(j.scopeId, j.assessmentId);
+      if (!found && j.cancelRequestedAt && j.nativeIsolation === "job") {
+        const canceled = await engine.cancelModelSubmission(
+          j.scopeId,
+          j.assessmentId,
+        );
+        found = canceled.operation_id ?? undefined;
+        assessmentSubmissionClosed = canceled.submission_canceled && !found;
+      }
+      if (
+        !found &&
+        j.nativeIsolation === "job" &&
+        j.assessmentQuery &&
+        !j.cancelRequestedAt
+      ) {
+        const accepted = await engine.createModel(
+          j.scopeId,
+          j.assessmentId,
+          j.assessmentQuery,
+          j.sourceRefs ?? materials.flatMap((m) => m.fingerprints),
+          assessmentJsonSchema,
+        );
+        found = accepted.operation_id;
+      }
+      if (!found && !assessmentSubmissionClosed)
+        throw new ApiError("assessment_identity_unconfirmed");
+      if (found)
+        j = await this.updateJob(j.id, { assessmentOperationId: found });
     }
     if (j.cancelRequestedAt) {
       for (const id of [
@@ -726,13 +788,14 @@ export class CoreService {
           modelId,
           status: "running",
           comparedMethodRefs: existing.slice(-20).map((m) => ref("method", m)),
+          modelQuery: learningQuery(materials, existing.slice(-20)),
         },
         true,
       );
       const model = await engine.createModel(
         j.scopeId,
         modelId,
-        learningQuery(materials, existing.slice(-20)),
+        j.modelQuery!,
         materials.flatMap((m) => m.fingerprints),
         outputJsonSchema,
       );
@@ -768,11 +831,12 @@ export class CoreService {
     }
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = `assess-${j.id}`;
-      j = await this.updateJob(j.id, { assessmentId }, true);
+      const assessmentQuery = `Assess the proposal against authorized source data. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check the actual evidence for each L1-L5 claim rather than counting sources. Return acceptedExperienceIndexes and methodSupported. Data: ${JSON.stringify({ materials, proposal: j.candidate })}`;
+      j = await this.updateJob(j.id, { assessmentId, assessmentQuery }, true);
       const assessment = await engine.createModel(
         j.scopeId,
         assessmentId,
-        `Assess the proposal against authorized source data. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check the actual evidence for each L1-L5 claim rather than counting sources. Return acceptedExperienceIndexes and methodSupported. Data: ${JSON.stringify({ materials, proposal: j.candidate })}`,
+        assessmentQuery,
         materials.flatMap((m) => m.fingerprints),
         assessmentJsonSchema,
       );
@@ -1615,6 +1679,224 @@ export class CoreService {
       return { accepted: true, duplicate: false };
     });
   }
+  async recordHostObservation(p: Principal, input: unknown) {
+    if (p.channel !== "host") throw new ApiError("trusted_host_required", 403);
+    const v = z
+      .object({
+        taskRef: z.string(),
+        eventId: z.string().max(128),
+        text: z.string().min(1).max(16000),
+        occurredAt: z.string().datetime(),
+      })
+      .strict()
+      .parse(input);
+    return this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
+      if (task.callerId !== p.id || task.ended)
+        throw new ApiError("task_unavailable", 409);
+      const raw = task.rawObservations ?? [];
+      const old = raw.find((e) => e.eventId === v.eventId);
+      if (old) {
+        if (
+          digest(old) !==
+          digest({ eventId: v.eventId, text: v.text, occurredAt: v.occurredAt })
+        )
+          throw new Conflict("event_conflict");
+        return { accepted: true, duplicate: true };
+      }
+      const next = mutate(task, {
+        rawObservations: [
+          ...raw,
+          { eventId: v.eventId, text: v.text, occurredAt: v.occurredAt },
+        ],
+      });
+      if (byteSize(next) > 65536 || next.rawObservations!.length > 16)
+        throw new ApiError("task_observations_too_large", 413);
+      await tx.put(entry("task", next), task.revision);
+      return { accepted: true, duplicate: false };
+    });
+  }
+  async reassessTask(p: Principal, input: unknown) {
+    const v = z
+      .object({
+        taskRef: z.string(),
+        methodId: z.string(),
+        revision: z.number().int().positive(),
+        methodUseRef: z.string().min(1),
+      })
+      .strict()
+      .parse(input);
+    const snapshot = await this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
+      if (
+        task.ended ||
+        Date.now() - Date.parse(task.createdAt) >= 86400000 ||
+        (task.callerId !== p.id &&
+          !(p.channel === "agent" && p.taskOwnerId === task.callerId))
+      )
+        throw new ApiError("task_unavailable", 409);
+      const method = await this.owned<Method>(tx, p, "method", v.methodId);
+      if (
+        method.revision !== v.revision ||
+        !eligible(method, await this.eligibility(tx, p))
+      )
+        throw new ApiError("target_unavailable", 409);
+      const uses = await tx.list<{
+        taskRef: string;
+        methodUseRef: string;
+        stepIds: string[];
+        method: ObjectRef;
+        returnedAt: string;
+      }>("method_use", [task.scopeId]);
+      const delivered = new Set(
+        uses
+          .filter(
+            (u) =>
+              u.taskRef === task.id &&
+              u.method.id === method.id &&
+              u.method.revision === method.revision &&
+              (!v.methodUseRef || u.methodUseRef === v.methodUseRef),
+          )
+          .flatMap((u) => u.stepIds),
+      );
+      const active = this.preparation.activeUse(
+        task.callerId,
+        task.id,
+        v.methodUseRef,
+        method.id,
+        method.revision,
+      );
+      if (!active) throw new ApiError("prepare_context_expired", 409);
+      for (const step of delivered)
+        if (!active.has(step)) delivered.delete(step);
+      const deliveredAt = new Map<string, number>();
+      for (const use of uses)
+        if (
+          use.taskRef === task.id &&
+          use.methodUseRef === v.methodUseRef &&
+          use.method.id === method.id &&
+          use.method.revision === method.revision
+        )
+          for (const step of use.stepIds)
+            deliveredAt.set(
+              step,
+              Math.min(
+                deliveredAt.get(step) ?? Infinity,
+                Date.parse(use.returnedAt),
+              ),
+            );
+      return { task, method, delivered, deliveredAt };
+    });
+    const conditions = [
+      ...snapshot.method.conditions,
+      ...snapshot.method.exceptions,
+      ...snapshot.method.steps
+        .filter((s) => snapshot.delivered.has(s.stepId))
+        .flatMap((s) => s.choices?.map((c) => c.when) ?? []),
+    ];
+    const key = digest([
+      snapshot.task.id,
+      digest(snapshot.task.rawObservations ?? []),
+      snapshot.method.id,
+      snapshot.method.revision,
+      v.methodUseRef,
+      [...snapshot.delivered].sort(),
+    ]);
+    const previous = await this.store.transaction((tx) =>
+      tx.get<{ result: unknown }>("task_assessment", key),
+    );
+    if (previous) return previous.result;
+    const evidence = snapshot.task.rawObservations ?? [];
+    if (!evidence.length)
+      return { status: "lead", reason: "no_trusted_observations" };
+    await this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
+      if (task.revision !== snapshot.task.revision) throw new Conflict();
+      if ((task.reassessmentCount ?? 0) >= 8)
+        throw new ApiError("observation_assessment_budget", 409);
+      const next = mutate(task, {
+        reassessmentCount: (task.reassessmentCount ?? 0) + 1,
+      });
+      await tx.put(entry("task", next), task.revision);
+      snapshot.task = next;
+    });
+    const evaluated = await this.engine.checkObservations({
+      observations: evidence.map((e) => e.text),
+      conditions: conditions.map((c) => ({ key: digest(c), text: c.text })),
+      steps: snapshot.method.steps
+        .filter((s) => snapshot.delivered.has(s.stepId))
+        .map((s) => ({ key: s.stepId, text: s.instruction })),
+    });
+    const conditionResults: Record<string, boolean> = {};
+    for (const check of evaluated.result.conditions)
+      if (
+        conditions.some((c) => digest(c) === check.key) &&
+        check.result !== "unknown"
+      )
+        conditionResults[check.key] = check.result === "true";
+    const completed = evaluated.result.completed_steps
+      .filter(
+        (c) =>
+          snapshot.delivered.has(c.key) &&
+          c.result === "true" &&
+          evidence.some(
+            (e) =>
+              e.text.includes(c.excerpt) &&
+              Date.parse(e.occurredAt) >=
+                (snapshot.deliveredAt.get(c.key) ?? Infinity),
+          ),
+      )
+      .map((c) => c.key);
+    return this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
+      const method = await tx.get<Method>("method", v.methodId);
+      if (
+        task.revision !== snapshot.task.revision ||
+        task.ended ||
+        method?.revision !== v.revision ||
+        !eligible(method, await this.eligibility(tx, p))
+      )
+        throw new Conflict("task_changed_during_assessment");
+      const next = mutate(task, {
+        observations: [
+          ...task.observations,
+          {
+            id: key,
+            text: "Conditions assessed from trusted host observations",
+            values: {},
+            completedStepIds: completed,
+            conditionResults,
+            ended: false,
+            rawDigest: digest(task.rawObservations ?? []),
+            methodRef: ref("method", method),
+            ...(v.methodUseRef ? { methodUseRef: v.methodUseRef } : {}),
+          },
+        ],
+      });
+      if (byteSize(next) > 65536)
+        throw new ApiError("task_observations_too_large", 413);
+      await tx.put(entry("task", next), task.revision);
+      const result = {
+        status: "assessed",
+        completedStepIds: completed,
+        conditionResults,
+        usage: evaluated.usage,
+        evidence: evaluated.result,
+        rawDigest: digest(task.rawObservations ?? []),
+        methodRef: ref("method", method),
+      };
+      await tx.put(
+        entry("task_assessment", {
+          id: key,
+          revision: 1,
+          scopeId: task.scopeId,
+          result,
+        }),
+        null,
+      );
+      return result;
+    });
+  }
   async prepare(p: Principal, input: unknown) {
     const v = z
       .object({
@@ -1624,6 +1906,7 @@ export class CoreService {
         methodUseRef: z.string().optional(),
         completedStepIds: z.array(z.string()).max(12).optional(),
         viewMode: z.enum(["auto", "expanded"]).optional(),
+        requestId: z.string().min(1).max(128).optional(),
       })
       .strict()
       .parse(input);
@@ -1637,7 +1920,15 @@ export class CoreService {
       )
         throw new ApiError("task_unavailable", 409);
       const m = await tx.get<Method>("method", v.methodId);
-      const latest = t.observations.at(-1);
+      const latestRecord = t.observations.at(-1);
+      const latest =
+        latestRecord?.rawDigest &&
+        (latestRecord.rawDigest !== digest(t.rawObservations ?? []) ||
+          latestRecord.methodRef?.id !== m?.id ||
+          latestRecord.methodRef?.revision !== m?.revision ||
+          latestRecord.methodUseRef !== v.methodUseRef)
+          ? undefined
+          : latestRecord;
       const facts: TaskFacts = {
         values: t.values,
         trustedKeys: new Set(

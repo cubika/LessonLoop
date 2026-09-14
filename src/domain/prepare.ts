@@ -93,7 +93,10 @@ export interface TaskFacts {
   completed: ReadonlySet<string>;
 }
 export function evaluate(c: Condition, facts: TaskFacts): boolean | undefined {
-  if (!c.match) return facts.conditions.get(digest(c));
+  const assessed = facts.conditions.get(digest(c));
+  if (!c.match) return assessed;
+  if (assessed !== undefined && !facts.trustedKeys.has(c.match.key))
+    return assessed;
   if (!facts.trustedKeys.has(c.match.key)) return undefined;
   const actual = facts.values[c.match.key];
   if (actual === undefined) return undefined;
@@ -120,6 +123,7 @@ export class Preparation {
       closed: boolean;
       startedAt: number;
       checks: Map<string, number>;
+      requests: Map<string, { hash: string; use?: string }>;
     }
   >();
   sweep(now = Date.now()) {
@@ -128,6 +132,23 @@ export class Preparation {
         this.sessions.delete(id);
     for (const [id, t] of this.tasks)
       if (now - t.startedAt >= 86400000) this.tasks.delete(id);
+  }
+  activeUse(
+    callerId: string,
+    taskRef: string,
+    useRef: string,
+    methodId: string,
+    revision: number,
+  ) {
+    this.sweep();
+    const s = this.sessions.get(useRef);
+    return s &&
+      s.callerId === callerId &&
+      s.taskRef === taskRef &&
+      s.method.id === methodId &&
+      s.method.revision === revision
+      ? new Set(s.delivered)
+      : undefined;
   }
   endTask(callerId: string, taskRef: string) {
     const key = `${callerId}:${taskRef}`;
@@ -139,6 +160,7 @@ export class Preparation {
         closed: true,
         startedAt: Date.now(),
         checks: new Map(),
+        requests: new Map(),
       });
     for (const [id, s] of this.sessions)
       if (s.callerId === callerId && s.taskRef === taskRef)
@@ -153,6 +175,7 @@ export class Preparation {
       methodUseRef?: string | undefined;
       completedStepIds?: string[] | undefined;
       viewMode?: "auto" | "expanded" | undefined;
+      requestId?: string | undefined;
     },
     facts: TaskFacts,
     data: Eligibility,
@@ -171,14 +194,35 @@ export class Preparation {
         closed: false,
         startedAt: data.now,
         checks: new Map(),
+        requests: new Map(),
       };
       this.tasks.set(key, task);
     }
     if (task.closed || data.now - task.startedAt >= 86400000)
       return { status: "unavailable", reason: "task_ended_or_expired" };
-    if (request.viewMode !== "expanded" && ++task.count > 8)
+    const requestHash = digest({
+      methodId: method.id,
+      revision: request.revision,
+      methodUseRef: request.methodUseRef,
+      completedStepIds: [...(request.completedStepIds ?? [])].sort(),
+      viewMode: request.viewMode ?? "auto",
+      facts: {
+        values: facts.values,
+        trustedKeys: [...facts.trustedKeys].sort(),
+        conditions: [...facts.conditions].sort(([a], [b]) =>
+          a.localeCompare(b),
+        ),
+        completed: [...facts.completed].sort(),
+      },
+    });
+    const previous = request.requestId
+      ? task.requests.get(request.requestId)
+      : undefined;
+    if (previous && previous.hash !== requestHash)
+      return { status: "unavailable", reason: "request_id_conflict" };
+    if (!previous && request.viewMode !== "expanded" && ++task.count > 8)
       return { status: "unavailable", reason: "task_prepare_budget" };
-    let use = request.methodUseRef;
+    let use = request.methodUseRef ?? previous?.use;
     let s = use ? this.sessions.get(use) : undefined;
     if (
       use &&
@@ -210,6 +254,11 @@ export class Preparation {
       };
       this.sessions.set(use, s);
     }
+    if (request.requestId && !previous)
+      task.requests.set(request.requestId, {
+        hash: requestHash,
+        ...(use ? { use } : {}),
+      });
     s.touchedAt = data.now;
     for (const step of s.completed)
       if (!facts.completed.has(step)) s.completed.delete(step);
@@ -237,6 +286,7 @@ export class Preparation {
     const check = (point: string) => {
       const key = `${method.id}:${point}`;
       const n = task!.checks.get(key) ?? 0;
+      if (previous) return n <= 3;
       task!.checks.set(key, n + 1);
       return n < 3;
     };

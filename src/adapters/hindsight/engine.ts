@@ -53,6 +53,40 @@ export class HindsightEngine {
     });
     return version;
   }
+  async checkObservations(input: {
+    observations: string[];
+    conditions: Array<{ key: string; text: string }>;
+    steps: Array<{ key: string; text: string }>;
+  }) {
+    const response = await fetch(
+      new URL("/ext/lessonloop/check-observations", this.baseUrl),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(65000),
+      },
+    );
+    if (!response.ok) throw new Error("observation_check_unavailable");
+    return (await response.json()) as {
+      result: {
+        conditions: Array<{
+          key: string;
+          result: "true" | "false" | "unknown";
+          excerpt: string;
+        }>;
+        completed_steps: Array<{
+          key: string;
+          result: "true" | "false" | "unknown";
+          excerpt: string;
+        }>;
+      };
+      usage: { input_tokens: number; output_tokens: number };
+    };
+  }
   async configure(scopeId: string) {
     await this.client.createBank(this.bank(scopeId), {
       retainMission: LEARNING_MISSION,
@@ -188,6 +222,28 @@ export class HindsightEngine {
     });
     return r.data;
   }
+  async cancelModelSubmission(scopeId: string, modelId: string) {
+    const response = await fetch(
+      new URL("/ext/lessonloop/cancel-model-submission", this.baseUrl),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          bank_id: this.bank(scopeId),
+          model_id: modelId,
+        }),
+        signal: AbortSignal.timeout(30000),
+      },
+    );
+    if (!response.ok) throw new Error("submission_cancel_unconfirmed");
+    return (await response.json()) as {
+      submission_canceled: boolean;
+      operation_id: string | null;
+    };
+  }
   async createModel(
     scopeId: string,
     modelId: string,
@@ -196,6 +252,31 @@ export class HindsightEngine {
     responseSchema: Record<string, unknown>,
   ) {
     // The high-level SDK does not expose response_schema/refresh_mode on triggers.
+    if (this.nativeNamespace) {
+      const response = await fetch(
+        new URL("/ext/lessonloop/model-submissions", this.baseUrl),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            bank_id: this.bank(scopeId),
+            model_id: modelId,
+            query,
+            tags: sourceFingerprints.map((f) => `source:${f}`),
+            response_schema: responseSchema,
+          }),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+      if (!response.ok) throw new Error(`model_submission_${response.status}`);
+      return (await response.json()) as {
+        operation_id: string;
+        mental_model_id: string;
+      };
+    }
     const trigger: MentalModelTriggerInput = {
       refresh_after_consolidation: false,
       min_refresh_interval_seconds: 3600,
