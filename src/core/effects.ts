@@ -55,9 +55,22 @@ export class Effects {
     input: unknown,
   ) {
     if (caller.channel !== "host") throw new Error("trusted_host_required");
-    const events = z.array(eventSchema).max(8).parse(input);
+    const events = z.array(z.unknown()).max(8).parse(input);
     const results = [];
-    for (const event of events) {
+    for (const raw of events) {
+      const parsed = eventSchema.safeParse(raw);
+      if (!parsed.success) {
+        results.push({
+          eventId:
+            typeof raw === "object" && raw && "eventId" in raw
+              ? String(raw.eventId)
+              : "unknown",
+          status: "rejected",
+          reason: "invalid_event",
+        });
+        continue;
+      }
+      const event = parsed.data;
       try {
         if (!caller.scopes.includes(event.scopeId))
           throw new Error("scope_denied");

@@ -84,14 +84,21 @@ export class HindsightEngine {
     return r.data;
   }
   async findModelOperation(scopeId: string, modelId: string) {
-    const r = await sdk.listOperations({
-      client: this.raw,
-      path: { bank_id: this.bank(scopeId) },
-      query: { type: "refresh_mental_model", limit: 100 },
-      signal: AbortSignal.timeout(10000),
-      throwOnError: true,
-    });
-    return r.data.operations.find((op) => op.mental_model_id === modelId)?.id;
+    for (let offset = 0; offset < 10000; offset += 100) {
+      const r = await sdk.listOperations({
+        client: this.raw,
+        path: { bank_id: this.bank(scopeId) },
+        query: { type: "refresh_mental_model", limit: 100, offset },
+        signal: AbortSignal.timeout(10000),
+        throwOnError: true,
+      });
+      const match = r.data.operations.find(
+        (op) => op.mental_model_id === modelId,
+      )?.id;
+      if (match) return match;
+      if (offset + 100 >= r.data.total) return undefined;
+    }
+    throw new Error("operation_lookup_budget_exceeded");
   }
   async cancel(scopeId: string, operationId: string) {
     const r = await sdk.cancelOperation({
