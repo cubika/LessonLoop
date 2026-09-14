@@ -1126,9 +1126,13 @@ export class CoreService {
           .filter((m) => m.fingerprints.includes(source.id))
           .map((m) => m.id),
       );
+      const affectedMethodIds = new Set(affectedMethods.map((m) => m.id));
+      const affectedJob = (j: Job) =>
+        j.materialIds.some((id) => materialIds.has(id)) ||
+        j.comparedMethodRefs?.some((r) => affectedMethodIds.has(r.id)) === true;
       for (const j of jobs)
         if (
-          j.materialIds.some((id) => materialIds.has(id)) &&
+          affectedJob(j) &&
           ["queued", "running", "uncertain"].includes(j.status)
         ) {
           const canceled = mutate(j, {
@@ -1170,10 +1174,10 @@ export class CoreService {
               .filter(Boolean),
           ),
           models: jobs
-            .filter((j) => j.materialIds.some((id) => materialIds.has(id)))
+            .filter(affectedJob)
             .flatMap((j) => [j.modelId, j.assessmentId].filter(Boolean)),
           operations: jobs
-            .filter((j) => j.materialIds.some((id) => materialIds.has(id)))
+            .filter(affectedJob)
             .flatMap((j) =>
               [j.operationId, j.assessmentOperationId].filter(Boolean),
             ),
