@@ -61,6 +61,8 @@ export async function dispatch(
       return core.inspect(p, "method", identifier.parse(input).id);
     case "methodHistory":
       return core.history(p, identifier.parse(input).id);
+    case "getRevisionReview":
+      return core.inspect(p, "revision_review", identifier.parse(input).id);
     case "exportMethod": {
       const v = z
         .object({

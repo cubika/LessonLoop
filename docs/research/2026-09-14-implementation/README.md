@@ -13,6 +13,8 @@ TypeScript 检查、构建及 28 个现有/新增单元测试通过。真实 Pos
 
 后续新增 Copilot 事件适配与产品 MCP 初版。真实 Copilot CLI 1.0.84-5 在独立验证目录中成功执行 userPromptTransformed、postToolUse、sessionEnd；宿主事件记录确认产品 lead 经 modifiedTransformedPrompt 回填，并关联核心 task/methodUse。当前仍未验证完整材料捕获、显式续用及安装注册。领域与协议单元测试增至 30 项。
 
+手动方法修订已接上持久审查：先暂停旧版，再用官方 Mental Model 检查当前依据，核对目标和控制修订后发布。真实验证将最后一步细化为字段列表 deepEqual 检查，审查 completed，新方法恢复 active；后续用户控制或原生失败不能沿用旧审查结果。完整纠正/演进验收仍未通过。
+
 真实宿主验证发现两项配置差异：Agent Plugins 1.0 的 manifest 必须包含准确的 `$schema`；复制完整用户 config.json 会带入已安装插件，验证环境改为仅保留账号选择字段并限定可信目录。失败运行未算回填成功。
 
 ## 官方组件实测
