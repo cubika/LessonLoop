@@ -99,6 +99,27 @@ export async function dispatch(
       return core.inspect(p, "experience", identifier.parse(input).id);
     case "browse":
       return core.browse(p, "experience");
+    case "setState": {
+      const v = z
+        .object({
+          id: z.string(),
+          expectedRevision: z.number().int().positive(),
+          state: z.enum(["active", "disabled"]),
+        })
+        .strict()
+        .parse(input);
+      return core.setState(p, "experience", v.id, v.expectedRevision, v.state);
+    }
+    case "remove": {
+      const v = z
+        .object({
+          id: z.string(),
+          expectedRevision: z.number().int().positive(),
+        })
+        .strict()
+        .parse(input);
+      return core.remove(p, "experience", v.id, v.expectedRevision);
+    }
     case "recall": {
       const v = z
         .object({ query: z.string().min(1).max(2048) })
