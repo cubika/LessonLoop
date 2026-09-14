@@ -29,12 +29,13 @@ def protect(value, decrypt=False):
     finally:ctypes.windll.kernel32.LocalFree(outgoing.data)
 
 parser=argparse.ArgumentParser()
-parser.add_argument("action",choices=["setup","start","stop","status","cli","agent-hook","mcp"])
+parser.add_argument("action",choices=["setup","start","stop","status","doctor","cli","agent-hook","mcp"])
 parser.add_argument("--data-root",required=True)
 parser.add_argument("--runtime-root",default=str(Path(__file__).resolve().parents[1]))
 parser.add_argument("--scope",default="personal")
 parser.add_argument("--base-port",type=int,default=19431)
 parser.add_argument("--allow-root",action="append",default=[])
+parser.add_argument("--wait-seconds",type=int,default=120)
 parser.add_argument("arguments",nargs="*")
 args=parser.parse_args()
 root=Path(args.data_root).resolve();runtime=Path(args.runtime_root).resolve()
@@ -53,8 +54,8 @@ def call_db(action,secret=None):
     result=subprocess.run(command,input=json.dumps(secret) if secret else None,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=flags,timeout=80)
     if result.returncode:raise RuntimeError("Private database operation failed; inspect database-manager.log")
 def start_database():
-    try:call_db("status");return
-    except RuntimeError:call_db("start")
+    try:call_db("status");return False
+    except RuntimeError:call_db("start");return True
 def config(secret):return {"port":record["corePort"],"databaseUrl":f"postgresql://lessonloop:{secret['password']}@127.0.0.1:{record['databasePort']}/postgres","engineUrl":f"http://127.0.0.1:{record['enginePort']}","engineToken":secret["engineToken"],"credentials":[{"token":secret["userToken"],"principal":{"id":"owner","channel":"user","scopes":[record["scopeId"]]}},{"token":secret["hostToken"],"principal":{"id":"copilot-host","channel":"host","scopes":[record["scopeId"]]}},{"token":secret["agentToken"],"principal":{"id":"copilot-agent","channel":"agent","taskOwnerId":"copilot-host","scopes":[record["scopeId"]]}}]}
 def owned_process(saved,expected):
     try:
@@ -95,18 +96,27 @@ record=json.loads(record_path.read_text(encoding="utf-8"))
 if record["dataRoot"]!=str(root) or record["runtimeRoot"]!=str(runtime):raise SystemExit("Installation ownership mismatch")
 secret=read_secrets();cfg=config(secret)
 if args.action=="start":
-    try:
-        current=health(secret)
-        print(json.dumps(current));sys.exit(0 if current["engine"]["status"]=="ready" else 2)
-    except Exception:pass
     processes_path=root/"processes.json"
+    saved={"installationId":record["installationId"]}
     if processes_path.exists():
         saved=json.loads(processes_path.read_text())
         if saved.get("installationId")!=record["installationId"]:raise SystemExit("Process ownership mismatch")
-        existing=[owned_process(saved.get(name,{}),exe) for name,exe in [("core",node),("engine",python)]]
-        if any(existing):print(json.dumps({"status":"starting_or_degraded","reason":"Existing owned components are still running; inspect status or stop before restarting."}));sys.exit(2)
+    existing={name:owned_process(saved.get(name,{}),exe) for name,exe in [("core",node),("engine",python)]}
+    if all(existing.values()):
+        try:
+            current=health(secret)
+            if current["engine"]["status"]=="ready":print(json.dumps(current));sys.exit(0)
+        except Exception:pass
     if record.get("setupState")!="ready":raise SystemExit("Setup is incomplete; rerun setup")
-    start_database()
+    database_restarted=start_database()
+    if database_restarted:
+        # The core's singleton connection cannot survive database termination.
+        for name in ["core","engine"]:
+            if existing[name]:existing[name].terminate();existing[name].wait(timeout=30);existing[name]=None
+    elif existing["core"]:
+        try:health(secret)
+        except Exception:
+            existing["core"].terminate();existing["core"].wait(timeout=30);existing["core"]=None
     import psycopg2
     with psycopg2.connect(cfg["databaseUrl"]) as db:
         with db.cursor() as cur:
@@ -114,20 +124,28 @@ if args.action=="start":
             cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
     env={**os.environ,"PYTHONUTF8":"1","PYTHONIOENCODING":"utf-8","PYTHONUNBUFFERED":"1","HINDSIGHT_API_DATABASE_URL":cfg["databaseUrl"],"HINDSIGHT_API_DATABASE_SCHEMA":"hindsight","HINDSIGHT_API_HOST":"127.0.0.1","HINDSIGHT_API_PORT":str(record["enginePort"]),"HINDSIGHT_API_LLM_PROVIDER":"github-copilot","HINDSIGHT_API_LLM_MODEL":"gpt-5.5","HINDSIGHT_API_EMBEDDINGS_PROVIDER":"onnx","HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH":str(runtime/"models/e5/onnx/model.onnx"),"HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH":str(runtime/"models/e5"),"HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS":"384","HINDSIGHT_API_RERANKER_PROVIDER":"rrf","HINDSIGHT_API_TENANT_EXTENSION":"hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension","HINDSIGHT_API_TENANT_API_KEY":secret["engineToken"],"HF_HUB_OFFLINE":"1","TRANSFORMERS_OFFLINE":"1","COPILOT_SKIP_CLI_DOWNLOAD":"1","HINDSIGHT_API_LOG_LEVEL":"WARNING","HINDSIGHT_API_ACCESS_LOG":"false"}
     copilot=shutil.which("copilot.exe")
-    env.update(HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
+    env.update(LITELLM_LOCAL_MODEL_COST_MAP="true",HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
     env.update(HINDSIGHT_API_HTTP_EXTENSION="hindsight_product:LessonLoopProduct",HINDSIGHT_API_HTTP_PRODUCT_KEY=secret["engineToken"])
     if copilot:env["COPILOT_CLI_PATH"]=str(Path(copilot).resolve())
-    with (root/"engine.log").open("ab") as log:
-        engine=subprocess.Popen([str(python),str(runtime/"distribution/hindsight_server.py")],env=env,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
-    with (root/"core.log").open("ab") as log:
-        core_args=[str(node),str(runtime/"dist/cli/main.js"),"serve"]
-        core=subprocess.Popen(core_args,env={**os.environ,"LESSONLOOP_CONFIG_STDIN":"1"},stdin=subprocess.PIPE,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
-        core.stdin.write(json.dumps(cfg).encode());core.stdin.close()
     import psutil
     def process_record(child):
-        p=psutil.Process(child.pid);return {"pid":child.pid,"startedAt":p.create_time(),"command":p.cmdline()}
-    (root/"processes.json").write_text(json.dumps({"installationId":record["installationId"],"engine":process_record(engine),"core":process_record(core)}),encoding="utf-8")
-    deadline=time.monotonic()+120
+        process=psutil.Process(child.pid)
+        return {"pid":child.pid,"startedAt":process.create_time(),"command":process.cmdline()}
+    def save_processes():
+        temporary=processes_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(saved),encoding="utf-8")
+        temporary.replace(processes_path)
+    if not existing["engine"]:
+        with (root/"engine.log").open("ab") as log:
+            engine=subprocess.Popen([str(python),str(runtime/"distribution/hindsight_server.py")],env=env,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
+        saved["engine"]=process_record(engine);save_processes()
+    if not existing["core"]:
+        with (root/"core.log").open("ab") as log:
+            core_args=[str(node),str(runtime/"dist/cli/main.js"),"serve"]
+            core=subprocess.Popen(core_args,env={**os.environ,"LESSONLOOP_CONFIG_STDIN":"1"},stdin=subprocess.PIPE,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
+            saved["core"]=process_record(core);save_processes()
+            core.stdin.write(json.dumps(cfg).encode());core.stdin.close()
+    deadline=time.monotonic()+max(0,min(args.wait_seconds,600))
     while time.monotonic()<deadline:
         try:
             state=health(secret)
@@ -135,18 +153,28 @@ if args.action=="start":
                 print(json.dumps(state));sys.exit(0)
         except Exception:pass
         time.sleep(1)
-    print(json.dumps({"status":"starting","reason":"Cold initialization exceeded 120 seconds; components remain owned and may become ready. Use status to check."}));sys.exit(2)
+    print(json.dumps({"status":"starting","reason":"Components are still initializing; run status or start again to wait or recover a missing component."}));sys.exit(2)
+elif args.action=="doctor":
+    processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {}
+    state={"installation":"owned","runtimeFiles":all(path.exists() for path in [python,node,runtime/"postgres/bin/postgres.exe",runtime/"models/e5/onnx/model.onnx"]),"copilotCli":"available" if shutil.which("copilot.exe") else "missing","modelAuthentication":"not_verified","hostIntegration":"needs_configuration"}
+    for name,exe in [("core",node),("engine",python)]:state[name+"Process"]="owned_running" if owned_process(processes.get(name,{}),exe) else "not_running"
+    try:state["health"]=health(secret)
+    except Exception:state["health"]={"core":"unavailable"}
+    print(json.dumps(state));sys.exit(0 if state["runtimeFiles"] and state.get("health",{}).get("engine",{}).get("status")=="ready" else 2)
 elif args.action=="status":
     try:
         state=health(secret);print(json.dumps(state));sys.exit(0 if state["engine"]["status"]=="ready" else 2)
     except Exception:print(json.dumps({"status":"unavailable"}));sys.exit(2)
 elif args.action=="stop":
-    processes=json.loads((root/"processes.json").read_text())
+    processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {"installationId":record["installationId"]}
     if processes["installationId"]!=record["installationId"]:raise SystemExit("Process ownership mismatch")
     for name,exe in [("core",node),("engine",python)]:
-        process=owned_process(processes[name],exe)
+        process=owned_process(processes.get(name,{}),exe)
         if process:process.terminate();process.wait(timeout=30)
-    call_db("stop");print(json.dumps({"status":"stopped"}))
+    try:call_db("status")
+    except RuntimeError:pass
+    else:call_db("stop")
+    print(json.dumps({"status":"stopped"}))
 else:
     env={**os.environ};command=[str(node)]
     if args.action=="cli":env["LESSONLOOP_CONFIG_STDIN"]="1";command+=[str(runtime/"dist/cli/main.js"),*args.arguments];payload=json.dumps(cfg).encode()
