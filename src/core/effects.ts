@@ -16,7 +16,7 @@ const eventSchema = z
       "collection_gap",
     ]),
     occurredAt: z.string().datetime(),
-    method: refSchema.optional(),
+    method: refSchema.extend({ kind: z.literal("method") }).optional(),
     methodUseRef: z.string().max(128).optional(),
     stepId: z.string().max(128).optional(),
     text: z.string().min(1).max(512),
@@ -27,6 +27,10 @@ const eventSchema = z
   .refine(
     (e) => e.kind !== "outcome" || e.outcome !== undefined,
     "outcome_required",
+  )
+  .refine(
+    (e) => e.kind !== "user_rating" || e.rating !== undefined,
+    "rating_required",
   );
 type Event = z.infer<typeof eventSchema>;
 interface EffectTask {
