@@ -20,8 +20,11 @@ LessonLoop 从工作材料中提炼可复用经验，保留适用条件和来源
 | [评审与取舍](docs/06-review-and-decisions.md) | 产品与技术选择的理由、代价及验证要求 |
 | [资料核验](docs/research/2026-09-12/README.md) | Mem0、Qdrant 官方依据及能力边界 |
 | [P0 实测记录](docs/research/2026-09-13-p0/README.md) | 存储、宿主协议的实际结果、兼容性发现和未完成验证 |
+| [记忆引擎选型与可替换接入层](docs/research/2026-09-14-memory-selection/README.md) | 本地免费与 Copilot 订阅约束下的横向比较、Hindsight 推荐依据、接入抽象与迁移边界 |
 
 ## 设计原则
+
+以下存储原则描述现有 Mem0 原型。2026-09-14 的重新选型建议采用 Hindsight 自托管，并在产品 API 下增加可替换记忆引擎接口；依据及待验证事项见上方研究文档，尚未迁移实现。
 
 - 数据层采用 Mem0 + Qdrant。Mem0 管理经验，Qdrant 是唯一数据库，必要运行状态也存入 Qdrant。
 - 领域层输出结构化经验，再逐条通过 `infer: false` 写入 Mem0；领域提取与去重由应用实现。
