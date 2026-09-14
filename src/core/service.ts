@@ -1080,8 +1080,17 @@ export class CoreService {
           await tx.put(entry("method", held), m.revision);
         }
       const jobs = await tx.list<Job>("job", [source.scopeId]);
+      const materials = await tx.list<Material>("material", [source.scopeId]);
+      const materialIds = new Set(
+        materials
+          .filter((m) => m.fingerprints.includes(source.id))
+          .map((m) => m.id),
+      );
       for (const j of jobs)
-        if (["queued", "running", "uncertain"].includes(j.status)) {
+        if (
+          j.materialIds.some((id) => materialIds.has(id)) &&
+          ["queued", "running", "uncertain"].includes(j.status)
+        ) {
           const canceled = mutate(j, {
             cancelRequestedAt: new Date().toISOString(),
             status: j.stage === "queued" ? "canceled" : "uncertain",
@@ -1097,7 +1106,7 @@ export class CoreService {
         scopeId: source.scopeId,
         revision: (barrier?.revision ?? 0) + 1,
         reason: v.action,
-        pending: true,
+        pending: (barrier?.pending ?? false) || v.action !== "withdraw",
         createdAt: new Date().toISOString(),
       };
       await tx.put(entry("scope_barrier", b), barrier?.revision ?? null);
@@ -1105,7 +1114,32 @@ export class CoreService {
         ...identity(source.scopeId),
         sourceId: source.id,
         action: v.action,
-        status: "pending",
+        status: v.action === "withdraw" ? "suppressed" : "pending",
+        copyManifest: {
+          documents: materials.flatMap((m) =>
+            m.fingerprints
+              .map((fp, i) =>
+                fp === source.id
+                  ? {
+                      materialId: m.id,
+                      segmentIndex: i,
+                      documentId: `${m.id}-${i}`,
+                    }
+                  : null,
+              )
+              .filter(Boolean),
+          ),
+          models: jobs
+            .filter((j) => j.materialIds.some((id) => materialIds.has(id)))
+            .flatMap((j) => [j.modelId, j.assessmentId].filter(Boolean)),
+          operations: jobs
+            .filter((j) => j.materialIds.some((id) => materialIds.has(id)))
+            .flatMap((j) =>
+              [j.operationId, j.assessmentOperationId].filter(Boolean),
+            ),
+          nativeHistoryCoverage: "unconfirmed",
+          traceCoverage: "unconfirmed",
+        },
         affectedMethods: affectedMethods.map((m) => ref("method", m)),
         affectedExperienceIds: [...blocked],
       };

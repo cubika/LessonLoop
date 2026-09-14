@@ -7,3 +7,5 @@
 首版需要把 SourceBinding、EngineBinding、WriteOperation 和 copy manifest 一起接入；每份 Material 的 segment、产品证据、方法及历史、原生文档、Mental Model、operation payload 和 trace 分别有归属与确认。一个 Material 的单 segment 撤回不能删除其他 segment 后继续宣称其支持有效。
 
 下一步按固定官方 API 验证可精确清理的文档/模型/作业，剩余历史与 trace 采用受控维护或有限学习命名空间，并记录实际新增的必要适配。相关操作未验证前不开放擦除/忘记入口。
+
+新增 hindsight_maintenance.py 目前仅提供 plan-residuals，只读核对显式行 ID 的 bank 归属和数量，不执行删除，不表示完整来源覆盖。清理执行仍需服务端持久清单、世代核对和迟到写入屏障。
