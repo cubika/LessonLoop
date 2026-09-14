@@ -138,3 +138,4 @@ console.log(
     methods: (report.methods as unknown[] | undefined)?.length ?? 0,
   }),
 );
+process.exitCode = report.gateStatus === "failed" ? 1 : 2;
