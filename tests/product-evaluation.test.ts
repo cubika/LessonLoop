@@ -199,12 +199,12 @@ test("Official operation polling retains the isolated native bank namespace", ()
   assert.equal(engine.bank("eval-native-bank"), "eval-native-bank");
   assert.equal(engine.bank("unrelated-scope-argument"), "eval-native-bank");
 });
-test("Product evaluation injects one prepared method or falls back to direct experiences", async () => {
+test("Product evaluation injects one prepared playbook or falls back to direct experiences", async () => {
   let recallCalls = 0,
     available = true;
   const core = {
     configure: async () => ({}),
-    submitMaterial: async () => ({ jobId: "job" }),
+    submitSource: async () => ({ jobId: "job" }),
     tick: async () => {},
     getJob: async () => ({
       status: "completed",
@@ -218,7 +218,7 @@ test("Product evaluation injects one prepared method or falls back to direct exp
         fn({ list: async () => [] }),
     },
     search: async () => ({
-      results: available ? [{ method: { id: "method", revision: 1 } }] : [],
+      results: available ? [{ playbook: { id: "playbook", revision: 1 } }] : [],
     }),
     startTask: async () => ({ taskRef: "task" }),
     prepare: async () => ({
@@ -231,14 +231,16 @@ test("Product evaluation injects one prepared method or falls back to direct exp
       return [{ usage: "lead" }];
     },
   } as unknown as CoreService;
-  const method = await productContext(
+  const playbook = await productContext(
     core,
     "scope",
     taskFixtures[0]!,
     validateProfile(raw),
   );
   assert.equal(recallCalls, 0);
-  assert.deepEqual(Object.keys(JSON.parse(method.context)), ["preparedMethod"]);
+  assert.deepEqual(Object.keys(JSON.parse(playbook.context)), [
+    "preparedPlaybook",
+  ]);
   available = false;
   const fallback = await productContext(
     core,
@@ -255,7 +257,7 @@ test("Product evaluation waits for every publication batch before searching and 
   const stages: unknown[] = [];
   const core = {
     configure: async () => ({}),
-    submitMaterial: async () => ({ jobId: "job" }),
+    submitSource: async () => ({ jobId: "job" }),
     tick: async () => {
       ticks++;
     },
@@ -263,7 +265,12 @@ test("Product evaluation waits for every publication batch before searching and 
       status: "completed",
       usage: { status: "reported" },
       results: [
-        { kind: "method", id: "method", revision: 1, effective: syncs >= 3 },
+        {
+          kind: "playbook",
+          id: "playbook",
+          revision: 1,
+          effective: syncs >= 3,
+        },
       ],
       receipt: {
         replacement: { status: syncs >= 3 ? "effective" : "not_effective" },
@@ -278,14 +285,14 @@ test("Product evaluation waits for every publication batch before searching and 
           list: async (kind: string) =>
             kind === "projection"
               ? []
-              : kind === "method"
-                ? [{ id: "method", state: "active", revision: 1 }]
+              : kind === "playbook"
+                ? [{ id: "playbook", state: "active", revision: 1 }]
                 : [],
         }),
     },
     search: async () => {
       assert.equal(syncs, 3);
-      return { results: [{ method: { id: "method", revision: 1 } }] };
+      return { results: [{ playbook: { id: "playbook", revision: 1 } }] };
     },
     startTask: async () => ({ taskRef: "task" }),
     prepare: async () => ({ status: "guidance" }),
@@ -313,13 +320,13 @@ test("An unconfirmed active product times out with publication evidence instead 
   const stages: unknown[] = [];
   const core = {
     configure: async () => ({}),
-    submitMaterial: async () => ({ jobId: "job" }),
+    submitSource: async () => ({ jobId: "job" }),
     tick: async () => {},
     getJob: async () => ({
       status: "completed",
       usage: { status: "reported" },
       results: [
-        { kind: "method", id: "method", revision: 1, effective: false },
+        { kind: "playbook", id: "playbook", revision: 1, effective: false },
       ],
       receipt: { replacement: { status: "not_effective" } },
     }),
@@ -328,8 +335,8 @@ test("An unconfirmed active product times out with publication evidence instead 
       transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
         fn({
           list: async (kind: string) =>
-            kind === "method"
-              ? [{ id: "method", state: "active", revision: 1 }]
+            kind === "playbook"
+              ? [{ id: "playbook", state: "active", revision: 1 }]
               : [],
         }),
     },

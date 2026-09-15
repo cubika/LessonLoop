@@ -30,12 +30,12 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
       notifications: true,
     });
     const otherTask = await core.startTask(host, scope);
-    const reference = { kind: "method", id: randomUUID(), revision: 1 };
+    const reference = { kind: "playbook", id: randomUUID(), revision: 1 };
     await store.transaction(async (tx) => {
       const id = randomUUID();
       await tx.put(
         {
-          kind: "method_use",
+          kind: "playbook_use",
           id,
           scopeId: scope,
           revision: 1,
@@ -45,8 +45,8 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
             scopeId: scope,
             taskRef: otherTask.taskRef,
             callerId: host.id,
-            method: reference,
-            methodUseRef: "use-1",
+            playbook: reference,
+            playbookUseRef: "use-1",
             stepIds: ["s1"],
             returnedAt: new Date(Date.now() - 1000).toISOString(),
           },
@@ -101,8 +101,8 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
         taskRef: task.taskRef,
         scopeId: scope,
         kind: "delivery",
-        method: reference,
-        methodUseRef: "use-1",
+        playbook: reference,
+        playbookUseRef: "use-1",
         stepId: "s1",
         text: "Wrong task use",
         occurredAt: new Date().toISOString(),

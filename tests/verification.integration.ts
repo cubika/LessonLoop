@@ -6,7 +6,7 @@ import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import {
   identity,
-  methodSchema,
+  playbookSchema,
   type ObjectRef,
 } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
@@ -41,7 +41,7 @@ async function setup(store: ProductStore, controlled = false) {
     review: false,
     notifications: false,
   });
-  const initial = await core.submitMaterial(
+  const initial = await core.submitSource(
     host,
     {
       scopeId: scope,
@@ -90,7 +90,7 @@ async function setup(store: ProductStore, controlled = false) {
     derivedFrom: [{ id: e.id, revision: 1 }],
     evidence: [],
   });
-  const method = methodSchema.parse({
+  const playbook = playbookSchema.parse({
     ...identity(scope),
     title: "Extension workflow",
     goal: "Preserve extension",
@@ -112,7 +112,6 @@ async function setup(store: ProductStore, controlled = false) {
     change: {
       kind: "create",
       summary: "Fixture",
-      caseRefs: [],
       predecessors: [],
     },
   });
@@ -120,7 +119,7 @@ async function setup(store: ProductStore, controlled = false) {
     for (const [kind, value] of [
       ["experience", e],
       ["experience", child],
-      ["method", method],
+      ["playbook", playbook],
     ] as const)
       await tx.put(row(kind, value), null);
     const job = await tx.get<any>("job", initial.jobId);
@@ -157,8 +156,8 @@ async function setup(store: ProductStore, controlled = false) {
     store.transaction(async (tx) => {
       const job = await tx.get<any>("job", jobId);
       const candidate = {
-        workCase: null,
-        method: null,
+        workView: null,
+        playbook: null,
         experiences: [
           {
             conclusion: e.conclusion,
@@ -173,7 +172,7 @@ async function setup(store: ProductStore, controlled = false) {
             assessment: "supported",
             evidence: [
               {
-                sourceIndex: job.materialIds.length - 1,
+                sourceIndex: job.sourceIds.length - 1,
                 excerpt: input.segments[0]!.text,
                 relation: "supports",
               },
@@ -193,7 +192,7 @@ async function setup(store: ProductStore, controlled = false) {
           candidate,
           verdict: {
             acceptedExperienceIndexes: [0],
-            methodSupported: false,
+            playbookSupported: false,
             verifiedTarget: approved,
             reasons: [],
           },
@@ -201,18 +200,18 @@ async function setup(store: ProductStore, controlled = false) {
         job.revision,
       );
     });
-  return { scope, p, host, core, e, child, method, input, stage };
+  return { scope, p, host, core, e, child, playbook, input, stage };
 }
 test("Targeted evidence updates one held claim and invalidates all dependent revisions", async () => {
   const store = new ProductStore(url);
   await store.open();
   try {
     const f = await setup(store);
-    const receipt = await f.core.submitMaterial(f.host, f.input, "verify");
-    const replay = await f.core.submitMaterial(f.host, f.input, "verify");
+    const receipt = await f.core.submitSource(f.host, f.input, "verify");
+    const replay = await f.core.submitSource(f.host, f.input, "verify");
     assert.equal(receipt.jobId, replay.jobId);
     await assert.rejects(
-      f.core.submitMaterial(f.host, f.input, "second"),
+      f.core.submitSource(f.host, f.input, "second"),
       /verification_already_running/,
     );
     await f.stage(receipt.jobId);
@@ -226,7 +225,7 @@ test("Targeted evidence updates one held claim and invalidates all dependent rev
       "held",
     );
     assert.equal(
-      ((await f.core.inspect(f.p, "method", f.method.id)) as any).state,
+      ((await f.core.inspect(f.p, "playbook", f.playbook.id)) as any).state,
       "held",
     );
     await f.core.syncProjections([f.scope]);
@@ -246,10 +245,10 @@ test("User control, current target revision and verification deadlines cannot be
   try {
     const f = await setup(store, true);
     await assert.rejects(
-      f.core.submitMaterial({ ...f.host, channel: "agent" }, f.input, "agent"),
+      f.core.submitSource({ ...f.host, channel: "agent" }, f.input, "agent"),
       /user_verification_required/,
     );
-    const receipt = await f.core.submitMaterial(f.p, f.input, "owner");
+    const receipt = await f.core.submitSource(f.p, f.input, "owner");
     const job = await store.transaction((tx) =>
       tx.get<any>("job", receipt.jobId),
     );
@@ -273,7 +272,7 @@ test("User control, current target revision and verification deadlines cannot be
       "held",
     );
     const g = await setup(store);
-    const r = await g.core.submitMaterial(g.host, g.input, "verify");
+    const r = await g.core.submitSource(g.host, g.input, "verify");
     await g.stage(r.jobId);
     await store.transaction(async (tx) => {
       const old = await tx.get<any>("experience", g.e.id);
@@ -291,7 +290,7 @@ test("Rejected verification leaves the same pending claim and no unasked product
   await store.open();
   try {
     const f = await setup(store);
-    const r = await f.core.submitMaterial(f.host, f.input, "verify");
+    const r = await f.core.submitSource(f.host, f.input, "verify");
     await f.stage(r.jobId, false);
     await f.core.tick([f.scope]);
     const e = (await f.core.inspect(f.p, "experience", f.e.id)) as any;

@@ -48,12 +48,12 @@ try:
         if job["status"]=="completed" and job["receipt"]["replacement"]["status"]=="effective":break
         time.sleep(2)
     else:raise RuntimeError("Learning or publication deadline exceeded")
-    methods=rpc("searchPlaybooks",{"query":"generated client regeneration"})
-    report["methods"]=methods
-    if not methods["results"]:raise RuntimeError("No usable method produced")
-    method=methods["results"][0]["playbook"]
+    playbooks=rpc("searchPlaybooks",{"query":"generated client regeneration"})
+    report["playbooks"]=playbooks
+    if not playbooks["results"]:raise RuntimeError("No usable playbook produced")
+    playbook=playbooks["results"][0]["playbook"]
     fresh=rpc("startTask",{"scopeId":scope},"host")
-    prepared=rpc("preparePlaybook",{"playbookId":method["id"],"revision":method["revision"],"taskRef":fresh["taskRef"]},"host")
+    prepared=rpc("preparePlaybook",{"playbookId":playbook["id"],"revision":playbook["revision"],"taskRef":fresh["taskRef"]},"host")
     report["prepared"]=prepared
     if prepared["status"] != "guidance":raise RuntimeError("Method preparation unavailable")
     report["status"]="passed"

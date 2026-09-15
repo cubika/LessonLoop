@@ -44,7 +44,7 @@ async function main() {
         "COPILOT_CLI_PATH may select the installed CLI. On Windows it defaults to the Microsoft/WinGet/Links/copilot.exe link, matching the local engine launcher. Cached SDK runtimes are not selected automatically.",
         "The official arm uses native SDK extraction, observations, a mental model and reflection. Official Agent hook profiles are blocked; this script does not stand in for their acceptance.",
         "Every run uses fresh scopes, native banks and workspace directories. Data is retained for inspection. Reports include authored-task outcomes, failures, partial native costs and paired differences; releaseGate is always not_evaluated.",
-        "Context exceeding the shared budget blocks that arm; necessary method conditions and exceptions are never truncated. Product context prefers a prepared method and uses direct experience recall only as a fallback.",
+        "Context exceeding the shared budget blocks that arm; necessary playbook conditions and exceptions are never truncated. Product context prefers a prepared playbook and uses direct experience recall only as a fallback.",
         "Exit 0: experiment completed (check individual task outcomes); exit 1: failed; exit 2: required capability unavailable.",
       ].join("\n"),
     );

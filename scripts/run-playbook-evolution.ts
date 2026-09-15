@@ -5,19 +5,19 @@ import assert from "node:assert/strict";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import { type Method, type Material } from "../src/domain/schema.js";
+import { type Playbook, type Source } from "../src/domain/schema.js";
 const root = resolve(".local-validation"),
   secret = JSON.parse(
     await readFile(resolve(root, "data/development-secret.json"), "utf8"),
   );
 const base = JSON.parse(
-  await readFile(resolve(root, "results/p0-method-path.json"), "utf8"),
+  await readFile(resolve(root, "results/p0-playbook-path.json"), "utf8"),
 );
 assert.equal(
   base.classification,
   "real_engine_with_authored_executed_workspace_case",
 );
-const folder = resolve(root, "method-evolution-" + Date.now());
+const folder = resolve(root, "playbook-evolution-" + Date.now());
 await mkdir(folder, { recursive: true });
 const schema = resolve(folder, "schema.json"),
   client = resolve(folder, "client.json");
@@ -79,15 +79,15 @@ const report: Record<string, unknown> = {
   scope: base.scope,
   classification: "real_provider_executed_synthetic_fixture",
   fixture: { v1, v2, v2Fields },
-  profile: "methods-2",
+  profile: "playbooks-2",
 };
 try {
   const existing = await store.transaction((tx) =>
-    tx.list<Material>("material", [base.scope]),
+    tx.list<Source>("source", [base.scope]),
   );
   assert.equal(
     existing.length,
-    1,
+    2,
     "Only the original synthetic scope is allowed",
   );
   assert.equal(
@@ -95,7 +95,7 @@ try {
     JSON.stringify([base.scope, "generated-fixture-task-1"]),
   );
   assert.deepEqual(
-    existing[0]!.segments.map((s) => s.text),
+    existing.sort((a, b) => a.ordinal - b.ordinal).map((s) => s.segment?.text),
     [
       "Add customerId to the generated client contract and verify that regeneration preserves it.",
       'The fixture pipeline copies schema.json to client.json. Directly adding customerId to client.json then running the pipeline produced {"fields":["id"]}. Adding customerId to schema.json then running the same pipeline produced {"fields":["id","customerId"]}. Node deepEqual checks confirmed both results.',
@@ -103,9 +103,9 @@ try {
   );
   const original = (await core.inspect(
     host,
-    "method",
-    base.methods[0].id,
-  )) as Method;
+    "playbook",
+    base.playbooks[0].id,
+  )) as Playbook;
   report.before = original;
   const settings = (await core.getSettings(owner))[0]!;
   await core.configure(owner, {
@@ -117,7 +117,7 @@ try {
     notifications: false,
   });
   const task = await core.startTask(host, base.scope);
-  const received = await core.submitMaterial(
+  const received = await core.submitSource(
     host,
     {
       scopeId: base.scope,
@@ -129,7 +129,7 @@ try {
         },
         {
           role: "tool",
-          locator: "synthetic-method-evolution-fixture",
+          locator: "synthetic-playbook-evolution-fixture",
           text:
             "Executed synthetic fixture pipelines. Version 1 copies schema.json to client.json. Version 2 assigns fields from schema.json and preserves the previous client.json extensions array. Adding auditTag directly to client.json extensions then regenerating version 1 produced " +
             JSON.stringify(v1) +
@@ -162,9 +162,9 @@ try {
   }
   for (let attempt = 0; attempt < 8; attempt++)
     await core.syncProjections([base.scope]);
-  report.after = await core.browse(host, "method");
+  report.after = await core.browse(host, "playbook");
   report.experiences = await core.browse(host, "experience");
-  const after = report.after as Method[];
+  const after = report.after as Playbook[];
   report.status =
     after.some((m) => m.id === original.id && m.revision > original.revision) ||
     after.some((m) => m.change.predecessors.some((p) => p.id === original.id))
@@ -176,7 +176,7 @@ try {
 } finally {
   await store.close();
   await writeFile(
-    resolve(root, "results/method-evolution-validation.json"),
+    resolve(root, "results/playbook-evolution-validation.json"),
     JSON.stringify(report, null, 2),
   );
 }

@@ -216,11 +216,11 @@ test("host boundaries commit task and effects together, survive retries and enfo
       assert.equal(captured.rawObservations.length, 1);
       assert.equal(captured.rawObservations[0].occurredAt, at(12));
       assert.equal(captured.ended, true);
-      const materials = await store.transaction((tx) =>
-        tx.list<any>("material", [scopeId]),
+      const sources = await store.transaction((tx) =>
+        tx.list<any>("source", [scopeId]),
       );
       assert.equal(
-        materials.filter((m) => m.taskRef === captured.id).length,
+        sources.filter((s) => s.taskRef === captured.id && s.segment).length,
         2,
       );
     } finally {

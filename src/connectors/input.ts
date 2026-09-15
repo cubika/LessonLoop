@@ -4,15 +4,15 @@ import {
   byteSize,
   contextSchema,
   id,
-  materialInputSchema,
+  sourceInputSchema,
   segmentSchema,
   text,
-  type MaterialInput,
+  type SourceInput,
 } from "../domain/schema.js";
 
 export const CONNECTOR_LIMITS = {
   parts: 8,
-  materialBytes: 32768,
+  sourceBytes: 32768,
   batchBytes: 262144,
 };
 const sourceSegment = segmentSchema.extend({
@@ -30,15 +30,15 @@ const outcome = z.enum([
 ]);
 
 // These are source documents, without internal identities or publication fields.
-export const connectorMaterialSchema = z
+export const connectorSourceSchema = z
   .object({
     ...common,
     segments: evidence,
-    sourceFor: materialInputSchema.innerType().shape.sourceFor,
-    verificationFor: materialInputSchema.innerType().shape.verificationFor,
+    sourceFor: sourceInputSchema.innerType().shape.sourceFor,
+    verificationFor: sourceInputSchema.innerType().shape.verificationFor,
   })
   .strict();
-const workCaseInput = z
+const workViewInput = z
   .object({
     ...common,
     kind: z.literal("source"),
@@ -74,7 +74,7 @@ const experienceInput = z
     evidence,
   })
   .strict();
-const methodInput = z
+const playbookInput = z
   .object({
     ...common,
     kind: z.literal("playbook_draft"),
@@ -109,35 +109,35 @@ const methodInput = z
   })
   .strict();
 export const connectorInputSchema = z.union([
-  connectorMaterialSchema.extend({ kind: z.literal("source") }),
-  workCaseInput,
+  connectorSourceSchema.extend({ kind: z.literal("source") }),
+  workViewInput,
   experienceInput,
-  methodInput,
+  playbookInput,
 ]);
 
-export interface MaterialPart {
+export interface SourcePart {
   partKey: string;
-  material: MaterialInput;
+  inputSource: SourceInput;
 }
-type SourceMaterial = z.infer<typeof connectorMaterialSchema>;
+type SourceSource = z.infer<typeof connectorSourceSchema>;
 
-export function normalizeInput(input: unknown): MaterialPart[] {
+export function normalizeInput(input: unknown): SourcePart[] {
   const value = connectorInputSchema.parse(input);
   if (byteSize(value) > CONNECTOR_LIMITS.batchBytes)
     throw new ApiError("source_change_too_large");
   if (value.kind === "source" && "segments" in value) {
-    const { kind, ...material } = value;
-    return splitMaterial(material);
+    const { kind, ...inputSource } = value;
+    return splitSource(inputSource);
   }
   if (value.kind === "playbook_draft") {
     const positions = new Map(
       value.steps.map((step, index) => [step.stepId, index]),
     );
     if (positions.size !== value.steps.length || positions.has("stop"))
-      throw new ApiError("invalid_method_step_ids");
+      throw new ApiError("invalid_playbook_step_ids");
     for (const [index, step] of value.steps.entries()) {
       if (step.evidenceIndexes.some((n) => n >= value.evidence.length))
-        throw new ApiError("unbound_method_evidence");
+        throw new ApiError("unbound_playbook_evidence");
       if (
         step.choices?.some(
           (choice) =>
@@ -145,7 +145,7 @@ export function normalizeInput(input: unknown): MaterialPart[] {
             (positions.get(choice.next) ?? -1) <= index,
         )
       )
-        throw new ApiError("invalid_method_branch");
+        throw new ApiError("invalid_playbook_branch");
     }
   }
   const {
@@ -156,8 +156,8 @@ export function normalizeInput(input: unknown): MaterialPart[] {
     ...document
   } = value;
   // Keep the structured claims separate from continuous, unchanged source excerpts.
-  // The core still admits these as external material and performs normal learning.
-  return splitMaterial({
+  // The core still admits these as external inputSource and performs normal learning.
+  return splitSource({
     scopeId,
     ...(context ? { context } : {}),
     segments: [
@@ -167,15 +167,15 @@ export function normalizeInput(input: unknown): MaterialPart[] {
   });
 }
 
-function splitMaterial(source: SourceMaterial): MaterialPart[] {
+function splitSource(source: SourceSource): SourcePart[] {
   const { segments, ...metadata } = source;
-  const parts: MaterialPart[] = [];
-  let current: MaterialInput = { ...metadata, segments: [] };
+  const parts: SourcePart[] = [];
+  let current: SourceInput = { ...metadata, segments: [] };
   const flush = () => {
     if (!current.segments.length) return;
     parts.push({
       partKey: `part-${String(parts.length + 1).padStart(4, "0")}`,
-      material: materialInputSchema.parse(current),
+      inputSource: sourceInputSchema.parse(current),
     });
     if (parts.length > CONNECTOR_LIMITS.parts)
       throw new ApiError("source_requires_smaller_resources");
@@ -198,7 +198,7 @@ function splitMaterial(source: SourceMaterial): MaterialPart[] {
           byteSize({
             ...current,
             segments: [...current.segments, candidate],
-          }) <= CONNECTOR_LIMITS.materialBytes
+          }) <= CONNECTOR_LIMITS.sourceBytes
         )
           low = count;
         else high = count - 1;

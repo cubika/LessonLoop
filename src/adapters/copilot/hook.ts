@@ -30,17 +30,17 @@ export type Config = {
   stateRoot: string;
 };
 type Call = (operation: string, input: any, key: string) => Promise<any>;
-type Method = { kind: "playbook"; id: string; revision: number };
+type Playbook = { kind: "playbook"; id: string; revision: number };
 type Capture = {
   eventTimes: Record<string, string>;
-  method?: Method;
+  playbook?: Playbook;
   playbookUseRef?: string;
   prompts: Array<{
     key: string;
     digest: string;
     responseDigest?: string;
     done?: boolean;
-    method?: Method;
+    playbook?: Playbook;
     playbookUseRef?: string;
   }>;
   lastAgentDigest?: string;
@@ -304,7 +304,7 @@ export async function handleHook(
         `Copilot collection incomplete: ${reason}.`,
         at,
       );
-    const material = async (
+    const inputSource = async (
       task: Task,
       text: string,
       role: "user" | "agent" | "tool",
@@ -313,7 +313,7 @@ export async function handleHook(
     ) => {
       if (!setting.learning || !text.trim()) return;
       if (Buffer.byteLength(text) > 28000) {
-        await gap(task, "material_budget", at);
+        await gap(task, "source_input_budget", at);
         return;
       }
       const observedAt = await receiptTime(task, id, at);
@@ -339,7 +339,7 @@ export async function handleHook(
         if (
           !(error instanceof Error) ||
           ![
-            "task_material_budget",
+            "source_input_budget",
             "source_erased_from_task",
             "source_forgotten",
             "learning_disabled",
@@ -434,15 +434,15 @@ export async function handleHook(
           typeof output === "string"
             ? task.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
-        if (returned?.method && returned.playbookUseRef)
+        if (returned?.playbook && returned.playbookUseRef)
           await effect(
             task,
             "delivery",
             digest([task.taskRef, "delivery", record.id ?? output]),
-            "Copilot acknowledged the transformed prompt containing this method.",
+            "Copilot acknowledged the transformed prompt containing this playbook.",
             at,
             {
-              playbook: returned.method,
+              playbook: returned.playbook,
               playbookUseRef: returned.playbookUseRef,
             },
           );
@@ -463,7 +463,7 @@ export async function handleHook(
           text,
         ]);
         await observeTool(task, text, id, at);
-        await material(task, text, "tool", id, at);
+        await inputSource(task, text, "tool", id, at);
       } else {
         const segment = transcriptEvent(record);
         if (segment) {
@@ -472,7 +472,7 @@ export async function handleHook(
             task.prompts.some((p) => p.digest === digest(segment.text))
           )
             continue;
-          await material(
+          await inputSource(
             task,
             segment.text,
             segment.role,
@@ -504,7 +504,7 @@ export async function handleHook(
         text,
       ]);
       await observeTool(task, text, id, now);
-      await material(task, text, "tool", id, now);
+      await inputSource(task, text, "tool", id, now);
     }
     if (type === "userPromptTransformed") {
       let output: Record<string, unknown> = {};
@@ -517,7 +517,7 @@ export async function handleHook(
       };
       if (!task.prompts.includes(promptRecord)) task.prompts.push(promptRecord);
       task.prompts = task.prompts.slice(-32);
-      await material(
+      await inputSource(
         task,
         prompt,
         "user",
@@ -525,7 +525,7 @@ export async function handleHook(
         now,
       );
       if (setting.recommendation && prompt.trim()) {
-        if (!task.method) {
+        if (!task.playbook) {
           const search = await call(
             "searchPlaybooks",
             {
@@ -536,14 +536,14 @@ export async function handleHook(
             },
             "search",
           );
-          task.method = search.results[0]?.playbook;
+          task.playbook = search.results[0]?.playbook;
         }
-        if (task.method) {
+        if (task.playbook) {
           const prepared = await call(
             "preparePlaybook",
             {
-              playbookId: task.method.id,
-              revision: task.method.revision,
+              playbookId: task.playbook.id,
+              revision: task.playbook.revision,
               taskRef: task.taskRef,
               requestId: promptKey,
             },
@@ -551,12 +551,12 @@ export async function handleHook(
           );
           if (prepared.status === "guidance") {
             task.playbookUseRef = prepared.playbookUseRef;
-            promptRecord.method = task.method;
+            promptRecord.playbook = task.playbook;
             if (task.playbookUseRef)
               promptRecord.playbookUseRef = task.playbookUseRef;
             output = promptEnvelope(
               event,
-              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. The playbookUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
+              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify({ taskRef: task.taskRef, ...prepared })}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. Reuse this taskRef for getGuidance; playbookUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
             );
             promptRecord.responseDigest = digest(
               output.modifiedTransformedPrompt,
@@ -568,7 +568,7 @@ export async function handleHook(
                 JSON.stringify({
                   ...prepared,
                   taskRef: task.taskRef,
-                  playbook: task.method,
+                  playbook: task.playbook,
                 }) +
                 " Full guidance exceeds the automatic budget. Call getGuidance with input {taskRef, target: playbook, viewMode: 'expanded'} using these references (viewMode=expanded).</lessonloop-playbook>",
             );
@@ -593,7 +593,7 @@ export async function handleHook(
         task.lastAgentDigest !==
           digest(stripInjectedMemory(event.finalMessage).trim())
       )
-        await material(
+        await inputSource(
           task,
           stripInjectedMemory(event.finalMessage).trim(),
           "agent",

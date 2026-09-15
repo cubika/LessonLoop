@@ -8,12 +8,7 @@ import { Conflict } from "../store/postgres.js";
 import { Effects } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import { SampleConnector } from "../connectors/sample.js";
-import {
-  publicOperations,
-  publicValue,
-  internalInput,
-} from "./public-contract.js";
-import { inspectSource, sourceReceipt, workView } from "./source-views.js";
+import { workView } from "./source-views.js";
 import { getGuidance } from "./guidance.js";
 import { hostTaskBoundary } from "./host-tasks.js";
 const connectors = new WeakMap<CoreService, SampleConnector>();
@@ -37,7 +32,7 @@ const envelope = z
   .object({ operation: z.string(), input: z.unknown().optional() })
   .strict();
 const identifier = z.object({ id: z.string().min(1).max(128) }).strict();
-async function dispatchInternal(
+export async function dispatch(
   core: CoreService,
   p: Principal,
   operation: string,
@@ -48,6 +43,22 @@ async function dispatchInternal(
   switch (operation) {
     case "hostTaskBoundary":
       return hostTaskBoundary(core, p, input);
+    case "getGuidance":
+      return getGuidance(core, p, input, key);
+    case "submitSource":
+      return core.submitSource(p, input, key);
+    case "inspectSource":
+      return core.inspect(p, "source", identifier.parse(input).id);
+    case "getWorkView": {
+      const target = z
+        .object({
+          kind: z.enum(["source", "experience", "playbook"]),
+          id: z.string(),
+        })
+        .strict()
+        .parse(input);
+      return workView(core, p, target);
+    }
     case "connector.add":
       return sample(core).add(p, input);
     case "connector.list":
@@ -94,8 +105,8 @@ async function dispatchInternal(
       if (p.channel !== "host")
         throw new ApiError("trusted_host_required", 403);
       return new Effects(core.store).record(p, input);
-    case "rateMethodUse":
-      return core.rateMethodUse(p, input, key);
+    case "ratePlaybookUse":
+      return core.ratePlaybookUse(p, input, key);
     case "listTasks": {
       const v = z
         .object({ scopeId: z.string().optional() })
@@ -103,12 +114,22 @@ async function dispatchInternal(
         .parse(input);
       return core.listTasks(p, v.scopeId);
     }
-    case "pinMethod":
-      return core.pinMethod(p, input);
+    case "pinPlaybook":
+      return core.pinPlaybook(p, input);
     case "getEffectSummary":
       return new Effects(core.store).summary(p.scopes);
-    case "listEffectCases":
-      return new Effects(core.store).cases(p.scopes);
+    case "getUsageView": {
+      const v = z
+        .object({ playbookId: z.string().optional() })
+        .strict()
+        .parse(input);
+      if (v.playbookId) await core.inspect(p, "playbook", v.playbookId);
+      return (await new Effects(core.store).cases(p.scopes)).filter(
+        (row) =>
+          !v.playbookId ||
+          row.events.some((e) => e.playbook?.id === v.playbookId),
+      );
+    }
     case "clearEffectData": {
       if (p.channel !== "user")
         throw new ApiError("user_operation_required", 403);
@@ -129,7 +150,8 @@ async function dispatchInternal(
     case "getJob":
       return core.getJob(p, identifier.parse(input).id);
     case "cancelJob":
-      return core.cancelJob(p, identifier.parse(input).id);
+      await core.cancelJob(p, identifier.parse(input).id);
+      return core.getJob(p, identifier.parse(input).id);
     case "retryJob":
       return core.retryJob(p, identifier.parse(input).id, key);
     case "connector.retry":
@@ -141,7 +163,7 @@ async function dispatchInternal(
         .parse(input);
       return core.reviewTopic(p, v.scopeId, v.topic);
     }
-    case "searchMethods": {
+    case "searchPlaybooks": {
       const v = z
         .object({
           query: z.string().min(1).max(2048),
@@ -157,16 +179,16 @@ async function dispatchInternal(
         v.query,
       );
     }
-    case "browseMethods": {
-      return core.browseMethods(p, input);
+    case "browsePlaybooks": {
+      return core.browsePlaybooks(p, input);
     }
-    case "inspectMethod":
-      return core.inspect(p, "method", identifier.parse(input).id);
-    case "methodHistory":
+    case "inspectPlaybook":
+      return core.inspect(p, "playbook", identifier.parse(input).id);
+    case "playbookHistory":
       return core.history(p, identifier.parse(input).id);
     case "getRevisionReview":
       return core.inspect(p, "revision_review", identifier.parse(input).id);
-    case "exportMethod": {
+    case "exportPlaybook": {
       const v = z
         .object({
           id: z.string(),
@@ -180,7 +202,7 @@ async function dispatchInternal(
     }
     case "feedback":
       return core.feedback(p, input);
-    case "revise": {
+    case "reviseExperience": {
       if (p.channel !== "user")
         throw new ApiError("user_operation_required", 403);
       const v = z
@@ -197,11 +219,11 @@ async function dispatchInternal(
         correctionText: v.correctionText,
       });
     }
-    case "inspect":
+    case "inspectExperience":
       return core.inspect(p, "experience", identifier.parse(input).id);
-    case "browse":
+    case "browseExperiences":
       return core.browse(p, "experience");
-    case "setState": {
+    case "setExperienceState": {
       const v = z
         .object({
           id: z.string(),
@@ -212,7 +234,7 @@ async function dispatchInternal(
         .parse(input);
       return core.setState(p, "experience", v.id, v.expectedRevision, v.state);
     }
-    case "remove": {
+    case "removeExperience": {
       const v = z
         .object({
           id: z.string(),
@@ -222,7 +244,7 @@ async function dispatchInternal(
         .parse(input);
       return core.remove(p, "experience", v.id, v.expectedRevision);
     }
-    case "recall": {
+    case "recallExperiences": {
       return core.recallRequest(p, input);
     }
     case "startTask": {
@@ -239,9 +261,9 @@ async function dispatchInternal(
       return core.observe(p, input);
     case "recordHostObservation":
       return core.recordHostObservation(p, input);
-    case "prepareMethod":
+    case "preparePlaybook":
       return core.prepare(p, input);
-    case "setMethodState": {
+    case "setPlaybookState": {
       const v = z
         .object({
           id: z.string(),
@@ -250,9 +272,9 @@ async function dispatchInternal(
         })
         .strict()
         .parse(input);
-      return core.setState(p, "method", v.id, v.expectedRevision, v.state);
+      return core.setState(p, "playbook", v.id, v.expectedRevision, v.state);
     }
-    case "reviseMethod": {
+    case "revisePlaybook": {
       const v = z
         .object({
           id: z.string(),
@@ -263,7 +285,7 @@ async function dispatchInternal(
         .parse(input);
       return core.revise(p, v.id, v.expectedRevision, v.body);
     }
-    case "removeMethod": {
+    case "removePlaybook": {
       const v = z
         .object({
           id: z.string(),
@@ -271,108 +293,11 @@ async function dispatchInternal(
         })
         .strict()
         .parse(input);
-      return core.remove(p, "method", v.id, v.expectedRevision);
+      return core.remove(p, "playbook", v.id, v.expectedRevision);
     }
     default:
       throw new ApiError("unknown_operation", 404);
   }
-}
-export async function dispatch(
-  core: CoreService,
-  p: Principal,
-  operation: string,
-  raw: unknown,
-  key: string,
-): Promise<unknown> {
-  if (operation === "getGuidance")
-    return publicValue(await getGuidance(core, p, raw, key));
-  if (
-    Object.values(publicOperations).includes(operation) ||
-    [
-      "submitMaterial",
-      "submitWorkCase",
-      "appendCaseResult",
-      "inspectWorkCase",
-      "browseWorkCases",
-    ].includes(operation)
-  )
-    throw new ApiError("unknown_operation", 404);
-  if (operation === "submitSource") {
-    const input = z
-      .object({
-        scopeId: z.string(),
-        segments: z.array(z.unknown()).min(1).max(16),
-        context: z.unknown().optional(),
-        verificationFor: z.unknown().optional(),
-        sourceFor: z
-          .object({ id: z.string(), revision: z.number().int().positive() })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .parse(raw);
-    return sourceReceipt(core, p, await core.submitMaterial(p, input, key));
-  }
-  if (operation === "inspectSource")
-    return inspectSource(core, p, identifier.parse(raw).id);
-  if (operation === "listSources")
-    return Promise.all(
-      (await core.listSources(p)).map((s) => inspectSource(core, p, s.id)),
-    );
-  if (operation === "getWorkView") {
-    const input = z
-      .object({
-        kind: z.enum(["source", "experience", "playbook"]),
-        id: z.string().min(1).max(128),
-      })
-      .strict()
-      .parse(raw);
-    return workView(core, p, input);
-  }
-  if (operation === "getUsageView") {
-    const input = z
-      .object({ playbookId: z.string().optional() })
-      .strict()
-      .parse(raw ?? {});
-    if (input.playbookId) await core.inspect(p, "method", input.playbookId);
-    const rows = await new Effects(core.store).cases(p.scopes);
-    return publicValue(
-      rows.filter(
-        (row) =>
-          !input.playbookId ||
-          row.events.some((e) => e.method?.id === input.playbookId),
-      ),
-    );
-  }
-  if (operation === "feedback")
-    z.object({
-      target: z
-        .object({ kind: z.enum(["experience", "playbook"]) })
-        .passthrough(),
-    })
-      .passthrough()
-      .parse(raw);
-  const input = internalInput(raw);
-  if (operation === "cancelJob") {
-    const id = identifier.parse(input).id;
-    await core.cancelJob(p, id);
-    return publicValue(await core.getJob(p, id));
-  }
-  if (operation === "revisePlaybook" && input?.body?.change) {
-    const previous = (await core.inspect(p, "method", input.id)) as unknown as {
-      change: { caseRefs: unknown[] };
-    };
-    input.body.change.caseRefs = previous.change.caseRefs;
-  }
-  return publicValue(
-    await dispatchInternal(
-      core,
-      p,
-      publicOperations[operation] ?? operation,
-      input,
-      key,
-    ),
-  );
 }
 async function body(req: IncomingMessage) {
   const chunks: Buffer[] = [];

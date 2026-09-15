@@ -10,7 +10,7 @@ import { apiServer } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
 const root = resolve(".local-validation");
 const report = JSON.parse(
-  await readFile(join(root, "results/p0-method-path.json"), "utf8"),
+  await readFile(join(root, "results/p0-playbook-path.json"), "utf8"),
 );
 const secret = JSON.parse(
   await readFile(join(root, "data/development-secret.json"), "utf8"),
@@ -31,7 +31,8 @@ const principal = {
   scopes: [report.scope],
 };
 const store = new ProductStore(
-  `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
+  process.env.LESSONLOOP_TEST_DATABASE_URL ??
+    `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
 );
 await store.open();
 const core = new CoreService(
@@ -76,8 +77,8 @@ try {
     available = await core.search(principal, prompt);
   }
   if (!available.results.length)
-    throw new Error("no_eligible_method_for_host_validation");
-  result.preflightMethod = available.results[0]!.method;
+    throw new Error("no_eligible_playbook_for_host_validation");
+  result.preflightPlaybook = available.results[0]!.playbook;
   await new Promise<void>((done, reject) => {
     server.once("error", reject);
     server.listen(19433, "127.0.0.1", done);
@@ -99,7 +100,7 @@ try {
       $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
       name: "lessonloop-validation",
       version: "0.0.1",
-      description: "Local product method integration validation",
+      description: "Local product playbook integration validation",
     }),
   );
   const events = [
@@ -295,7 +296,7 @@ try {
   }
   result.hooks = traces;
   result.tools = runtimeTools;
-  result.observedMethod = traces.some(
+  result.observedPlaybook = traces.some(
     (e) => e.hook === "userPromptTransformed" && e.success && e.injected,
   );
   const stateTasks = [];
@@ -309,24 +310,19 @@ try {
       );
   const taskRefs = new Set(stateTasks.map((t) => t.taskRef));
   const evidence = await store.transaction(async (tx) => {
-    const materials = (await tx.list<any>("material", [report.scope])).filter(
+    const inputSources = (await tx.list<any>("source", [report.scope])).filter(
       (m) => taskRefs.has(m.taskRef),
     );
-    const uses = (await tx.list<any>("method_use", [report.scope])).filter(
+    const uses = (await tx.list<any>("playbook_use", [report.scope])).filter(
       (u) => taskRefs.has(u.taskRef),
     );
     return {
-      roles: [
-        ...new Set(
-          materials.flatMap((m) => m.segments.map((s: any) => s.role)),
-        ),
-      ],
+      roles: [...new Set(inputSources.map((m) => m.segment?.role))],
       finalAgentCaptured:
         finalTexts.length > 0 &&
-        materials.some((m) =>
-          m.segments.some(
-            (s: any) => s.role === "agent" && s.text === finalTexts.at(-1),
-          ),
+        inputSources.some(
+          (m) =>
+            m.segment?.role === "agent" && m.segment.text === finalTexts.at(-1),
         ),
       sameUseAcrossHostAndAgent: uses.some(
         (u) =>
@@ -334,13 +330,13 @@ try {
           uses.some(
             (other) =>
               other.callerId === "host-validation-agent" &&
-              other.methodUseRef === u.methodUseRef,
+              other.playbookUseRef === u.playbookUseRef,
           ),
       ),
       playbookUses: uses.map((u) => ({
         callerId: u.callerId,
         taskRef: u.taskRef,
-        playbookUseRef: u.methodUseRef,
+        playbookUseRef: u.playbookUseRef,
         stepIds: u.stepIds,
       })),
     };
@@ -360,7 +356,7 @@ try {
   };
   result.status =
     call.exitCode === 0 &&
-    result.observedMethod &&
+    result.observedPlaybook &&
     evidence.finalAgentCaptured &&
     evidence.roles.includes("user") &&
     evidence.roles.includes("tool") &&
@@ -431,7 +427,7 @@ console.log(
   JSON.stringify({
     status: result.status,
     exitCode: result.exitCode,
-    observedMethod: result.observedMethod,
+    observedPlaybook: result.observedPlaybook,
   }),
 );
 

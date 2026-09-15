@@ -37,7 +37,7 @@ async function fixture(t: test.TestContext) {
     recommendation: true,
     review: true,
   };
-  const method = { kind: "playbook", id: "playbook", revision: 1 };
+  const playbook = { kind: "playbook", id: "playbook", revision: 1 };
   let rows = new Map<string, any>();
   // Exercise the actual core boundary logic; each transaction commits together.
   const core = {
@@ -91,11 +91,11 @@ async function fixture(t: test.TestContext) {
     if (operation === "hostTaskBoundary")
       return hostTaskBoundary(core, principal, input);
     if (operation === "searchPlaybooks")
-      return { results: [{ playbook: method }] };
+      return { results: [{ playbook: playbook }] };
     if (operation === "preparePlaybook")
       return {
         status: "guidance",
-        playbook: method,
+        playbook: playbook,
         playbookUseRef: "use-" + input.taskRef,
         conditions: [{ text: "Read the input schema" }],
         steps: [
@@ -170,7 +170,7 @@ async function fixture(t: test.TestContext) {
   };
 }
 
-test("Copilot transcript capture preserves roles, strips injected methods and confirms delivery from host receipts", async (t) => {
+test("Copilot transcript capture preserves roles, strips injected playbooks and confirms delivery from host receipts", async (t) => {
   const f = await fixture(t);
   const prompt = "Check the generated client";
   const output = await f.hook("userPromptTransformed", 1, { prompt });
@@ -225,16 +225,16 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
   );
   await f.hook("agentStop", 9);
   await f.hook("sessionEnd", 10, { reason: "complete" });
-  const materials = f.calls
+  const inputSources = f.calls
     .filter((c) => c.operation === "submitSource")
     .flatMap((c) => c.input.segments);
   assert.deepEqual(
-    materials.map((s) => s.role),
+    inputSources.map((s) => s.role),
     ["user", "agent", "tool", "agent"],
   );
-  assert.equal(materials.filter((s) => s.text === prompt).length, 1);
+  assert.equal(inputSources.filter((s) => s.text === prompt).length, 1);
   assert.equal(
-    materials.some((s) => s.text.includes("injected")),
+    inputSources.some((s) => s.text.includes("injected")),
     false,
   );
   assert.equal(
@@ -289,7 +289,7 @@ test("active clarification and explicit continuation reuse the task; completed t
   assert.equal(new Set(taskKeys).size, 3);
 });
 
-test("session end retries after interruption and late transcript material stays with the closed task", async (t) => {
+test("session end retries after interruption and late transcript inputSource stays with the closed task", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "First task" });
   f.failOnce("hostTaskBoundary:end");
@@ -427,7 +427,7 @@ test("unacknowledged injection is never counted as delivery, and completed promp
   assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "abandoned");
 });
 
-test("disabled learning does not ingest transcript material and disallowed workspaces make no API call", async (t) => {
+test("disabled learning does not ingest transcript inputSource and disallowed workspaces make no API call", async (t) => {
   const f = await fixture(t);
   f.settings.learning = false;
   f.settings.recommendation = false;
@@ -489,6 +489,10 @@ test("the first prompt receives full guidance and tool observations never trigge
   const text = String(result.modifiedTransformedPrompt);
   assert.ok(text.includes("Edit the source and regenerate"));
   assert.ok(text.includes("Read the input schema"));
+  const guidance = JSON.parse(
+    text.split("<lessonloop-playbook")[1]!.split("\n")[1]!,
+  );
+  assert.equal(guidance.taskRef, f.taskRows()[0].id);
   assert.ok(text.includes("current observations"));
   assert.equal(text.includes("reassessTask"), false);
   assert.equal(text.includes("completedStepIds"), false);
@@ -530,7 +534,9 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
       if (operation === "searchPlaybooks")
         return {
           results: [
-            { playbook: { kind: "playbook", id: "large-method", revision: 1 } },
+            {
+              playbook: { kind: "playbook", id: "large-playbook", revision: 1 },
+            },
           ],
         };
       if (operation === "preparePlaybook")
@@ -546,7 +552,7 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
     },
   );
   const text = String(result.modifiedTransformedPrompt);
-  assert.ok(text.includes("large-task") && text.includes("large-method"));
+  assert.ok(text.includes("large-task") && text.includes("large-playbook"));
   assert.ok(text.includes("viewMode=expanded"));
   assert.ok(text.includes("getGuidance") && text.includes("target: playbook"));
   assert.equal(text.includes("playbookUseRef"), false);

@@ -29,16 +29,16 @@ interface Connection {
 }
 interface PartReceipt {
   partKey: string;
-  materialId: string;
+  sourceIds: string[];
   jobId: string;
 }
 interface Receipt {
-  materialId: string;
+  sourceIds: string[];
   jobId: string;
   parts: PartReceipt[];
 }
 const receipt = (parts: PartReceipt[]): Receipt => ({
-  materialId: parts[0]!.materialId,
+  sourceIds: parts.flatMap((p) => p.sourceIds),
   jobId: parts[0]!.jobId,
   parts,
 });
@@ -55,7 +55,7 @@ interface Binding {
   current?: Receipt;
   received?: Receipt;
   pending?: Receipt;
-  materialIds?: string[];
+  sourceIds?: string[];
   learningStatus?: string;
   resourceType?: "snapshot" | "event";
   mutation: "snapshot" | "append" | "correct" | "withdraw" | "erase";
@@ -89,7 +89,7 @@ export class SampleConnector {
       connection,
       preview: {
         changes: rows.length,
-        materialParts: rows.reduce((count, row) => count + row.parts.length, 0),
+        sourceParts: rows.reduce((count, row) => count + row.parts.length, 0),
         initialRange: "entire_selected_file",
         requiresResume: true,
       },
@@ -319,13 +319,13 @@ export class SampleConnector {
             const sourceRevision = (old?.sourceRevision ?? 0) + 1;
             const acceptedParts: PartReceipt[] = [];
             for (const part of change.parts) {
-              const accepted = await this.core.submitMaterial(
+              const accepted = await this.core.submitSource(
                 {
                   id: `connector:${id}`,
                   channel: "connector",
                   scopes: [connection.scopeId],
                 },
-                part.material,
+                part.inputSource,
                 digest([id, change.sourceKey, sourceRevision, part.partKey]),
                 `${id}:${change.sourceKey}:${sourceRevision}:${part.partKey}`,
                 tx,
@@ -333,7 +333,7 @@ export class SampleConnector {
               );
               acceptedParts.push({
                 partKey: part.partKey,
-                materialId: accepted.materialId,
+                sourceIds: accepted.sources.map((s) => s.id),
                 jobId: accepted.jobId,
               });
             }
@@ -342,18 +342,18 @@ export class SampleConnector {
               : undefined;
             if (old) {
               const previous = new Set([
-                ...(old.materialIds ?? []),
-                old.current?.materialId,
-                old.pending?.materialId,
+                ...(old.sourceIds ?? []),
+                ...(old.current?.sourceIds ?? []),
+                ...(old.pending?.sourceIds ?? []),
               ]);
               for (const source of await tx.list<{
                 id: string;
                 revision: number;
-                materialId: string;
+                sourceIds: string[];
                 blocked: boolean;
               }>("source", [connection.scopeId]))
                 if (
-                  previous.has(source.materialId) &&
+                  previous.has(source.id) &&
                   (!source.blocked || change.mutation === "erase")
                 )
                   await this.core.controlSource(
@@ -381,10 +381,9 @@ export class SampleConnector {
               hash,
               excluded: false,
               mutation: change.mutation,
-              materialIds: [
-                ...(old?.materialIds ??
-                  [old?.current?.materialId].filter((v): v is string => !!v)),
-                ...acceptedParts.map((part) => part.materialId),
+              sourceIds: [
+                ...(old?.sourceIds ?? old?.current?.sourceIds ?? []),
+                ...acceptedParts.flatMap((part) => part.sourceIds),
               ],
               ...(old?.current ? { current: old.current } : {}),
               ...(accepted
@@ -610,18 +609,18 @@ export class SampleConnector {
           );
       }
       for (const binding of bindings.filter((b) => keys.has(b.sourceKey))) {
-        const materials = new Set([
-          ...(binding.materialIds ?? []),
-          binding.current?.materialId,
-          binding.pending?.materialId,
+        const inputSources = new Set([
+          ...(binding.sourceIds ?? []),
+          ...(binding.current?.sourceIds ?? []),
+          ...(binding.pending?.sourceIds ?? []),
         ]);
         for (const source of await tx.list<{
           id: string;
           revision: number;
-          materialId: string;
+          sourceIds: string[];
           excluded: boolean;
         }>("source", [connection.scopeId]))
-          if (materials.has(source.materialId) && !source.excluded) {
+          if (inputSources.has(source.id) && !source.excluded) {
             const receipt = await this.core.controlSource(
               p,
               {

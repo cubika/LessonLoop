@@ -155,22 +155,22 @@ export async function runUiLibraryChecks() {
     $("token").value = "fixture";
     await $("connect").click();
     assert.equal($("cards").children.length, 12);
-    await click($("method-pages"), "下一页");
+    await click($("playbook-pages"), "下一页");
     assert.equal($("cards").children.length, 2);
-    checks.push("method pagination");
+    checks.push("playbook pagination");
     await click($("cards"), "设为常用");
     assert.equal(requests.at(-2).operation, "pinPlaybook");
-    assert.ok($("method-pages").textContent.includes("第 1 页"));
+    assert.ok($("playbook-pages").textContent.includes("第 1 页"));
     checks.push("pin resets pagination");
-    $("method-topic").value = "生成文件";
-    $("method-state").value = "active";
+    $("playbook-topic").value = "生成文件";
+    $("playbook-state").value = "active";
     await $("search").onsubmit({ preventDefault() {} });
     assert.equal(
       requests.findLast((r) => r.operation === "browsePlaybooks").input.topic,
       "生成文件",
     );
     checks.push("filter request");
-    await run("show('method-ui')");
+    await run("show('playbook-ui')");
     await click($("detail"), "修改方法");
     let editor = $("detail").children.find((e) =>
       e.textContent.includes("修改说明"),
@@ -259,7 +259,7 @@ export async function runUiLibraryChecks() {
     );
     checks.push("experience targeted verification");
     $("scope").value = "ui-check";
-    $("material").value = "已读取输出，新增来源原文";
+    $("source").value = "已读取输出，新增来源原文";
     await $("submit").click();
     assert.ok(
       requests
@@ -267,9 +267,9 @@ export async function runUiLibraryChecks() {
         .input.segments[0].text.includes("新增来源"),
     );
     checks.push("authored source submission");
-    await run("show('method-ui')");
+    await run("show('playbook-ui')");
     await run(
-      "editMethod(document.getElementById('detail'), {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]})",
+      "editPlaybook(document.getElementById('detail'), {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]})",
     );
     editor = $("detail").children.findLast((e) =>
       e.textContent.includes("修改说明"),
@@ -298,21 +298,21 @@ export async function runUiLibraryChecks() {
       JSON.parse(options.body).operation === "inspectExperience"
         ? { ok: false, json: async () => ({ error: "not_found" }) }
         : realFetch(path, options);
-    await run("editMethod(document.getElementById('detail'), current)");
+    await run("editPlaybook(document.getElementById('detail'), current)");
     assert.ok($("detail").textContent.includes("以下依据已不可读取"));
     context.fetch = realFetch;
     checks.push("missing supporting evidence is shown without an editor crash");
     await run("list()");
-    await click($("method-pages"), "下一页");
-    $("method-topic").value = "different";
-    await click($("method-pages"), "上一页");
+    await click($("playbook-pages"), "下一页");
+    $("playbook-topic").value = "different";
+    await click($("playbook-pages"), "上一页");
     assert.equal(
       requests.findLast((r) => r.operation === "browsePlaybooks").input.cursor,
       undefined,
     );
-    assert.ok($("method-pages").textContent.includes("第 1 页"));
+    assert.ok($("playbook-pages").textContent.includes("第 1 页"));
     checks.push("changed filter resets the cursor before any page action");
-    await run("show('method-ui')");
+    await run("show('playbook-ui')");
     await click($("detail"), "关联宿主任务");
     taskPanel = $("detail").children.findLast((e) =>
       e.textContent.includes("宿主任务"),

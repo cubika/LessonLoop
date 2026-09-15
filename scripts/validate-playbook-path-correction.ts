@@ -2,8 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import { type Method } from "../src/domain/schema.js";
-import { methodPaths } from "../src/domain/method-paths.js";
+import { type Playbook } from "../src/domain/schema.js";
+import { playbookPaths } from "../src/domain/playbook-paths.js";
 const reportFile = process.argv[2];
 if (!reportFile) throw new Error("Pass a synthetic evolution report path");
 const prior = JSON.parse(await readFile(reportFile, "utf8"));
@@ -23,28 +23,32 @@ const core = new CoreService(
     new HindsightEngine("http://127.0.0.1:19888", secret.engineToken),
   ),
   p = {
-    id: "synthetic-method-review",
+    id: "synthetic-playbook-review",
     channel: "user" as const,
     scopes: [prior.scope],
   };
 const result: Record<string, unknown> = {
   startedAt: new Date().toISOString(),
-  classification: "manual_correction_of_real_generated_method",
+  classification: "manual_correction_of_real_generated_playbook",
   scope: prior.scope,
 };
 try {
-  const method = (await core.inspect(p, "method", prior.before.id)) as Method;
-  result.before = method;
-  result.detectedPaths = methodPaths(method);
+  const playbook = (await core.inspect(
+    p,
+    "playbook",
+    prior.before.id,
+  )) as Playbook;
+  result.before = playbook;
+  result.detectedPaths = playbookPaths(playbook);
   const feedback = await core.feedback(p, {
-    target: { kind: "method", id: method.id, revision: method.revision },
+    target: { kind: "playbook", id: playbook.id, revision: playbook.revision },
     rating: "incorrect",
     correctionText:
       "The version 2 branch falls through s4 into version 1 steps s5/s6, and an extension-only global condition prevents the previous field-edit task. End the version 2 branch explicitly and preserve generated-field applicability.",
   });
   result.feedback = feedback;
-  const held = (await core.inspect(p, "method", method.id)) as Method;
-  const steps: Method["steps"] = [
+  const held = (await core.inspect(p, "playbook", playbook.id)) as Playbook;
+  const steps: Playbook["steps"] = [
     {
       stepId: "s1",
       instruction:
@@ -162,9 +166,9 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   }
   await core.syncProjections([prior.scope]);
-  const after = (await core.inspect(p, "method", held.id)) as Method;
+  const after = (await core.inspect(p, "playbook", held.id)) as Playbook;
   result.after = after;
-  result.paths = methodPaths(after);
+  result.paths = playbookPaths(after);
   result.status =
     (result.review as any).status === "completed" && after.state === "active"
       ? "corrected_requires_task_validation"
@@ -175,7 +179,7 @@ try {
 } finally {
   await store.close();
   await writeFile(
-    ".local-validation/results/method-path-correction.json",
+    ".local-validation/results/playbook-path-correction.json",
     JSON.stringify(result, null, 2),
   );
 }

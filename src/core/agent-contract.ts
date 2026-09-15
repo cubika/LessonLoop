@@ -4,6 +4,7 @@ import {
   id,
   revision,
   segmentSchema,
+  sourceInputSchema,
 } from "../domain/schema.js";
 
 const reference = z
@@ -51,18 +52,13 @@ export const guidanceInput = z
     message: "query or target is required",
   });
 
-export const sourceInput = z
-  .object({
-    scopeId: id,
+export const sourceInput = sourceInputSchema
+  .innerType()
+  .extend({
     segments: z
       .array(segmentSchema.extend({ role: z.enum(["agent", "external"]) }))
       .min(1)
       .max(16),
-    context: contextSchema.optional(),
-    verificationFor: reference
-      .extend({ kind: z.literal("experience") })
-      .optional(),
-    sourceFor: z.object({ id, revision }).strict().optional(),
   })
   .strict();
 

@@ -10,7 +10,7 @@ import { apiServer, dispatch } from "../src/core/server.js";
 import {
   identity,
   digest,
-  methodSchema,
+  playbookSchema,
   type ObjectRef,
 } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
@@ -35,7 +35,7 @@ class Engine extends HindsightEngine {
     scope: string,
     _query: string,
     refs: ObjectRef[],
-    kind = "method",
+    kind = "playbook",
   ) {
     this.calls.push({ scope, kind });
     if (this.fail) throw new Error("retrieval_failed");
@@ -112,7 +112,7 @@ async function fixture() {
       sourceFingerprints: [fp],
       state: "active",
     });
-    const m = methodSchema.parse({
+    const m = playbookSchema.parse({
       ...identity(scopeId),
       title: "Repair generated client",
       goal: "Preserve changes after generation",
@@ -149,14 +149,13 @@ async function fixture() {
       change: {
         kind: "create",
         summary: "Fixture",
-        caseRefs: [],
         predecessors: [],
       },
     });
     await put("source", { id: fp, revision: 1, scopeId, blocked: false });
     for (const [kind, item] of [
       ["experience", e],
-      ["method", m],
+      ["playbook", m],
     ] as const) {
       await put(kind, item);
       await put("projection", {
@@ -264,7 +263,7 @@ test("Guidance combines eligible content, preserves leads and rechecks targets a
     assert.equal(result.experiences[0].usage, "lead");
     assert.equal(result.experiences[0].missingChecks.length, 1);
     const uses = () =>
-      f.store.transaction((tx) => tx.list<any>("method_use", [f.scopeId]));
+      f.store.transaction((tx) => tx.list<any>("playbook_use", [f.scopeId]));
     const replay = await f.call({ query: "generated" }, f.agent, key);
     assert.equal(replay.taskRef, result.taskRef);
     assert.equal(
@@ -291,7 +290,7 @@ test("Guidance combines eligible content, preserves leads and rechecks targets a
       "target_changed",
     );
     f.engine.beforeRecall = async () => {
-      await f.update("method", m, { state: "disabled" });
+      await f.update("playbook", m, { state: "disabled" });
       f.engine.beforeRecall = undefined;
     };
     const withdrawn = await f.call({
@@ -356,7 +355,7 @@ test("Three MCP tools run through real HTTP and storage, including fixed-referen
     assert.equal(first.playbooks[0].status, "requires_expansion");
     assert.equal(first.playbooks[0].playbookUseRef, undefined);
     assert.equal(
-      (await f.store.transaction((tx) => tx.list("method_use", [f.scopeId])))
+      (await f.store.transaction((tx) => tx.list("playbook_use", [f.scopeId])))
         .length,
       0,
     );
