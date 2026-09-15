@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { digest } from "../../domain/schema.js";
 import type { HookEvent } from "./protocol.js";
+import { streamLines } from "./upstream.js";
 
 export interface TranscriptRecord {
   id?: string;
@@ -65,21 +66,14 @@ export async function readTranscript(
       gaps.push("transcript_replaced");
       offset = 0;
     }
-    if (stat.size - offset > maxBytes) {
+    const truncated = stat.size - offset > maxBytes;
+    if (truncated) {
       gaps.push("transcript_truncated");
       offset = stat.size - maxBytes;
-      const prefix = Buffer.alloc(Math.min(64 * 1024, stat.size - offset));
-      await file.read(prefix, 0, prefix.length, offset);
-      const newline = prefix.indexOf(10);
-      if (newline < 0)
-        return { records, gaps, cursor: { path: identity, offset } };
-      offset += newline + 1;
     }
-    const buffer = Buffer.alloc(stat.size - offset);
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
-    const end = buffer.subarray(0, bytesRead).lastIndexOf(10) + 1;
-    // A partially written final line is retried at the next host hook.
-    for (const line of buffer.subarray(0, end).toString("utf8").split("\n")) {
+    for await (const entry of streamLines(file, offset, stat.size, truncated)) {
+      const { line } = entry;
+      offset = entry.offset;
       if (!line.trim()) continue;
       try {
         const value = JSON.parse(line);
@@ -97,7 +91,7 @@ export async function readTranscript(
     return {
       records,
       gaps: [...new Set(gaps)],
-      cursor: { path: identity, offset: offset + end },
+      cursor: { path: identity, offset },
     };
   } catch (error) {
     gaps.push(

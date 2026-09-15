@@ -81,7 +81,7 @@ predecessors 保存被本次方法修订或拆分替代的 Playbook ObjectRef，
 
 检查引用的stepIds须存在。prepare返回全部完成检查和停止条件，保留stepIds以说明路径归属。Agent执行全局及所选路径的检查；未选分支不作为本次完成要求。返回指导或完成某一步不代表任务成功。无需执行DSL或服务端逐步推进。
 
-Playbook 只维护当前正文。ProductStore 保存 contentHash、planHash、当前 revision、supportRefs 和用户控制；revision 用于冲突检测和真实使用关联，不表示可恢复的历史版本。method_write 暂存通过审查的候选与唯一 token，保留所有可能仍存在于原生正文中的旧依据，直到写入读回确认后删除。原生正文读取还要重新校验哈希。
+Playbook 只维护当前正文。ProductStore 保存 contentHash、planHash、当前 revision、supportRefs 和用户控制；revision 用于冲突检测和真实使用关联，不表示可恢复的历史版本。playbook_write 暂存通过审查的候选与唯一 token，保留所有可能仍存在于原生正文中的旧依据，直到写入读回确认后删除。原生正文读取还要重新校验哈希。
 
 ## Condition 与任务准备
 
@@ -141,7 +141,7 @@ EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 
-发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkCase、Experience、Playbook、临时候选和原生副本。
+发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkView、Experience、Playbook、临时候选和原生副本。
 
 Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系。默认发行 profile 必须明确实际副本策略；无法同时满足材料清理和方法依据保留时，按[决策记录](06-review-and-decisions.md)处理，不能只清作业就报告原文已删除。
 
