@@ -50,3 +50,5 @@ npm run build
 开发 CLI 使用 `node dist/cli/main.js help`。真实数据库测试通过 `npm run test:postgres` 执行，要求已按隔离配置启动私有 PostgreSQL。`npm run validate:p0` 会调用现有 Copilot 订阅，经官方 Hindsight 运行实际方法路径；测试需要已配置的隔离引擎，不是安装命令。
 
 报告写入.local-validation/results。真实CLI探针的准备和范围见[说明](probes/copilot/README.md)。计划中的统一Windows安装入口尚无下载地址，设计见[本地发行](docs/10-distribution-and-installation.md)。
+
+方法演进开发验证：npm run validate:evolution 与 npm run validate:evolution-resume 仅使用已确认的合成案例，保留失败记录，不代表完整阶段验收。
