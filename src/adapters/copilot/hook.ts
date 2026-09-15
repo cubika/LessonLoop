@@ -534,7 +534,7 @@ export async function handleHook(
                   taskRef: task.taskRef,
                   playbook: task.playbook,
                 }) +
-                " Full guidance exceeds the automatic budget. To read it, call preparePlaybook with these task and playbook references and viewMode=expanded.</lessonloop-playbook>",
+                " Full guidance exceeds the automatic budget. Call getGuidance with input {taskRef, target: playbook, viewMode: 'expanded'} using these references (viewMode=expanded).</lessonloop-playbook>",
             );
           } else {
             if (prepared.reason) await gap(task, prepared.reason);

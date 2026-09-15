@@ -9,6 +9,7 @@ import { Effects } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import { SampleConnector } from "../connectors/sample.js";
 import { workView } from "./source-views.js";
+import { getGuidance } from "./guidance.js";
 const connectors = new WeakMap<CoreService, SampleConnector>();
 function sample(core: CoreService) {
   let connector = connectors.get(core);
@@ -39,6 +40,8 @@ export async function dispatch(
 ): Promise<unknown> {
   const input = raw ?? {};
   switch (operation) {
+    case "getGuidance":
+      return getGuidance(core, p, input, key);
     case "submitSource":
       return core.submitSource(p, input, key);
     case "inspectSource":

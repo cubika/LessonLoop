@@ -10,6 +10,8 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 
 实现以官方Hindsight自托管和可复用Agent模块为起点。原生提取、归纳、综合和索引尽量直接复用，LessonLoop持有工作案例、产品经验、方法版本和用户控制。MemoryEngine保持可替换，首期只实现Hindsight；模型使用现有Copilot订阅，本地存储不代表推理离线。
 
+Agent MCP 提供 getGuidance、submitSource、feedback 三个工具，分别获取当前任务指导、提交学习材料和提供反馈。方法搜索、经验召回与任务关联由核心处理；详情检查、复盘和作业管理在 UI/CLI 中进行。
+
 ## 从哪里开始
 
 当前三对象定义及内部视图边界见[统一领域模型](docs/16-domain-model.md)。

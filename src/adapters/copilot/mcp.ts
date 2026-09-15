@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import {
+  guidanceInput,
+  sourceInput,
+  feedbackInput,
+} from "../../core/agent-contract.js";
 const config = JSON.parse(
   process.env.LESSONLOOP_AGENT_CONFIG_JSON ??
     (await readFile(process.env.LESSONLOOP_AGENT_CONFIG ?? "", "utf8")),
@@ -12,41 +17,40 @@ if (!["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
   throw new Error("agent_api_must_be_local");
 const server = new McpServer({ name: "lessonloop", version: "0.0.1" });
 const tools = {
-  submitSource: "Submit authorized agent inputSource for learning",
-  getJob: "Read current learning status",
-  searchPlaybooks: "Search currently published playbook summaries",
-  preparePlaybook:
-    "Get complete playbook guidance. input: {playbookId, revision, taskRef, viewMode?, requestId?}. Reuse the taskRef supplied by the LessonLoop hook. Check applicability, follow the steps and choose branches using current tool results. No completion report is needed to obtain later steps. If requires_expansion is returned, request viewMode=expanded.",
-  inspectPlaybook: "Read current playbook details",
-  recallExperiences: "Recall eligible experiences",
-  inspectExperience: "Inspect a product experience",
-  reviewTopic: "Review a bounded topic",
-  feedback: "Report playbook or experience feedback",
-  startTask:
-    "Create a separate agent-owned task. input: {scopeId, eventId?}. When the LessonLoop hook already supplied a taskRef, continue that task instead.",
+  getGuidance: {
+    description:
+      "Get applicable playbook guidance and experiences for the current problem. Reuse the hook's or previous response's taskRef. Without taskRef a task is created, using the only authorized scope or explicit scopeId. Returns taskRef, scopeId, playbooks and experiences; an empty result means no eligible guidance was found. Check conditions and choose branches from current observations. A lead still needs verification. For requires_expansion, repeat with the same taskRef and target reference, viewMode=expanded. No step completion report is needed.",
+    schema: guidanceInput,
+  },
+  submitSource: {
+    description:
+      "Submit authorized material or new results for asynchronous learning. Use the returned scopeId; sourceFor links a prior source receipt. Agent claims remain agent material; trusted user/tool capture is handled by the host. An accepted receipt is not proof of learning or publication. Job status and management are available in the UI/CLI.",
+    schema: sourceInput,
+  },
+  feedback: {
+    description:
+      "Rate or correct a playbook or experience using its exact returned reference and revision. This records the caller's assessment, not verified execution success. Submit new supporting evidence with submitSource.",
+    schema: feedbackInput,
+  },
 };
-const playbookInput = {
-  playbookId: z.string().min(1),
-  revision: z.number().int().positive(),
-  taskRef: z.string().min(1),
-};
-const inputs: Record<string, z.ZodTypeAny> = {
-  preparePlaybook: z
-    .object({
-      ...playbookInput,
-      viewMode: z.enum(["auto", "expanded"]).optional(),
-      requestId: z.string().max(128).optional(),
-    })
-    .strict(),
-};
-for (const [name, description] of Object.entries(tools))
+for (const [name, tool] of Object.entries(tools))
   server.registerTool(
     name,
     {
-      description,
+      description: tool.description,
       inputSchema: {
-        input: inputs[name] ?? z.record(z.unknown()),
-        eventId: z.string().max(128).optional(),
+        input: tool.schema as z.ZodTypeAny,
+        eventId: z
+          .string()
+          .min(1)
+          .max(128)
+          .optional()
+          .describe("Reuse for retries of the same request."),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({ input, eventId }) => {
@@ -58,7 +62,7 @@ for (const [name, description] of Object.entries(tools))
           "Idempotency-Key": eventId ?? randomUUID(),
         },
         body: JSON.stringify({ operation: name, input }),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(name === "getGuidance" ? 30000 : 20000),
       });
       return {
         content: [
