@@ -1,6 +1,6 @@
 # 文档地图
 
-当前设计以官方Hindsight工具和可复用Agent模块为起点，围绕“经历 → 分层提炼 → 方法 → 使用 → 改进”组织。以下文档定义产品合同；核心和主要入口已有实现，尚未通过完整验收，进度统一见[13](13-implementation-plan.md)。
+当前设计以官方Hindsight工具和可复用Agent模块为起点，围绕“经历 → 经验 → 方法 → 使用 → 改进”组织。以下文档定义产品合同；核心和主要入口已有实现，尚未通过完整验收，进度统一见[13](13-implementation-plan.md)。
 
 首个Windows预览版的安装、试用范围和限制见[alpha说明](14-alpha-release.md)。
 系统依赖复用、最低版本和PostgreSQL用途见[依赖与兼容](15-runtime-compatibility.md)。
@@ -12,7 +12,7 @@
 | 文档 | 唯一职责 |
 |---|---|
 | [01 产品定义](01-product.md) | 用户价值、首版范围、设置和官方分工 |
-| [02 自动复盘与方法学习](02-experience-model.md) | Source/Experience/Playbook语义、L1–L5实际处理、准入与演进 |
+| [02 自动复盘与方法学习](02-experience-model.md) | Source/Experience/Playbook语义、可选分析视角、准入与演进 |
 | [12 方法库与使用体验](12-method-library.md) | UI、CLI、任务使用、变化与导出 |
 | [03 系统架构](03-architecture.md) | 组件、官方复用、可替换引擎、发布投影与恢复 |
 | [07 数据模型与保留](07-storage-model.md) | 字段、引用、状态记录、所有容量和保留期 |
@@ -22,7 +22,7 @@
 | [10 本地发行与运行](10-distribution-and-installation.md) | 官方组件打包、Windows安装、后台、升级和清理 |
 | [05 实施与验收](05-delivery-and-validation.md) | P0–P4阶段、产品与组成规则验收、发布门槛 |
 | [13 第一阶段实现计划](13-implementation-plan.md) | P0–P3工作包、官方复用、依赖、代码落点和实现进度 |
-| [09 质量评估方法](09-quality-evaluation.md) | 场景合同、分层判定、官方对照、指标和报告 |
+| [09 质量评估方法](09-quality-evaluation.md) | 场景合同、依据判定、官方对照、指标和报告 |
 | [06 架构决策](06-review-and-decisions.md) | 选择理由、P0未决项和调整条件 |
 
 ## 当前文档与实现

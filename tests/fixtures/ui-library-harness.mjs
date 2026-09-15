@@ -171,6 +171,8 @@ export async function runUiLibraryChecks() {
     );
     checks.push("filter request");
     await run("show('playbook-ui')");
+    await click($("detail"), "查看依据");
+    assert.doesNotMatch($("detail").textContent, /undefined|L[1-5]/);
     await click($("detail"), "修改方法");
     let editor = $("detail").children.find((e) =>
       e.textContent.includes("修改说明"),
@@ -238,6 +240,7 @@ export async function runUiLibraryChecks() {
     );
     checks.push("source result links current revision");
     await run("showRecord('experience','experience-ui')");
+    assert.doesNotMatch($("record-detail").textContent, /undefined|L[1-5]/);
     await click($("record-detail"), "补充证据并审查");
     await input($("record-detail"), "实际原文或观察", "实际文件包含 auditTag");
     await click($("record-detail"), "提交补证");

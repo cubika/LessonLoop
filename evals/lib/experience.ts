@@ -5,7 +5,7 @@ const condition = z.object({ text: byteText(512), match: z.object({ key: byteTex
 const reference = z.object({ id: byteText(128), revision: z.number().int().positive().safe() }).strict();
 export const experienceSchema = z.object({
   id: byteText(128), revision: z.number().int().positive().safe(), scopeId: byteText(128),
-  conclusion: byteText(2048), level: z.enum(["L1", "L2", "L3", "L4", "L5"]),
+  conclusion: byteText(2048), level: z.enum(["L1", "L2", "L3", "L4", "L5"]).optional(),
   purpose: z.enum(["fact", "constraint", "lesson", "procedure", "rationale"]),
   applicability: z.enum(["general", "conditional", "unknown"]),
   conditions: z.array(condition).max(4), exceptions: z.array(condition).max(4),

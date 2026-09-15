@@ -6,7 +6,6 @@ export async function startUiFixture() {
     revision: 2,
     scopeId: "ui-check",
     conclusion: "重新生成后核对字段与扩展",
-    level: "L1",
     assessment: "supported",
     state: "held",
     conditions: [{ text: "使用版本 2" }],

@@ -161,7 +161,6 @@ async function setup(store: ProductStore) {
   );
   const exp = {
     conclusion: "Version-specific edit locations differ",
-    level: "L4",
     purpose: "procedure",
     applicability: "conditional",
     conditions: [{ text: "Version is known" }],

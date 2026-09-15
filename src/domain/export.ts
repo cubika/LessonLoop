@@ -65,7 +65,7 @@ description: ${JSON.stringify(playbook.goal)}
     "Support",
     playbook.supportRefs.map((r) => {
       const e = support.find((e) => e.id === r.id && e.revision === r.revision);
-      return `${r.id}@${r.revision}${e ? ` — ${e.level}, ${e.assessment}: ${e.conclusion}` : " — source revision unavailable"}`;
+      return `${r.id}@${r.revision}${e ? ` — ${e.assessment}: ${e.conclusion}` : " — source revision unavailable"}`;
     }),
   );
   if (includeEvidence)
