@@ -67,7 +67,7 @@ test("HTTP rejects unauthenticated and cross-origin requests; accepted input is 
       scopeId: scope,
       segments: [
         {
-          text: "Integration material with a claimed tool role.",
+          text: "Integration inputSource with a claimed tool role.",
           role: "tool",
         },
       ],

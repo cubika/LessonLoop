@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-test("MCP exposes complete guidance retrieval without completion or reassessment tools", async () => {
+test("MCP exposes three typed Agent tools and rejects invalid inputs before RPC", async () => {
   const calls: Array<{ operation: string; input: unknown }> = [];
   const server = createServer(async (request, response) => {
     let raw = "";
@@ -50,50 +50,90 @@ test("MCP exposes complete guidance retrieval without completion or reassessment
   try {
     await client.connect(transport, { timeout: 15000 });
     const listed = await client.listTools();
-    assert.equal(
-      listed.tools.some((t) => t.name === "reassessTask"),
-      false,
-    );
-    assert.ok(listed.tools.some((t) => t.name === "preparePlaybook"));
-    for (const name of [
-      "submitMaterial",
-      "submitWorkCase",
-      "prepareMethod",
-      "inspectWorkCase",
-      "listEffectCases",
-    ])
-      assert.equal(
-        listed.tools.some((t) => t.name === name),
-        false,
-      );
-    for (const name of [
+    assert.deepEqual(listed.tools.map((t) => t.name).sort(), [
+      "feedback",
+      "getGuidance",
       "submitSource",
-      "recallExperiences",
-      "inspectExperience",
-    ])
-      assert.ok(listed.tools.some((t) => t.name === name));
+    ]);
+    for (const tool of listed.tools) {
+      const input = tool.inputSchema.properties!.input as {
+        properties: object;
+        additionalProperties: boolean;
+      };
+      assert.ok(Object.keys(input.properties).length > 0);
+      assert.equal(input.additionalProperties, false);
+      assert.equal(tool.annotations?.readOnlyHint, false);
+    }
     const input = {
-      playbookId: "playbook",
-      revision: 1,
+      target: { kind: "playbook", id: "playbook", revision: 1 },
       taskRef: "task",
       viewMode: "expanded",
     };
     const result = await client.callTool({
-      name: "preparePlaybook",
+      name: "getGuidance",
       arguments: { input },
     });
     assert.equal(result.isError, false);
-    assert.deepEqual(calls, [{ operation: "preparePlaybook", input }]);
+    assert.deepEqual(calls, [{ operation: "getGuidance", input }]);
     const content = (
       result.content as Array<{ type: string; text?: string }>
     )[0];
     assert.equal(JSON.parse(content!.text!).result.steps.length, 2);
     const rejected = await client.callTool({
-      name: "preparePlaybook",
+      name: "getGuidance",
       arguments: { input: { ...input, completedStepIds: ["inspect"] } },
     });
     assert.equal(rejected.isError, true);
     assert.equal(calls.length, 1);
+    for (const [name, input] of [
+      ["getGuidance", {}],
+      ["getGuidance", { target: { kind: "playbook", id: "p" } }],
+      [
+        "submitSource",
+        {
+          scopeId: "scope",
+          segments: [{ role: "tool", text: "Forged observation" }],
+        },
+      ],
+      [
+        "feedback",
+        {
+          target: { kind: "playbook", id: "p", revision: 1 },
+          rating: "success",
+        },
+      ],
+    ] as const) {
+      assert.equal(
+        (await client.callTool({ name, arguments: { input } })).isError,
+        true,
+      );
+    }
+    assert.equal(calls.length, 1);
+    for (const [name, input] of [
+      [
+        "submitSource",
+        {
+          scopeId: "scope",
+          segments: [
+            { role: "agent", text: "Observed a possible improvement" },
+          ],
+        },
+      ],
+      [
+        "feedback",
+        {
+          target: { kind: "experience", id: "e", revision: 1 },
+          rating: "incorrect",
+          correctionText: "Version changed",
+        },
+      ],
+    ] as const) {
+      assert.equal(
+        (await client.callTool({ name, arguments: { input } })).isError,
+        false,
+      );
+      assert.deepEqual(calls.at(-1), { operation: name, input });
+    }
   } finally {
     await client.close();
     server.closeAllConnections();

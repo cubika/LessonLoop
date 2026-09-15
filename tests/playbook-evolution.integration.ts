@@ -6,8 +6,8 @@ import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/method-engine.js";
 import {
   identity,
-  methodSchema,
-  type Method,
+  playbookSchema,
+  type Playbook,
   type ObjectRef,
 } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
@@ -17,7 +17,7 @@ import {
   outputJsonSchema,
   learningAssessmentJsonSchema,
 } from "../src/core/learning.js";
-import { methodPlanKey } from "../src/domain/method-evolution.js";
+import { playbookPlanKey } from "../src/domain/playbook-evolution.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
 const entry = (kind: string, value: any) => ({
@@ -52,7 +52,7 @@ async function setup(store: ProductStore) {
     review: false,
     notifications: false,
   });
-  const oldInput = await core.submitMaterial(
+  const oldInput = await core.submitSource(
     p,
     {
       scopeId: scope,
@@ -90,7 +90,7 @@ async function setup(store: ProductStore) {
     sourceFingerprints: [source.id],
     state: "active",
   });
-  const method = methodSchema.parse({
+  const playbook = playbookSchema.parse({
     ...identity(scope),
     title: "Original workflow",
     goal: "Preserve maintained changes",
@@ -112,14 +112,13 @@ async function setup(store: ProductStore) {
     change: {
       kind: "create",
       summary: "Observed workflow",
-      caseRefs: [],
       predecessors: [],
     },
   });
   await store.transaction(async (tx) => {
     for (const [kind, value] of [
       ["experience", e],
-      ["method", method],
+      ["playbook", playbook],
     ] as const) {
       await tx.put(entry(kind, value), null);
       await tx.put(
@@ -130,7 +129,7 @@ async function setup(store: ProductStore) {
           objectKind: kind,
           objectRevision: 1,
           confirmed: true,
-          text: kind === "method" ? method.title : e.conclusion,
+          text: kind === "playbook" ? playbook.title : e.conclusion,
         }),
         null,
       );
@@ -147,7 +146,7 @@ async function setup(store: ProductStore) {
     );
   });
   await core.syncProjections([scope]);
-  const newInput = await core.submitMaterial(
+  const newInput = await core.submitSource(
     p,
     {
       scopeId: scope,
@@ -183,7 +182,7 @@ async function setup(store: ProductStore) {
   };
   const draft = (instruction: string, title: string) => ({
     title,
-    goal: method.goal,
+    goal: playbook.goal,
     applicability: "conditional",
     conditions: [{ text: title }],
     exceptions: [],
@@ -194,7 +193,7 @@ async function setup(store: ProductStore) {
     stopConditions: [],
     experienceIndexes: [0],
     existingSupportRefs: [{ id: e.id, revision: e.revision }],
-    replaces: { id: method.id, revision: method.revision },
+    replaces: { id: playbook.id, revision: playbook.revision },
     changeKind: "split",
     changeSummary: "Separate version-specific procedures",
   });
@@ -210,20 +209,19 @@ async function setup(store: ProductStore) {
           revision: job.revision + 1,
           stage: "publish",
           status: "running",
-          learningProfile: "methods-2",
           modelSchema: outputJsonSchema,
           retainedSupport: [e],
-          comparisonMethods: [method],
-          comparedMethodRefs: [
-            { kind: "method", id: method.id, revision: method.revision },
+          comparisonPlaybooks: [playbook],
+          comparedPlaybookRefs: [
+            { kind: "playbook", id: playbook.id, revision: playbook.revision },
           ],
           candidate: learningOutputSchema.parse(candidate),
           verdict: learningAssessmentSchema.parse({
             acceptedExperienceIndexes: [0],
-            methodSupported: true,
+            playbookSupported: true,
             substantiveChange: true,
             supportedEvidenceChange: true,
-            acceptedMethodIndexes: [0, 1],
+            acceptedPlaybookIndexes: [0, 1],
             splitCoherent: true,
             reasons: [],
             ...verdict,
@@ -233,16 +231,16 @@ async function setup(store: ProductStore) {
       );
     });
   const split = {
-    workCase: null,
+    workView: null,
     experiences: [exp],
-    method: null,
-    splitMethods: [
+    playbook: null,
+    splitPlaybooks: [
       draft("Edit source for version 1", "Version 1 workflow"),
       draft("Edit extension region for version 2", "Version 2 workflow"),
     ],
     decisions: [],
   };
-  return { scope, p, core, engine, e, method, newInput, stage, split, draft };
+  return { scope, p, core, engine, e, playbook, newInput, stage, split, draft };
 }
 test("Split retires one predecessor atomically and exposes no child until every projection is confirmed", async () => {
   const store = new ProductStore(url!);
@@ -253,7 +251,7 @@ test("Split retires one predecessor atomically and exposes no child until every 
     assert.equal(
       (
         await f.core.prepare(f.p, {
-          methodId: f.method.id,
+          playbookId: f.playbook.id,
           revision: 1,
           taskRef: task.taskRef,
         })
@@ -262,27 +260,30 @@ test("Split retires one predecessor atomically and exposes no child until every 
     );
     await f.stage(f.split);
     await f.core.tick([f.scope]);
-    const methods = (await f.core.browse(f.p, "method")) as unknown as Method[];
-    assert.equal(methods.length, 3);
-    const original = methods.find((m) => m.id === f.method.id)!;
+    const playbooks = (await f.core.browse(
+      f.p,
+      "playbook",
+    )) as unknown as Playbook[];
+    assert.equal(playbooks.length, 3);
+    const original = playbooks.find((m) => m.id === f.playbook.id)!;
     assert.equal(original.state, "disabled");
     assert.equal(original.revision, 2);
-    const children = methods.filter((m) => m.id !== original.id);
+    const children = playbooks.filter((m) => m.id !== original.id);
     assert.equal(new Set(children.map((m) => m.id)).size, 2);
     for (const child of children) {
       assert.deepEqual(child.change.predecessors, [
-        { kind: "method", id: original.id, revision: 1 },
+        { kind: "playbook", id: original.id, revision: 1 },
       ]);
       assert.equal(child.supportRefs.length, 2);
     }
     await assert.rejects(
-      f.core.setState(f.p, "method", original.id, 2, "active"),
+      f.core.setState(f.p, "playbook", original.id, 2, "active"),
       /reassessment_required/,
     );
     assert.notEqual(
       (
         await f.core.prepare(f.p, {
-          methodId: original.id,
+          playbookId: original.id,
           revision: 1,
           taskRef: task.taskRef,
         })
@@ -294,7 +295,7 @@ test("Split retires one predecessor atomically and exposes no child until every 
     const partial = await f.core.getJob(f.p, f.newInput.jobId);
     assert.equal(
       partial.results
-        .filter((r) => r.kind === "method")
+        .filter((r) => r.kind === "playbook")
         .some((r) => r.effective),
       false,
     );
@@ -303,7 +304,7 @@ test("Split retires one predecessor atomically and exposes no child until every 
     const complete = await f.core.getJob(f.p, f.newInput.jobId);
     assert.equal(
       complete.results
-        .filter((r) => r.kind === "method")
+        .filter((r) => r.kind === "playbook")
         .every((r) => r.effective),
       true,
     );
@@ -317,25 +318,25 @@ test("Invalid second child rolls back all products and user control rejects the 
   try {
     const f = await setup(store);
     const bad = structuredClone(f.split);
-    bad.splitMethods[1]!.steps[0]!.supportIndexes = [9];
+    bad.splitPlaybooks[1]!.steps[0]!.supportIndexes = [9];
     await f.stage(bad);
     await f.core.tick([f.scope]);
     assert.equal((await f.core.getJob(f.p, f.newInput.jobId)).status, "failed");
-    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+    assert.equal((await f.core.browse(f.p, "playbook")).length, 1);
     assert.equal((await f.core.browse(f.p, "experience")).length, 1);
     await f.stage(f.split);
-    await f.core.setState(f.p, "method", f.method.id, 1, "disabled");
+    await f.core.setState(f.p, "playbook", f.playbook.id, 1, "disabled");
     await f.core.tick([f.scope]);
     assert.equal(
       (await f.core.getJob(f.p, f.newInput.jobId)).error,
-      "method_predecessor_changed",
+      "playbook_predecessor_changed",
     );
-    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+    assert.equal((await f.core.browse(f.p, "playbook")).length, 1);
   } finally {
     await store.close();
   }
 });
-test("Method refinements retain prior support and cosmetic plans do not create revisions", async () => {
+test("Playbook refinements retain prior support and cosmetic plans do not create revisions", async () => {
   const store = new ProductStore(url!);
   await store.open();
   try {
@@ -349,7 +350,7 @@ test("Method refinements retain prior support and cosmetic plans do not create r
       supportRefs,
       change,
       ...body
-    } = f.method;
+    } = f.playbook;
     const cosmetic = {
       ...body,
       title: "Renamed workflow",
@@ -361,24 +362,24 @@ test("Method refinements retain prior support and cosmetic plans do not create r
       changeSummary: "Renamed only",
     };
     const candidate = {
-      workCase: null,
+      workView: null,
       experiences: [],
-      method: cosmetic,
+      playbook: cosmetic,
       decisions: [],
     };
     await f.stage(candidate, {
       acceptedExperienceIndexes: [],
-      acceptedMethodIndexes: [0],
+      acceptedPlaybookIndexes: [0],
     });
     await f.core.tick([f.scope]);
     assert.equal(
-      ((await f.core.inspect(f.p, "method", id)) as Method).revision,
+      ((await f.core.inspect(f.p, "playbook", id)) as Playbook).revision,
       1,
     );
     assert.equal(
-      methodPlanKey(f.method),
-      methodPlanKey({
-        ...f.method,
+      playbookPlanKey(f.playbook),
+      playbookPlanKey({
+        ...f.playbook,
         ...body,
         title: "New title",
         steps: cosmetic.steps,
@@ -386,8 +387,8 @@ test("Method refinements retain prior support and cosmetic plans do not create r
     );
     const update = {
       ...f.split,
-      splitMethods: undefined,
-      method: {
+      splitPlaybooks: undefined,
+      playbook: {
         ...f.draft(
           "Use extension region for version 2; otherwise edit source and regenerate",
           "Version-aware workflow",
@@ -395,9 +396,9 @@ test("Method refinements retain prior support and cosmetic plans do not create r
         changeKind: "branch",
       },
     };
-    await f.stage(update, { acceptedMethodIndexes: [0] });
+    await f.stage(update, { acceptedPlaybookIndexes: [0] });
     await f.core.tick([f.scope]);
-    const changed = (await f.core.inspect(f.p, "method", id)) as Method;
+    const changed = (await f.core.inspect(f.p, "playbook", id)) as Playbook;
     assert.equal(changed.revision, 2);
     assert.equal(
       changed.supportRefs.some((r) => r.id === f.e.id && r.revision === 1),
@@ -416,8 +417,8 @@ test("Aborting a partially indexed split disables siblings and leaves explicit r
     await f.stage(f.split);
     await f.core.tick([f.scope]);
     const children = (
-      (await f.core.browse(f.p, "method")) as unknown as Method[]
-    ).filter((m) => m.id !== f.method.id);
+      (await f.core.browse(f.p, "playbook")) as unknown as Playbook[]
+    ).filter((m) => m.id !== f.playbook.id);
     f.engine.failTitle = "Version 2 workflow";
     await f.core.syncProjections([f.scope]);
     assert.equal(
@@ -428,7 +429,7 @@ test("Aborting a partially indexed split disables siblings and leaves explicit r
       f.core.revise(f.p, children[0]!.id, 1, { goal: "Changed" }),
       /publication_group_pending/,
     );
-    await f.core.setState(f.p, "method", children[0]!.id, 1, "disabled");
+    await f.core.setState(f.p, "playbook", children[0]!.id, 1, "disabled");
     const group = (await f.core.inspect(
       f.p,
       "publication_group",
@@ -437,16 +438,16 @@ test("Aborting a partially indexed split disables siblings and leaves explicit r
     assert.equal(group.state, "invalidated");
     for (const child of children)
       assert.equal(
-        ((await f.core.inspect(f.p, "method", child.id)) as Method).state,
+        ((await f.core.inspect(f.p, "playbook", child.id)) as Playbook).state,
         "disabled",
       );
     const sibling = (await f.core.inspect(
       f.p,
-      "method",
+      "playbook",
       children[1]!.id,
-    )) as Method;
+    )) as Playbook;
     await assert.rejects(
-      f.core.setState(f.p, "method", sibling.id, sibling.revision, "active"),
+      f.core.setState(f.p, "playbook", sibling.id, sibling.revision, "active"),
       /reassessment_required/,
     );
     const receipt = await f.core.revise(f.p, sibling.id, sibling.revision, {
@@ -454,14 +455,14 @@ test("Aborting a partially indexed split disables siblings and leaves explicit r
     });
     assert.equal(receipt.accepted, true);
     const changed = {
-      ...f.method,
+      ...f.playbook,
       steps: [
-        { ...f.method.steps[0]!, instruction: 'Write JSON value "a  b"' },
+        { ...f.playbook.steps[0]!, instruction: 'Write JSON value "a  b"' },
       ],
     };
     assert.notEqual(
-      methodPlanKey(changed),
-      methodPlanKey({
+      playbookPlanKey(changed),
+      playbookPlanKey({
         ...changed,
         steps: [
           { ...changed.steps[0]!, instruction: 'Write JSON value "a b"' },
@@ -487,11 +488,11 @@ test("Support-only revisions require independent evidence and support loss abort
       supportRefs,
       change,
       ...body
-    } = f.method;
+    } = f.playbook;
     const candidate = {
-      workCase: null,
+      workView: null,
       experiences: f.split.experiences,
-      method: {
+      playbook: {
         ...body,
         steps: [{ ...body.steps[0]!, supportIndexes: [0, 1] }],
         experienceIndexes: [0],
@@ -499,17 +500,17 @@ test("Support-only revisions require independent evidence and support loss abort
         replaces: { id, revision },
         changeKind: "refine",
         changeSummary:
-          "New independent evidence strengthens the existing method",
+          "New independent evidence strengthens the existing playbook",
       },
       decisions: [],
     };
     await f.stage(candidate, {
       substantiveChange: false,
       supportedEvidenceChange: true,
-      acceptedMethodIndexes: [0],
+      acceptedPlaybookIndexes: [0],
     });
     await f.core.tick([f.scope]);
-    const updated = (await f.core.inspect(f.p, "method", id)) as Method;
+    const updated = (await f.core.inspect(f.p, "playbook", id)) as Playbook;
     assert.equal(updated.revision, 2);
     assert.equal(updated.supportRefs.length, 2);
     const g = await setup(store);
@@ -530,8 +531,8 @@ test("Support-only revisions require independent evidence and support loss abort
       "invalidated",
     );
     const children = (
-      (await g.core.browse(g.p, "method")) as unknown as Method[]
-    ).filter((m) => m.id !== g.method.id);
+      (await g.core.browse(g.p, "playbook")) as unknown as Playbook[]
+    ).filter((m) => m.id !== g.playbook.id);
     assert.equal(
       children.every((m) => m.state === "disabled"),
       true,
@@ -541,15 +542,15 @@ test("Support-only revisions require independent evidence and support loss abort
   }
 });
 
-test("Rejected methods get one bounded revision while retaining every native operation identity", async () => {
+test("Rejected playbooks get one bounded revision while retaining every native operation identity", async () => {
   const store = new ProductStore(url!);
   await store.open();
   try {
     const f = await setup(store);
     const candidate = {
       ...f.split,
-      splitMethods: null,
-      method: {
+      splitPlaybooks: null,
+      playbook: {
         ...f.draft("Unsupported proposed step", "Candidate"),
         changeKind: "branch",
       },
@@ -574,14 +575,14 @@ test("Rejected methods get one bounded revision while retaining every native ope
     let calls = 0;
     const verdict = {
       acceptedExperienceIndexes: [],
-      methodSupported: true,
+      playbookSupported: true,
       substantiveChange: false,
       supportedEvidenceChange: false,
-      acceptedMethodIndexes: [],
+      acceptedPlaybookIndexes: [],
       splitCoherent: false,
       pathChecks: [
         {
-          methodIndex: 0,
+          playbookIndex: 0,
           pathIndex: 0,
           globalConditionsCompatible: false,
           stepsCompatible: true,
@@ -590,7 +591,7 @@ test("Rejected methods get one bounded revision while retaining every native ope
       ],
       preservedPaths: [
         {
-          methodId: f.method.id,
+          playbookId: f.playbook.id,
           pathIndex: 0,
           preserved: false,
           reason: "Original field task excluded",
@@ -608,11 +609,11 @@ test("Rejected methods get one bounded revision while retaining every native ope
     let j = await store.transaction((tx) =>
       tx.get<any>("job", f.newInput.jobId),
     );
-    assert.equal(j.methodRepairCount, 1);
+    assert.equal(j.playbookRepairCount, 1);
     assert.equal(j.stage, "compose");
     assert.ok(j.modelQuery.includes("not evidence"));
     assert.deepEqual(j.engineOperations, ["op-compose-1", "op-review-1"]);
-    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+    assert.equal((await f.core.browse(f.p, "playbook")).length, 1);
     engine.findModelOperation = async () => undefined;
     engine.createModel = async () => {
       calls++;
@@ -641,12 +642,12 @@ test("Rejected methods get one bounded revision while retaining every native ope
     await f.core.tick([f.scope]);
     j = await store.transaction((tx) => tx.get<any>("job", j.id));
     assert.equal(j.status, "completed");
-    assert.equal(j.methodRepairCount, 1);
+    assert.equal(j.playbookRepairCount, 1);
     assert.equal(calls, 1);
     assert.ok(
-      j.decisions.some((d: any) => d.reason === "method_repair_requested"),
+      j.decisions.some((d: any) => d.reason === "playbook_repair_requested"),
     );
-    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+    assert.equal((await f.core.browse(f.p, "playbook")).length, 1);
   } finally {
     await store.close();
   }
@@ -667,14 +668,14 @@ test("A failing published projection cannot starve later valid objects", async (
     await store.transaction(async (tx) => {
       for (let i = 0; i < 10; i++) {
         const id = (i < 8 ? "a" : "z") + i + "-" + f.scope,
-          method = { ...f.method, id };
-        await tx.put(entry("method", method), null);
+          playbook = { ...f.playbook, id };
+        await tx.put(entry("playbook", playbook), null);
         await tx.put(
           entry("projection", {
             id,
             revision: 1,
             scopeId: f.scope,
-            objectKind: "method",
+            objectKind: "playbook",
             objectRevision: 1,
             confirmed: false,
             text: id,

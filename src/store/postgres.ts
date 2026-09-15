@@ -1,11 +1,11 @@
 import pg from "pg";
 import { randomUUID } from "node:crypto";
-import { digest, methodSchema, type Method } from "../domain/schema.js";
+import { digest, playbookSchema, type Playbook } from "../domain/schema.js";
 import {
-  splitMethod,
-  type MethodContentStore,
-  type MethodRecord,
-  type MethodWrite,
+  splitPlaybook,
+  type PlaybookContentStore,
+  type PlaybookRecord,
+  type PlaybookWrite,
 } from "./method-content.js";
 
 export interface Entry {
@@ -23,22 +23,22 @@ export class Conflict extends Error {
 export class Transaction {
   constructor(
     private readonly db: pg.PoolClient,
-    private readonly contents?: MethodContentStore,
+    private readonly contents?: PlaybookContentStore,
   ) {}
-  private async hydrate(value: MethodRecord): Promise<Method> {
-    const pending = await this.get<MethodWrite>("method_write", value.id);
+  private async hydrate(value: PlaybookRecord): Promise<Playbook> {
+    const pending = await this.get<PlaybookWrite>("playbook_write", value.id);
     const content =
       pending?.hash === value.contentHash && pending.content
         ? pending.content
-        : await this.contents?.readMethodContent(
+        : await this.contents?.readPlaybookContent(
             value.scopeId,
             value.id,
             value.contentHash,
           );
     if (!content || digest(content) !== value.contentHash)
-      throw new Error("method_content_unavailable");
+      throw new Error("playbook_content_unavailable");
     const { contentHash: _hash, planHash: _plan, ...record } = value;
-    return methodSchema.parse({ ...record, ...content });
+    return playbookSchema.parse({ ...record, ...content });
   }
   async get<T>(
     kind: string,
@@ -51,14 +51,14 @@ export class Transaction {
     );
     const value = r.rows[0]?.value;
     return (
-      value && kind === "method" && !metadataOnly
+      value && kind === "playbook" && !metadataOnly
         ? await this.hydrate(value)
         : value
     ) as T | undefined;
   }
-  async readableMethod(id: string): Promise<Method | undefined> {
+  async readablePlaybook(id: string): Promise<Playbook | undefined> {
     try {
-      return await this.get<Method>("method", id);
+      return await this.get<Playbook>("playbook", id);
     } catch (error) {
       if (error instanceof Conflict) throw error;
       return undefined;
@@ -74,7 +74,7 @@ export class Transaction {
       [kind, scopes ?? null],
     );
     const values = r.rows.map((v) => v.value);
-    if (kind !== "method" || metadataOnly) return values as T[];
+    if (kind !== "playbook" || metadataOnly) return values as T[];
     const results = await Promise.allSettled(
       values.map((v) => this.hydrate(v)),
     );
@@ -94,7 +94,7 @@ export class Transaction {
         "candidate",
         "modelQuery",
         "assessmentQuery",
-        "comparisonMethods",
+        "comparisonPlaybooks",
         "retainedSupport",
         "verificationTarget",
         "verificationControl",
@@ -102,11 +102,16 @@ export class Transaction {
         delete value[field];
       entry = { ...entry, value };
     }
-    if (entry.kind === "method" && "steps" in entry.value) {
-      const { content, record } = splitMethod(methodSchema.parse(entry.value));
-      const old = await this.get<MethodRecord>("method", entry.id, true);
+    if (entry.kind === "playbook" && "steps" in entry.value) {
+      const { content, record } = splitPlaybook(
+        playbookSchema.parse(entry.value),
+      );
+      const old = await this.get<PlaybookRecord>("playbook", entry.id, true);
       if (old?.contentHash !== record.contentHash) {
-        const pending = await this.get<MethodWrite>("method_write", entry.id);
+        const pending = await this.get<PlaybookWrite>(
+          "playbook_write",
+          entry.id,
+        );
         const value = {
           token: randomUUID(),
           previousSupport: [
@@ -124,7 +129,7 @@ export class Transaction {
           content,
         };
         await this.put(
-          { ...entry, kind: "method_write", revision: value.revision, value },
+          { ...entry, kind: "playbook_write", revision: value.revision, value },
           pending?.revision ?? null,
         );
       }
@@ -158,26 +163,26 @@ export class Transaction {
     }
   }
   async remove(kind: string, id: string, expected: number) {
-    if (kind === "method") {
-      const method = await this.get<MethodRecord>(kind, id, true);
-      if (!method || method.revision !== expected) throw new Conflict();
-      const pending = await this.get<MethodWrite>("method_write", id);
+    if (kind === "playbook") {
+      const playbook = await this.get<PlaybookRecord>(kind, id, true);
+      if (!playbook || playbook.revision !== expected) throw new Conflict();
+      const pending = await this.get<PlaybookWrite>("playbook_write", id);
       const value = {
         token: randomUUID(),
         previousSupport: [
           ...(pending?.previousSupport ?? []),
-          ...method.supportRefs,
+          ...playbook.supportRefs,
         ],
         id,
-        scopeId: method.scopeId,
+        scopeId: playbook.scopeId,
         revision: (pending?.revision ?? 0) + 1,
         hash: "",
       };
       await this.put(
         {
-          kind: "method_write",
+          kind: "playbook_write",
           id,
-          scopeId: method.scopeId,
+          scopeId: playbook.scopeId,
           revision: value.revision,
           value,
         },
@@ -192,7 +197,7 @@ export class Transaction {
   }
 }
 export class ProductStore {
-  methodContents?: MethodContentStore;
+  playbookContents?: PlaybookContentStore;
   private readonly pool: pg.Pool;
   private owner: pg.PoolClient | undefined;
   private ready = false;
@@ -238,7 +243,7 @@ export class ProductStore {
         await this.owner.query(`BEGIN;
         CREATE SCHEMA IF NOT EXISTS lessonloop;
         CREATE TABLE lessonloop.schema_version(version integer PRIMARY KEY);
-        INSERT INTO lessonloop.schema_version VALUES(2);
+        INSERT INTO lessonloop.schema_version VALUES(3);
         CREATE TABLE lessonloop.objects(kind text NOT NULL,id text NOT NULL,scope_id text NOT NULL,revision bigint NOT NULL CHECK(revision>0),value jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(kind,id));
         CREATE INDEX objects_scope_kind ON lessonloop.objects(scope_id,kind);
         COMMIT;`);
@@ -246,7 +251,7 @@ export class ProductStore {
       const versions = await this.owner.query(
         "SELECT version FROM lessonloop.schema_version",
       );
-      if (versions.rows.length !== 1 || versions.rows[0].version !== 2)
+      if (versions.rows.length !== 1 || versions.rows[0].version !== 3)
         throw new Error("incompatible_product_schema");
       this.ready = true;
     } catch (error) {
@@ -272,7 +277,7 @@ export class ProductStore {
         // Native content commits take this same transaction lock while checking
         // the durable write intent. User/source changes cannot pass that check.
         await db.query("SELECT pg_advisory_xact_lock(761259484)");
-        const result = await fn(new Transaction(db, this.methodContents));
+        const result = await fn(new Transaction(db, this.playbookContents));
         if (!this.ready) throw new Error("writer_ownership_lost");
         await db.query("COMMIT");
         return result;

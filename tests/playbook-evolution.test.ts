@@ -1,23 +1,18 @@
-import { methodPaths } from "../src/domain/method-paths.js";
+import { playbookPaths } from "../src/domain/playbook-paths.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
   learningOutputSchema,
-  parseLearningAssessment,
   outputJsonSchema,
   learningAssessmentJsonSchema,
 } from "../src/core/learning.js";
+import { playbookSchema, identity } from "../src/domain/schema.js";
 import {
-  legacyOutputJsonSchema,
-  legacyAssessmentJsonSchema,
-} from "../src/core/legacy-learning-profile.js";
-import { methodSchema, identity } from "../src/domain/schema.js";
-import {
-  methodPlanKey,
-  methodSupportKey,
-} from "../src/domain/method-evolution.js";
+  playbookPlanKey,
+  playbookSupportKey,
+} from "../src/domain/playbook-evolution.js";
 const draft = (id = "parent") => ({
-  title: "Version method",
+  title: "Version playbook",
   goal: "Preserve output",
   topics: [],
   applicability: "general",
@@ -34,29 +29,29 @@ const draft = (id = "parent") => ({
 });
 test("Split schema requires a coherent predecessor and applies graph constraints to every child", () => {
   const output = {
-    workCase: null,
+    workView: null,
     experiences: [],
-    method: null,
-    splitMethods: [draft(), draft()],
+    playbook: null,
+    splitPlaybooks: [draft(), draft()],
     decisions: [],
   };
   assert.equal(learningOutputSchema.safeParse(output).success, true);
   assert.equal(
     learningOutputSchema.safeParse({
       ...output,
-      splitMethods: [draft(), draft("different")],
+      splitPlaybooks: [draft(), draft("different")],
     }).success,
     false,
   );
   assert.equal(
-    learningOutputSchema.safeParse({ ...output, method: draft() }).success,
+    learningOutputSchema.safeParse({ ...output, playbook: draft() }).success,
     false,
   );
   assert.equal(
     learningOutputSchema.safeParse({
       ...output,
-      splitMethods: undefined,
-      method: draft(),
+      splitPlaybooks: undefined,
+      playbook: draft(),
     }).success,
     false,
   );
@@ -79,29 +74,21 @@ test("Split schema requires a coherent predecessor and applies graph constraints
       true,
     );
   }
-  assert.equal(
-    (legacyOutputJsonSchema as any).properties.splitMethods,
-    undefined,
-  );
-  assert.equal(
-    (legacyAssessmentJsonSchema as any).properties.acceptedMethodIndexes,
-    undefined,
-  );
+
   assert.ok(
-    (learningAssessmentJsonSchema as any).properties.acceptedMethodIndexes,
+    (learningAssessmentJsonSchema as any).properties.acceptedPlaybookIndexes,
   );
 });
 test("Plan and support comparisons preserve meaningful whitespace and include global evidence", () => {
   const { experienceIndexes, replaces, changeKind, changeSummary, ...body } =
     draft();
-  const m = methodSchema.parse({
+  const m = playbookSchema.parse({
     ...identity("fixture"),
     ...body,
     supportRefs: [{ kind: "experience", id: "support-a", revision: 1 }],
     change: {
       kind: "create",
       summary: "Initial",
-      caseRefs: [],
       predecessors: [],
     },
   });
@@ -111,20 +98,20 @@ test("Plan and support comparisons preserve meaningful whitespace and include gl
     steps: [{ ...m.steps[0]!, stepId: "renamed" }],
     completionChecks: [{ text: "Output matches", stepIds: ["renamed"] }],
   };
-  assert.equal(methodPlanKey(m), methodPlanKey(renumbered));
+  assert.equal(playbookPlanKey(m), playbookPlanKey(renumbered));
   assert.notEqual(
-    methodPlanKey({
+    playbookPlanKey({
       ...m,
       steps: [{ ...m.steps[0]!, instruction: 'Write "a  b"' }],
     }),
-    methodPlanKey({
+    playbookPlanKey({
       ...m,
       steps: [{ ...m.steps[0]!, instruction: 'Write "a b"' }],
     }),
   );
   assert.notEqual(
-    methodSupportKey(m),
-    methodSupportKey({
+    playbookSupportKey(m),
+    playbookSupportKey({
       ...m,
       supportRefs: [
         ...m.supportRefs,
@@ -149,36 +136,16 @@ test("Executable path audit exposes branch fallthrough instead of trusting prose
     { stepId: "s3", instruction: "Version 2 check", supportIndexes: [0] },
     { stepId: "s4", instruction: "Version 1 action", supportIndexes: [0] },
   ];
-  const before = methodPaths({ steps });
+  const before = playbookPaths({ steps });
   assert.deepEqual(before.paths[0]!.steps, ["s1", "s2", "s3", "s4"]);
   const fixed = steps.map((s) =>
     s.stepId === "s3"
       ? { ...s, choices: [{ when: { text: "Version 2" }, next: "stop" }] }
       : s,
   );
-  assert.deepEqual(methodPaths({ steps: fixed }).paths[0]!.steps, [
+  assert.deepEqual(playbookPaths({ steps: fixed }).paths[0]!.steps, [
     "s1",
     "s2",
     "s3",
   ]);
-});
-
-test("Frozen early methods-2 verdicts recover without inventing evidence-change approval", () => {
-  const verdict = {
-    acceptedExperienceIndexes: [],
-    methodSupported: true,
-    substantiveChange: true,
-    acceptedMethodIndexes: [0],
-    splitCoherent: true,
-    reasons: [],
-  };
-  const legacy = structuredClone(learningAssessmentJsonSchema) as any;
-  delete legacy.properties.supportedEvidenceChange;
-  assert.equal(
-    parseLearningAssessment(verdict, legacy).supportedEvidenceChange,
-    false,
-  );
-  assert.throws(() =>
-    parseLearningAssessment(verdict, learningAssessmentJsonSchema),
-  );
 });

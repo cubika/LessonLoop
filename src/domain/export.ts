@@ -1,8 +1,8 @@
-import type { Method } from "./schema.js";
+import type { Playbook } from "./schema.js";
 import type { Experience } from "./experience.js";
 
-export function exportMethod(
-  method: Method,
+export function exportPlaybook(
+  playbook: Playbook,
   support: Experience[],
   format: "markdown" | "checklist" | "skill",
   includeEvidence = false,
@@ -10,17 +10,17 @@ export function exportMethod(
   const line = (value: string) => value.replaceAll("\r", "");
   const sections: string[] = [];
   if (format === "skill") {
-    const name = `playbook-${method.id}`;
+    const name = `playbook-${playbook.id}`;
     sections.push(`---
 name: ${name}
-description: ${JSON.stringify(method.goal)}
+description: ${JSON.stringify(playbook.goal)}
 ---`);
   }
   sections.push(
-    `# ${line(method.title)}`,
-    `Playbook ${method.id} · revision ${method.revision} · ${method.state}`,
+    `# ${line(playbook.title)}`,
+    `Playbook ${playbook.id} · revision ${playbook.revision} · ${playbook.state}`,
     `Exported ${new Date().toISOString()}. This is an independent snapshot. Check the current revision in LessonLoop before use. Source changes and deletion do not update this file.`,
-    line(method.goal),
+    line(playbook.goal),
   );
   const list = (title: string, values: string[]) => {
     if (values.length)
@@ -31,39 +31,39 @@ description: ${JSON.stringify(method.goal)}
   };
   list(
     "Conditions",
-    method.conditions.map((c) => c.text),
+    playbook.conditions.map((c) => c.text),
   );
   list(
     "Exceptions",
-    method.exceptions.map((c) => c.text),
+    playbook.exceptions.map((c) => c.text),
   );
-  if (method.validFrom || method.validUntil)
+  if (playbook.validFrom || playbook.validUntil)
     sections.push(
-      `Validity: ${method.validFrom ?? "unbounded"} → ${method.validUntil ?? "unbounded"}`,
+      `Validity: ${playbook.validFrom ?? "unbounded"} → ${playbook.validUntil ?? "unbounded"}`,
     );
   sections.push(
     "## Steps",
-    method.steps
+    playbook.steps
       .map(
         (s, i) =>
           `${format === "checklist" ? "- [ ]" : `${i + 1}.`} [${s.stepId}] ${line(s.instruction)}${s.rationale ? `\n   Reason: ${line(s.rationale)}` : ""}${s.choices ? "\n" + s.choices.map((c) => `   - After this step: ${line(c.when.text)} → ${c.next}`).join("\n") : ""}`,
       )
       .join("\n\n"),
   );
-  const checks = (values: Method["completionChecks"]) =>
+  const checks = (values: Playbook["completionChecks"]) =>
     values.map(
       (c) =>
         `${c.text}${c.stepIds ? ` (steps: ${c.stepIds.join(", ")})` : " (global)"}`,
     );
-  list("Completion checks", checks(method.completionChecks));
-  list("Stop conditions", checks(method.stopConditions));
+  list("Completion checks", checks(playbook.completionChecks));
+  list("Stop conditions", checks(playbook.stopConditions));
   sections.push(
     "## Execution boundary",
-    "Use only the determined path. Unknown, conflicting or unmatched choices require observations before continuing. Completing a diagnostic prefix does not prove the entire method succeeded. This snapshot grants no permission to execute commands or access data.",
+    "Use only the determined path. Unknown, conflicting or unmatched choices require observations before continuing. Completing a diagnostic prefix does not prove the entire playbook succeeded. This snapshot grants no permission to execute commands or access data.",
   );
   list(
     "Support",
-    method.supportRefs.map((r) => {
+    playbook.supportRefs.map((r) => {
       const e = support.find((e) => e.id === r.id && e.revision === r.revision);
       return `${r.id}@${r.revision}${e ? ` — ${e.level}, ${e.assessment}: ${e.conclusion}` : " — source revision unavailable"}`;
     }),
@@ -78,6 +78,6 @@ description: ${JSON.stringify(method.goal)}
         ),
       ),
     );
-  sections.push("## Change", line(method.change.summary));
+  sections.push("## Change", line(playbook.change.summary));
   return sections.join("\n\n") + "\n";
 }

@@ -1,4 +1,4 @@
-import { digest, type Method } from "../domain/schema.js";
+import { digest, type Playbook } from "../domain/schema.js";
 
 const fields = [
   "title",
@@ -10,33 +10,33 @@ const fields = [
   "completionChecks",
   "stopConditions",
 ] as const;
-export type MethodContent = Pick<Method, (typeof fields)[number]>;
-export type MethodRecord = Omit<Method, keyof MethodContent> & {
+export type PlaybookContent = Pick<Playbook, (typeof fields)[number]>;
+export type PlaybookRecord = Omit<Playbook, keyof PlaybookContent> & {
   contentHash: string;
   planHash: string;
 };
-export interface MethodWrite {
+export interface PlaybookWrite {
   token: string;
   id: string;
   scopeId: string;
   revision: number;
   hash: string;
-  previousSupport?: Method["supportRefs"];
-  content?: MethodContent;
+  previousSupport?: Playbook["supportRefs"];
+  content?: PlaybookContent;
 }
-export interface MethodContentStore {
-  readMethodContent(
+export interface PlaybookContentStore {
+  readPlaybookContent(
     scopeId: string,
     id: string,
     hash: string,
-  ): Promise<MethodContent>;
-  writeMethodContent(write: MethodWrite): Promise<void>;
+  ): Promise<PlaybookContent>;
+  writePlaybookContent(write: PlaybookWrite): Promise<void>;
 }
-export function splitMethod(method: Method) {
-  const record = { ...method } as Record<string, unknown>;
+export function splitPlaybook(playbook: Playbook) {
+  const record = { ...playbook } as Record<string, unknown>;
   const content = Object.fromEntries(
     fields.map((key) => [key, record[key]]),
-  ) as MethodContent;
+  ) as PlaybookContent;
   for (const key of fields) delete record[key];
   return {
     content,
@@ -44,11 +44,11 @@ export function splitMethod(method: Method) {
       ...record,
       contentHash: digest(content),
       planHash: digest({
-        goal: method.goal,
-        steps: method.steps,
-        conditions: method.conditions,
-        exceptions: method.exceptions,
+        goal: playbook.goal,
+        steps: playbook.steps,
+        conditions: playbook.conditions,
+        exceptions: playbook.exceptions,
       }),
-    } as MethodRecord,
+    } as PlaybookRecord,
   };
 }

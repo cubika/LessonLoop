@@ -1,3 +1,4 @@
+import { workViewSchema } from "../src/core/work-view.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -5,11 +6,7 @@ import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/method-engine.js";
 import { dispatch } from "../src/core/server.js";
-import {
-  identity,
-  workCaseSchema,
-  methodSchema,
-} from "../src/domain/schema.js";
+import { identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
@@ -54,7 +51,7 @@ test("Public resources preserve source identity, work provenance and playbook fe
       scopeId,
       context: {
         taskRef: task.taskRef,
-        method: "literal",
+        playbook: "literal",
         playbookId: "literal",
       },
       segments: [
@@ -66,6 +63,38 @@ test("Public resources preserve source identity, work provenance and playbook fe
     const receipt = await call("submitSource", submitted, host, key);
     assert.equal(receipt.sources.length, 2);
     assert.equal(receipt.materialId, undefined);
+    await store.transaction(async (tx) => {
+      assert.equal((await tx.list("material", [scopeId])).length, 0);
+      const job = await tx.get<any>("job", receipt.jobId);
+      assert.deepEqual(
+        job.sourceIds,
+        receipt.sources.map((s: any) => s.id),
+      );
+      await tx.put(
+        {
+          kind: "job",
+          id: job.id,
+          scopeId,
+          revision: job.revision + 1,
+          value: { ...job, revision: job.revision + 1, status: "failed" },
+        },
+        job.revision,
+      );
+    });
+    const retry = await core.retryJob(
+      user,
+      receipt.jobId,
+      "retry-all-segments",
+    );
+    const retryJob = await store.transaction((tx) =>
+      tx.get<any>("job", retry.jobId),
+    );
+    assert.equal(retryJob.stage, "queued");
+    assert.deepEqual(
+      retryJob.sourceIds,
+      receipt.sources.map((s: any) => s.id),
+    );
+    await core.cancelJob(user, retry.jobId);
     const sources = await call("listSources");
     assert.deepEqual(
       new Set(sources.map((s: any) => s.id)),
@@ -82,10 +111,10 @@ test("Public resources preserve source identity, work provenance and playbook fe
       (await call("submitSource", submitted, host, key)).sources,
       receipt.sources,
     );
-    const material = (
-      await core.store.transaction((tx) => tx.list<any>("material", [scopeId]))
+    const inputSource = (
+      await core.store.transaction((tx) => tx.list<any>("source", [scopeId]))
     )[0];
-    assert.deepEqual(material.context, submitted.context);
+    assert.deepEqual(inputSource.context, submitted.context);
     await assert.rejects(
       call(
         "submitSource",
@@ -125,10 +154,11 @@ test("Public resources preserve source identity, work provenance and playbook fe
       sourceFingerprints: [source.id],
       state: "active",
     });
-    const work = workCaseSchema.parse({
+    const work = workViewSchema.parse({
+      sequence: 1,
       ...identity(scopeId),
       taskRef: task.taskRef,
-      sourceFamily: material.sourceFamily,
+      sourceFamily: inputSource.sourceFamily,
       topic: "Generation",
       goal: "Preserve output",
       context: {},
@@ -141,9 +171,9 @@ test("Public resources preserve source identity, work provenance and playbook fe
       evidence: [evidence],
       unresolved: [],
       coverage: [],
-      methodUses: [],
+      playbookUses: [],
     });
-    const method = methodSchema.parse({
+    const playbook = playbookSchema.parse({
       ...identity(scopeId),
       title: "Check generation",
       goal: "Verify output",
@@ -165,25 +195,27 @@ test("Public resources preserve source identity, work provenance and playbook fe
       change: {
         kind: "create",
         summary: "Observed generation",
-        caseRefs: [{ kind: "work_case", id: work.id, revision: 1 }],
         predecessors: [],
       },
     });
     await put("experience", experience);
-    await put("work_case", work);
-    await put("method", method);
-    for (const object of [experience, method])
+    await put("work_view", work);
+    await put("playbook", playbook);
+    for (const object of [experience, playbook])
       await put("projection", {
         ...identity(scopeId),
         id: object.id,
         objectRevision: 1,
         confirmed: true,
-        objectKind: object === method ? "method" : "experience",
+        objectKind: object === playbook ? "playbook" : "experience",
       });
     await core.syncProjections([scopeId]);
-    const detail = await call("inspectPlaybook", { id: method.id });
+    const detail = await call("inspectPlaybook", { id: playbook.id });
     assert.equal(detail.change.caseRefs, undefined);
-    const view = await call("getWorkView", { kind: "playbook", id: method.id });
+    const view = await call("getWorkView", {
+      kind: "playbook",
+      id: playbook.id,
+    });
     assert.equal(view.items[0].id, undefined);
     assert.equal(view.items[0].taskRef, task.taskRef);
     assert.ok(view.items[0].sources.some((s: any) => s.id === source.id));
@@ -197,11 +229,11 @@ test("Public resources preserve source identity, work provenance and playbook fe
     )!;
     const appended = (await core.inspect(
       user,
-      "material",
-      appendSource.materialId,
+      "source",
+      appendSource.id,
     )) as any;
     assert.equal(appended.taskRef, task.taskRef);
-    assert.equal(appended.caseFor.id, work.id);
+    assert.equal(appended.sourceFamily, source.sourceFamily);
     assert.equal(
       (await call("getJob", { id: append.jobId })).caseTarget,
       undefined,
@@ -211,13 +243,13 @@ test("Public resources preserve source identity, work provenance and playbook fe
     assert.equal(canceled.modelSchema, undefined);
     const prepared = await call(
       "preparePlaybook",
-      { playbookId: method.id, revision: 1, taskRef: task.taskRef },
+      { playbookId: playbook.id, revision: 1, taskRef: task.taskRef },
       host,
     );
     assert.equal(prepared.status, "guidance");
     assert.equal(prepared.playbook.kind, "playbook");
     assert.equal(prepared.method, undefined);
-    assert.deepEqual(prepared.completionChecks, method.completionChecks);
+    assert.deepEqual(prepared.completionChecks, playbook.completionChecks);
     const events = await call(
       "recordTaskObservation",
       [
@@ -241,11 +273,12 @@ test("Public resources preserve source identity, work provenance and playbook fe
       rating: "helpful",
     });
     assert.equal(
-      (await call("getUsageView", { playbookId: method.id }))[0].classification,
+      (await call("getUsageView", { playbookId: playbook.id }))[0]
+        .classification,
       "user_confirmed_helpful",
     );
     const revision = await call("revisePlaybook", {
-      id: method.id,
+      id: playbook.id,
       expectedRevision: 1,
       body: {
         change: {
@@ -256,10 +289,7 @@ test("Public resources preserve source identity, work provenance and playbook fe
       },
     });
     assert.equal(revision.target.kind, "playbook");
-    assert.deepEqual(
-      ((await core.inspect(user, "method", method.id)) as any).change.caseRefs,
-      method.change.caseRefs,
-    );
+
     await call("controlSource", {
       id: source.id,
       expectedRevision: 1,
@@ -288,8 +318,8 @@ test("Public resources preserve source identity, work provenance and playbook fe
     for (const old of [
       "submitMaterial",
       "submitWorkCase",
-      "browseWorkCases",
-      "inspectWorkCase",
+      "browseWorkViews",
+      "inspectWorkView",
       "listEffectCases",
       "prepareMethod",
     ])

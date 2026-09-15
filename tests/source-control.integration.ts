@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/method-engine.js";
-import { identity, methodSchema } from "../src/domain/schema.js";
+import { identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 import { dispatch } from "../src/core/server.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
@@ -27,18 +27,18 @@ test("Source withdrawal suppresses affected input without canceling unrelated jo
       review: false,
       notifications: false,
     });
-    const a = await core.submitMaterial(
+    const a = await core.submitSource(
       p,
       { scopeId: scope, segments: [{ text: "source A", role: "user" }] },
       "a",
     );
-    const b = await core.submitMaterial(
+    const b = await core.submitSource(
       p,
       { scopeId: scope, segments: [{ text: "source B", role: "user" }] },
       "b",
     );
     const sources = await core.listSources(p);
-    const source = sources.find((s) => s.materialId === a.materialId)!;
+    const source = sources.find((s) => s.id === a.sources[0]!.id)!;
     const receipt = await core.controlSource(p, {
       id: source.id,
       expectedRevision: 1,
@@ -54,7 +54,7 @@ test("Source withdrawal suppresses affected input without canceling unrelated jo
     )) as unknown as { status: string; copyManifest: { documents: unknown[] } };
     assert.equal(cleanup.status, "suppressed");
     assert.equal(cleanup.copyManifest.documents.length, 1);
-    await core.submitMaterial(
+    await core.submitSource(
       p,
       { scopeId: scope, segments: [{ text: "source C", role: "user" }] },
       "c",
@@ -133,7 +133,7 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       context: { taskRef: task.taskRef },
       segments: [{ text: sensitive, role: "tool" }],
     };
-    const accepted = await core.submitMaterial(host, input, "a");
+    const accepted = await core.submitSource(host, input, "a");
     const source = (await core.listSources(owner))[0]!;
     const experience = experienceSchema.parse({
       ...identity(scope),
@@ -159,7 +159,7 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       sourceFingerprints: [source.id],
       state: "active",
     });
-    const method = methodSchema.parse({
+    const playbook = playbookSchema.parse({
       ...identity(scope),
       title: sensitive,
       goal: "Use evidence",
@@ -175,14 +175,13 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       change: {
         kind: "create",
         summary: "Fixture",
-        caseRefs: [],
         predecessors: [],
       },
     });
-    const currentMethod = {
-      ...method,
+    const currentPlaybook = {
+      ...playbook,
       revision: 2,
-      title: "Independent method B",
+      title: "Independent playbook B",
       steps: [{ stepId: "s1", instruction: "Use B", supportIndexes: [0] }],
       supportRefs: [
         { kind: "experience" as const, id: "independent-b", revision: 1 },
@@ -191,12 +190,12 @@ test("Erasure resumes after native and projection failures, scrubs transient and
     await store.transaction(async (tx) => {
       for (const [kind, value] of [
         ["experience", experience],
-        ["method", method],
+        ["playbook", playbook],
       ] as const) {
         const row = put(kind, value);
         await tx.put(row.entry, null);
       }
-      await tx.put(put("method", currentMethod).entry, 1);
+      await tx.put(put("playbook", currentPlaybook).entry, 1);
       // Deleting the experience first must not discard the source binding.
       const job = await tx.get<any>("job", accepted.jobId);
       await tx.put(
@@ -228,7 +227,7 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       "uncertain",
     );
     await assert.rejects(
-      core.submitMaterial(
+      core.submitSource(
         host,
         { scopeId: scope, segments: [{ text: "other", role: "tool" }] },
         "blocked",
@@ -255,13 +254,17 @@ test("Erasure resumes after native and projection failures, scrubs transient and
         .status,
       "completed",
     );
+    assert.deepEqual(
+      await store.transaction((tx) => tx.list("playbook_use", [scope])),
+      [],
+    );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
     assert.equal(
-      ((await core.inspect(owner, "method", method.id)) as any).title,
-      "Independent method B",
+      ((await core.inspect(owner, "playbook", playbook.id)) as any).title,
+      "Independent playbook B",
     );
     for (const [kind, id] of [
-      ["material", accepted.materialId],
+      ["source", accepted.sources[0]!.id],
       ["task", task.taskRef],
     ])
       assert.equal(
@@ -280,15 +283,15 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       /observation_erased/,
     );
     await assert.rejects(
-      core.submitMaterial(host, input, "a"),
+      core.submitSource(host, input, "a"),
       /source_erased_from_task/,
     );
-    await core.submitMaterial(
+    await core.submitSource(
       host,
       {
         scopeId: scope,
         segments: [
-          { text: "Unrelated material remains accepted", role: "tool" },
+          { text: "Unrelated inputSource remains accepted", role: "tool" },
         ],
       },
       "after",
@@ -303,52 +306,6 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       ),
       /user_operation_required/,
     );
-  } finally {
-    await store.close();
-  }
-});
-test("Legacy material-only jobs prevent false erasure completion", async () => {
-  const store = new ProductStore(url!);
-  await store.open(true);
-  try {
-    const scope = randomUUID(),
-      p = { id: randomUUID(), channel: "user" as const, scopes: [scope] };
-    const core = new CoreService(store, new CleanupEngine());
-    await core.configure(p, {
-      scopeId: scope,
-      expectedRevision: 0,
-      learning: true,
-      recommendation: false,
-      review: false,
-      notifications: false,
-    });
-    const accepted = await core.submitMaterial(
-      p,
-      { scopeId: scope, segments: [{ text: "Legacy fixture", role: "user" }] },
-      "legacy",
-    );
-    await store.transaction(async (tx) => {
-      const job = await tx.get<any>("job", accepted.jobId);
-      const next = { ...job, revision: job.revision + 1, status: "completed" };
-      delete next.sourceRefs;
-      delete next.nativeIsolation;
-      await tx.put(put("job", next).entry, job.revision);
-    });
-    const source = (await core.listSources(p))[0]!;
-    const receipt = await core.controlSource(p, {
-      id: source.id,
-      expectedRevision: 1,
-      action: "erase",
-    });
-    await core.processSourceCleanups([scope]);
-    const cleanup = (await core.inspect(
-      p,
-      "source_cleanup",
-      receipt.cleanupId,
-    )) as any;
-    assert.equal(cleanup.status, "pending");
-    assert.equal(cleanup.lastError, "legacy_native_cleanup_requires_migration");
-    assert.equal((await core.listSources(p))[0]!.erased, false);
   } finally {
     await store.close();
   }

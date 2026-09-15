@@ -26,7 +26,7 @@ async function fixture(t: test.TestContext) {
     recommendation: true,
     review: true,
   };
-  const method = { kind: "playbook", id: "playbook", revision: 1 };
+  const playbook = { kind: "playbook", id: "playbook", revision: 1 };
   let tasks = 0;
   let fail: string | undefined;
   const rpc = async (operation: string, input: any, key: string) => {
@@ -38,11 +38,11 @@ async function fixture(t: test.TestContext) {
     if (operation === "settings.get") return [settings];
     if (operation === "startTask") return { taskRef: `task-${++tasks}` };
     if (operation === "searchPlaybooks")
-      return { results: [{ playbook: method }] };
+      return { results: [{ playbook: playbook }] };
     if (operation === "preparePlaybook")
       return {
         status: "guidance",
-        playbook: method,
+        playbook: playbook,
         playbookUseRef: "use-" + input.taskRef,
         conditions: [{ text: "Read the input schema" }],
         steps: [
@@ -107,7 +107,7 @@ async function fixture(t: test.TestContext) {
   };
 }
 
-test("Copilot transcript capture preserves roles, strips injected methods and confirms delivery from host receipts", async (t) => {
+test("Copilot transcript capture preserves roles, strips injected playbooks and confirms delivery from host receipts", async (t) => {
   const f = await fixture(t);
   const prompt = "Check the generated client";
   const output = await f.hook("userPromptTransformed", 1, { prompt });
@@ -162,16 +162,16 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
   );
   await f.hook("agentStop", 9);
   await f.hook("sessionEnd", 10, { reason: "complete" });
-  const materials = f.calls
+  const inputSources = f.calls
     .filter((c) => c.operation === "submitSource")
     .flatMap((c) => c.input.segments);
   assert.deepEqual(
-    materials.map((s) => s.role),
+    inputSources.map((s) => s.role),
     ["user", "agent", "tool", "agent"],
   );
-  assert.equal(materials.filter((s) => s.text === prompt).length, 1);
+  assert.equal(inputSources.filter((s) => s.text === prompt).length, 1);
   assert.equal(
-    materials.some((s) => s.text.includes("injected")),
+    inputSources.some((s) => s.text.includes("injected")),
     false,
   );
   assert.equal(
@@ -183,7 +183,10 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
     .flatMap((c) => c.input);
   assert.equal(effects.filter((e) => e.kind === "delivery").length, 1);
   assert.equal(effects.filter((e) => e.kind === "usage").length, 0);
-  assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "unknown");
+  assert.equal(
+    effects.some((e) => e.kind === "outcome"),
+    false,
+  );
   assert.equal(
     effects.some((e) => e.outcome === "succeeded"),
     false,
@@ -227,7 +230,7 @@ test("active clarification and explicit continuation reuse the task; completed t
   assert.equal(new Set(taskKeys).size, 3);
 });
 
-test("session end retries after interruption and late transcript material stays with the closed task", async (t) => {
+test("session end retries after interruption and late transcript inputSource stays with the closed task", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "First task" });
   f.failOnce("observeTask");
@@ -251,8 +254,15 @@ test("session end retries after interruption and late transcript material stays 
     (c) =>
       c.operation === "recordTaskObservation" && c.input[0].kind === "outcome",
   );
-  assert.equal(outcomes.length, 1);
-  assert.equal(outcomes[0]?.input[0].outcome, "failed");
+  assert.equal(outcomes.length, 0);
+  assert.equal(
+    f.calls.filter(
+      (c) =>
+        c.operation === "recordTaskObservation" &&
+        c.input[0].kind === "task_ended",
+    ).length,
+    1,
+  );
 });
 
 test("an interrupted preparation retries the same prompt instead of caching an empty result", async (t) => {
@@ -364,10 +374,13 @@ test("unacknowledged injection is never counted as delivery, and completed promp
     effects.some((e) => e.kind === "delivery"),
     false,
   );
-  assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "abandoned");
+  assert.equal(
+    effects.some((e) => e.kind === "outcome"),
+    false,
+  );
 });
 
-test("disabled learning does not ingest transcript material and disallowed workspaces make no API call", async (t) => {
+test("disabled learning does not ingest transcript inputSource and disallowed workspaces make no API call", async (t) => {
   const f = await fixture(t);
   f.settings.learning = false;
   f.settings.recommendation = false;
@@ -401,7 +414,7 @@ test("disabled learning does not ingest transcript material and disallowed works
   assert.equal(called, false);
 });
 
-test("session closure records outcomes without an observation assessment", async (t) => {
+test("session closure leaves the result unknown and preserves raw evidence", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.hook("postToolUse", 2, {
@@ -473,7 +486,9 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
       if (operation === "searchPlaybooks")
         return {
           results: [
-            { playbook: { kind: "playbook", id: "large-method", revision: 1 } },
+            {
+              playbook: { kind: "playbook", id: "large-playbook", revision: 1 },
+            },
           ],
         };
       if (operation === "preparePlaybook")
@@ -489,8 +504,9 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
     },
   );
   const text = String(result.modifiedTransformedPrompt);
-  assert.ok(text.includes("large-task") && text.includes("large-method"));
+  assert.ok(text.includes("large-task") && text.includes("large-playbook"));
   assert.ok(text.includes("viewMode=expanded"));
+  assert.ok(text.includes("getGuidance") && text.includes("target: playbook"));
   assert.equal(text.includes("playbookUseRef"), false);
 });
 
@@ -511,13 +527,13 @@ test("Copilot sessionStart following the first prompt does not close the newly b
   );
 });
 
-test("a method MCP response is not execution evidence and does not change the task boundary", async (t) => {
+test("a guidance MCP response is not execution evidence and does not change the task boundary", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.append(
     f.record(2, "tool.execution_start", {
       toolCallId: "prepare",
-      toolName: "lessonloop-preparePlaybook",
+      toolName: "lessonloop-getGuidance",
     }),
     f.record(3, "tool.execution_complete", {
       toolCallId: "prepare",

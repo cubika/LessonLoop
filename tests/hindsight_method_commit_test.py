@@ -23,24 +23,24 @@ from hindsight_api import MemoryEngine
 from hindsight_api.models import RequestContext
 from hindsight_api.extensions.operation_validator import OperationValidationError
 from hindsight_api.api.http import create_app
-from hindsight_methods import MethodGuard, bank_for
+from hindsight_methods import PlaybookGuard, bank_for
 from hindsight_product import LessonLoopProduct
 
 async def main():
-    engine = MemoryEngine(operation_validator=MethodGuard({}))
+    engine = MemoryEngine(operation_validator=PlaybookGuard({}))
     db = await asyncpg.connect(url)
     key = 'test-only-' + 'a' * 40
     scope, identifier, support_id = str(uuid4()), str(uuid4()), str(uuid4())
     bank = bank_for(scope, identifier)
     ctx = RequestContext()
-    content = {'title': 'Checked method', 'goal': 'Preserve generated changes', 'topics': [],
+    content = {'title': 'Checked playbook', 'goal': 'Preserve generated changes', 'topics': [],
                'conditions': [], 'exceptions': [], 'steps': [{'stepId': 's1', 'instruction': 'Edit template', 'supportIndexes': [0]}],
                'completionChecks': [{'text': 'Regenerate and check'}], 'stopConditions': []}
     async def put(kind, id, value):
         await db.execute("INSERT INTO lessonloop.objects VALUES($1,$2,$3,$4,$5) ON CONFLICT(kind,id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value", kind,id,scope,value['revision'],json.dumps(value))
     async def stage(revision, body):
         token = str(uuid4())
-        await put('method_write', identifier, {'id':identifier,'scopeId':scope,'revision':revision,'token':token,'hash':'b'*64,**({'content':body} if body else {})})
+        await put('playbook_write', identifier, {'id':identifier,'scopeId':scope,'revision':revision,'token':token,'hash':'b'*64,**({'content':body} if body else {})})
         return token
     checks = []
     app = None
@@ -48,11 +48,11 @@ async def main():
         await engine.initialize()
         await db.execute('CREATE SCHEMA lessonloop; CREATE TABLE lessonloop.objects(kind text,id text,scope_id text,revision bigint,value jsonb,PRIMARY KEY(kind,id))')
         await put('experience', support_id, {'id':support_id,'scopeId':scope,'revision':1,'state':'active','sourceFingerprints':['source-a'],'derivedFrom':[]})
-        await put('method', identifier, {'id':identifier,'scopeId':scope,'revision':1,'state':'active','contentHash':'b'*64,'supportRefs':[{'id':support_id,'revision':1}]})
+        await put('playbook', identifier, {'id':identifier,'scopeId':scope,'revision':1,'state':'active','contentHash':'b'*64,'supportRefs':[{'id':support_id,'revision':1}]})
         app = create_app(engine, initialize_memory=False, http_extension=LessonLoopProduct({'product_key':key}))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test',headers={'Authorization':'Bearer '+key}) as client:
             async def commit(token):
-                return await client.post('/ext/lessonloop/commit-method',json={'id':identifier,'token':token})
+                return await client.post('/ext/lessonloop/commit-playbook',json={'id':identifier,'token':token})
             token = await stage(1, content)
             response = await commit(token)
             assert response.status_code == 200, response.text
@@ -78,8 +78,8 @@ async def main():
             assert (await commit(token)).status_code == 409
             assert (await commit(token2)).status_code == 409
             checks.append('old token rejected after ABA; content mismatch detected')
-            await put('method_write', identifier, {'id':identifier,'scopeId':scope,'revision':2,'token':token2,'hash':'c'*64,'content':next_content})
-            await put('method', identifier, {'id':identifier,'scopeId':scope,'revision':2,'state':'active','contentHash':'c'*64,'supportRefs':[{'id':support_id,'revision':1}]})
+            await put('playbook_write', identifier, {'id':identifier,'scopeId':scope,'revision':2,'token':token2,'hash':'c'*64,'content':next_content})
+            await put('playbook', identifier, {'id':identifier,'scopeId':scope,'revision':2,'state':'active','contentHash':'c'*64,'supportRefs':[{'id':support_id,'revision':1}]})
             await put('source', 'source-a', {'revision':1,'blocked':True})
             assert (await commit(token2)).status_code == 409
             assert (await engine.get_mental_model(bank,'current',request_context=ctx))['reflect_response']['structured_output'] == content
@@ -115,7 +115,7 @@ async def main():
             await db.execute('COMMIT')
             assert (await pending).status_code == 409
             checks.append('product lock serializes control and commit')
-            await db.execute("DELETE FROM lessonloop.objects WHERE kind='method' AND id=$1",identifier)
+            await db.execute("DELETE FROM lessonloop.objects WHERE kind='playbook' AND id=$1",identifier)
             delete_token = await stage(3,None)
             assert (await commit(delete_token)).status_code == 200
             assert await db.fetchval('SELECT count(*) FROM hindsight.mental_models WHERE bank_id=$1',bank) == 0
@@ -125,9 +125,9 @@ async def main():
             job_bank = 'lessonloop-job-' + job_id
             await engine.create_mental_model(job_bank, 'Transient candidate', 'Synthetic query', 'Temporary draft', mental_model_id='job-'+job_id, request_context=ctx)
             await put('job', job_id, {'id':job_id,'scopeId':scope,'revision':1,'status':'running','nativeIsolation':'job'})
-            assert (await client.post('/ext/lessonloop/clear-method-candidates',json={'id':job_id,'kind':'job'})).status_code == 409
+            assert (await client.post('/ext/lessonloop/clear-playbook-candidates',json={'id':job_id,'kind':'job'})).status_code == 409
             await put('job', job_id, {'id':job_id,'scopeId':scope,'revision':2,'status':'completed','nativeIsolation':'job'})
-            assert (await client.post('/ext/lessonloop/clear-method-candidates',json={'id':job_id,'kind':'job'})).status_code == 200
+            assert (await client.post('/ext/lessonloop/clear-playbook-candidates',json={'id':job_id,'kind':'job'})).status_code == 200
             assert await engine.get_mental_model(job_bank,'job-'+job_id,request_context=ctx) is None
             checks.append('terminal candidate models are removed; running candidates retained')
         print(json.dumps({'status':'passed','checks':checks,'llmCalls':0}))

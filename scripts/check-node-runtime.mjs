@@ -73,17 +73,24 @@ try {
   await client.connect(transport, { timeout: 15000 });
   transport.stderr?.resume();
   const tools = await client.listTools();
-  assert.ok(tools.tools.some((tool) => tool.name === "searchPlaybooks"));
+  assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
+    "feedback",
+    "getGuidance",
+    "submitSource",
+  ]);
   const result = await client.callTool({
-    name: "searchPlaybooks",
-    arguments: { input: {} },
+    name: "getGuidance",
+    arguments: { input: { query: "generated client" } },
   });
   assert.equal(result.isError, false);
   assert.equal(JSON.parse(result.content[0].text).result.status, "ok");
   assert.equal(requests.length, 2);
+  assert.deepEqual(
+    requests.map((request) => request.body.operation),
+    ["searchPlaybooks", "getGuidance"],
+  );
   for (const request of requests) {
     assert.equal(request.headers.authorization, "Bearer " + token);
-    assert.equal(request.body.operation, "searchPlaybooks");
     assert.match(request.headers["idempotency-key"], /^[0-9a-f-]{36}$/);
   }
   console.log(

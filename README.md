@@ -6,11 +6,15 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 
 产品仍在开发，没有需要迁移的旧用户数据，首版从当前数据格式初始化。Copilot 接入优先复用官方采集、回填和诊断模块；方法库负责查看、管理和关联任务，实际多轮工作由 Copilot 执行。
 
-对外内容资源为 Source、Experience、Playbook。CLI 使用 source、experience、playbook 命令组；来源提交返回片段引用，后续结果通过 sourceFor 关联。工作记录与效果回顾按需展开。公共 RPC 已移除 Material/Method 旧命名及独立案例入口，详见[接口合同](docs/04-contracts-and-extensions.md)。
+对外内容资源为 Source、Experience、Playbook。CLI 使用 source、experience、playbook 命令组；来源提交返回片段引用，后续结果通过 sourceFor 关联。工作记录与效果回顾按需展开。公共 RPC 已移除 Source/Method 旧命名及独立案例入口，详见[接口合同](docs/04-contracts-and-extensions.md)。
 
 实现以官方Hindsight自托管和可复用Agent模块为起点。原生提取、归纳、综合和索引尽量直接复用，LessonLoop持有工作案例、产品经验、方法版本和用户控制。MemoryEngine保持可替换，首期只实现Hindsight；模型使用现有Copilot订阅，本地存储不代表推理离线。
 
+Agent MCP 提供 getGuidance、submitSource、feedback 三个工具，分别获取当前任务指导、提交学习材料和提供反馈。方法搜索、经验召回与任务关联由核心处理；详情检查、复盘和作业管理在 UI/CLI 中进行。
+
 ## 从哪里开始
+
+当前三对象定义及内部视图边界见[统一领域模型](docs/16-domain-model.md)。
 
 | 主题 | 文档 |
 |---|---|

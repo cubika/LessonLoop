@@ -4,10 +4,14 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/method-engine.js";
-import { identity, methodSchema, type Method } from "../src/domain/schema.js";
+import {
+  identity,
+  playbookSchema,
+  type Playbook,
+} from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
-import type { MethodWrite } from "../src/store/method-content.js";
-import { splitMethod } from "../src/store/method-content.js";
+import type { PlaybookWrite } from "../src/store/method-content.js";
+import { splitPlaybook } from "../src/store/method-content.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL!;
 const entry = (kind: string, value: any) => ({
   kind,
@@ -50,19 +54,19 @@ class Engine extends HindsightEngine {
       reflect_response: {
         structured_output: {
           acceptedExperienceIndexes: [],
-          methodSupported: this.supported,
+          playbookSupported: this.supported,
           reasons: ["Synthetic verdict"],
         },
       },
     };
   }
-  override async writeMethodContent(write: MethodWrite) {
-    await super.writeMethodContent(write);
+  override async writePlaybookContent(write: PlaybookWrite) {
+    await super.writePlaybookContent(write);
     if (this.failAfterWrite) throw new Error("lost reply after native write");
   }
-  override async readMethodContent(scope: string, id: string, hash: string) {
+  override async readPlaybookContent(scope: string, id: string, hash: string) {
     if (this.failRead) throw new Error("native offline");
-    return super.readMethodContent(scope, id, hash);
+    return super.readPlaybookContent(scope, id, hash);
   }
 }
 async function fixture() {
@@ -80,7 +84,7 @@ async function fixture() {
     review: false,
     notifications: false,
   });
-  const accepted = await core.submitMaterial(
+  const accepted = await core.submitSource(
     owner,
     {
       scopeId: scope,
@@ -115,9 +119,9 @@ async function fixture() {
     sourceFingerprints: [source.id],
     state: "active",
   });
-  const method = methodSchema.parse({
+  const playbook = playbookSchema.parse({
     ...identity(scope),
-    title: "Template method",
+    title: "Template playbook",
     goal: "Preserve changes",
     topics: [],
     applicability: "general",
@@ -133,14 +137,13 @@ async function fixture() {
     change: {
       kind: "create",
       summary: "Fixture",
-      caseRefs: [],
       predecessors: [],
     },
   });
   await store.transaction(async (tx) => {
     for (const [kind, value] of [
       ["experience", exp],
-      ["method", method],
+      ["playbook", playbook],
     ] as const) {
       await tx.put(entry(kind, value), null);
       await tx.put(
@@ -167,21 +170,21 @@ async function fixture() {
     );
   });
   await core.syncProjections([scope]);
-  return { store, scope, owner, engine, core, method, exp, source };
+  return { store, scope, owner, engine, core, playbook, exp, source };
 }
 test("Reviewed updates preserve the current body until accepted; product persistence contains metadata only", async () => {
   const f = await fixture();
   let closed = false;
   try {
     const task = await f.core.startTask(f.owner, f.scope);
-    const first = await f.core.revise(f.owner, f.method.id, 1, {
+    const first = await f.core.revise(f.owner, f.playbook.id, 1, {
       title: "Rejected change",
     });
     assert.equal(first.previousUse, "unchanged");
     assert.equal(
       (
         await f.core.prepare(f.owner, {
-          methodId: f.method.id,
+          playbookId: f.playbook.id,
           revision: 1,
           taskRef: task.taskRef,
         })
@@ -192,8 +195,9 @@ test("Reviewed updates preserve the current body until accepted; product persist
     await (f.core as any).advanceRevisionReviews([f.scope]);
     await (f.core as any).advanceRevisionReviews([f.scope]);
     assert.equal(
-      ((await f.core.inspect(f.owner, "method", f.method.id)) as Method).title,
-      f.method.title,
+      ((await f.core.inspect(f.owner, "playbook", f.playbook.id)) as Playbook)
+        .title,
+      f.playbook.title,
     );
     assert.equal(
       (
@@ -206,7 +210,7 @@ test("Reviewed updates preserve the current body until accepted; product persist
       undefined,
     );
     f.engine.supported = true;
-    const second = await f.core.revise(f.owner, f.method.id, 1, {
+    const second = await f.core.revise(f.owner, f.playbook.id, 1, {
       title: "Checked change",
     });
     await (f.core as any).advanceRevisionReviews([f.scope]);
@@ -216,7 +220,7 @@ test("Reviewed updates preserve the current body until accepted; product persist
     assert.notEqual(
       (
         await f.core.prepare(f.owner, {
-          methodId: f.method.id,
+          playbookId: f.playbook.id,
           revision: 2,
           taskRef: task.taskRef,
         })
@@ -232,19 +236,20 @@ test("Reviewed updates preserve the current body until accepted; product persist
       f.engine.failAfterWrite = false;
       await core.syncProjections([f.scope]);
       const record = await recovered.transaction((tx) =>
-        tx.get<any>("method", f.method.id, true),
+        tx.get<any>("playbook", f.playbook.id, true),
       );
       assert.equal(record.steps, undefined);
       assert.equal(record.title, undefined);
       assert.equal(record.goal, undefined);
       assert.equal(
         await recovered.transaction((tx) =>
-          tx.get("method_write", f.method.id),
+          tx.get("playbook_write", f.playbook.id),
         ),
         undefined,
       );
       assert.equal(
-        ((await core.inspect(f.owner, "method", f.method.id)) as Method).title,
+        ((await core.inspect(f.owner, "playbook", f.playbook.id)) as Playbook)
+          .title,
         "Checked change",
       );
       assert.equal(
@@ -260,7 +265,7 @@ test("Reviewed updates preserve the current body until accepted; product persist
       assert.equal(
         (
           await core.prepare(f.owner, {
-            methodId: f.method.id,
+            playbookId: f.playbook.id,
             revision: 2,
             taskRef: task.taskRef,
           })
@@ -268,12 +273,12 @@ test("Reviewed updates preserve the current body until accepted; product persist
         "guidance",
       );
       f.engine.failRead = true;
-      await core.setState(f.owner, "method", f.method.id, 2, "disabled");
-      await core.remove(f.owner, "method", f.method.id, 3);
+      await core.setState(f.owner, "playbook", f.playbook.id, 2, "disabled");
+      await core.remove(f.owner, "playbook", f.playbook.id, 3);
       await core.syncProjections([f.scope]);
       assert.equal(
         await recovered.transaction((tx) =>
-          tx.get("method_write", f.method.id),
+          tx.get("playbook_write", f.playbook.id),
         ),
         undefined,
       );
@@ -284,14 +289,14 @@ test("Reviewed updates preserve the current body until accepted; product persist
     if (!closed) await f.store.close();
   }
 });
-test("New control invalidates a pending review; unreadable methods do not break other metadata operations", async () => {
+test("New control invalidates a pending review; unreadable playbooks do not break other metadata operations", async () => {
   const f = await fixture();
   try {
-    const review = await f.core.revise(f.owner, f.method.id, 1, {
+    const review = await f.core.revise(f.owner, f.playbook.id, 1, {
       title: "Late update",
     });
     await (f.core as any).advanceRevisionReviews([f.scope]);
-    await f.core.setState(f.owner, "method", f.method.id, 1, "disabled");
+    await f.core.setState(f.owner, "playbook", f.playbook.id, 1, "disabled");
     await (f.core as any).advanceRevisionReviews([f.scope]);
     assert.equal(
       (
@@ -304,11 +309,12 @@ test("New control invalidates a pending review; unreadable methods do not break 
       "failed",
     );
     assert.equal(
-      ((await f.core.inspect(f.owner, "method", f.method.id)) as Method).title,
-      f.method.title,
+      ((await f.core.inspect(f.owner, "playbook", f.playbook.id)) as Playbook)
+        .title,
+      f.playbook.title,
     );
     f.engine.failRead = true;
-    assert.deepEqual(await f.core.browse(f.owner, "method"), []);
+    assert.deepEqual(await f.core.browse(f.owner, "playbook"), []);
     await f.core.syncProjections([f.scope]);
     await f.core.controlSource(f.owner, {
       id: f.source.id,
@@ -335,9 +341,9 @@ test("Unknown successful writes retain every possibly stored source until deleti
       evidence: [{ ...f.exp.evidence[0]!, fingerprint: "source-c" }],
     };
     const v2 = {
-      ...f.method,
+      ...f.playbook,
       revision: 2,
-      title: "Source B method",
+      title: "Source B playbook",
       supportRefs: [{ kind: "experience" as const, id: b.id, revision: 1 }],
     };
     await f.store.transaction(async (tx) => {
@@ -356,19 +362,19 @@ test("Unknown successful writes retain every possibly stored source until deleti
         }),
         null,
       );
-      await tx.put(entry("method", v2), 1);
+      await tx.put(entry("playbook", v2), 1);
     });
     f.engine.failAfterWrite = true;
     await f.core.syncProjections([f.scope]);
     const v3 = {
       ...v2,
       revision: 3,
-      title: "Source C method",
+      title: "Source C playbook",
       supportRefs: [{ kind: "experience" as const, id: c.id, revision: 1 }],
     };
-    await f.store.transaction((tx) => tx.put(entry("method", v3), 2));
+    await f.store.transaction((tx) => tx.put(entry("playbook", v3), 2));
     const pending = await f.store.transaction((tx) =>
-      tx.get<MethodWrite>("method_write", f.method.id),
+      tx.get<PlaybookWrite>("playbook_write", f.playbook.id),
     );
     assert.deepEqual(
       new Set(pending!.previousSupport!.map((r) => r.id)),
@@ -403,15 +409,17 @@ test("Unknown successful writes retain every possibly stored source until deleti
       "completed",
     );
     await assert.rejects(
-      f.engine.readMethodContent(
+      f.engine.readPlaybookContent(
         f.scope,
-        f.method.id,
-        splitMethod(v2).record.contentHash,
+        f.playbook.id,
+        splitPlaybook(v2).record.contentHash,
       ),
       /unavailable/,
     );
     assert.equal(
-      await f.store.transaction((tx) => tx.get("method_write", f.method.id)),
+      await f.store.transaction((tx) =>
+        tx.get("playbook_write", f.playbook.id),
+      ),
       undefined,
     );
   } finally {

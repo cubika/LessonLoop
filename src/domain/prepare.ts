@@ -1,6 +1,6 @@
 import { getEncoding } from "js-tiktoken";
 import type { Experience } from "./experience.js";
-import { digest, type Method } from "./schema.js";
+import { digest, type Playbook } from "./schema.js";
 
 const encoder = getEncoding("cl100k_base");
 export const tokenCount = (value: unknown) =>
@@ -14,8 +14,8 @@ export interface Eligibility {
   now: number;
 }
 export function eligible(
-  method: Pick<
-    Method,
+  playbook: Pick<
+    Playbook,
     | "id"
     | "scopeId"
     | "revision"
@@ -28,9 +28,9 @@ export function eligible(
   data: Eligibility,
 ): boolean {
   if (
-    !data.scopes.has(method.scopeId) ||
-    !usable(method, data) ||
-    data.published.get(method.id) !== method.revision
+    !data.scopes.has(playbook.scopeId) ||
+    !usable(playbook, data) ||
+    data.published.get(playbook.id) !== playbook.revision
   )
     return false;
   const visited = new Set<string>();
@@ -44,7 +44,7 @@ export function eligible(
     if (
       !e ||
       e.revision !== revision ||
-      e.scopeId !== method.scopeId ||
+      e.scopeId !== playbook.scopeId ||
       depth > 5 ||
       ancestors.has(id)
     )
@@ -76,11 +76,13 @@ export function eligible(
       e.sourceFingerprints.every((f) => roots.has(f))
     );
   };
-  return method.supportRefs.every((r) => walk(r.id, r.revision, 1, new Set()));
+  return playbook.supportRefs.every((r) =>
+    walk(r.id, r.revision, 1, new Set()),
+  );
 }
 function usable(
   v: Pick<
-    Method,
+    Playbook,
     "id" | "scopeId" | "state" | "applicability" | "validFrom" | "validUntil"
   >,
   data: Eligibility,
@@ -95,8 +97,8 @@ function usable(
 }
 // The core checks task ownership and lifetime before rendering guidance.
 // The usage reference links feedback; it is not an execution session or permit.
-export function prepareMethod(
-  method: Method | undefined,
+export function preparePlaybook(
+  playbook: Playbook | undefined,
   request: {
     callerId: string;
     taskRef: string;
@@ -105,29 +107,34 @@ export function prepareMethod(
   },
   data: Eligibility,
 ): Record<string, unknown> {
-  if (!method || !data.scopes.has(method.scopeId))
+  if (!playbook || !data.scopes.has(playbook.scopeId))
     return { status: "target_unavailable" };
-  if (method.revision !== request.revision) return { status: "target_changed" };
-  if (!eligible(method, data)) return { status: "target_unavailable" };
+  if (playbook.revision !== request.revision)
+    return { status: "target_changed" };
+  if (!eligible(playbook, data)) return { status: "target_unavailable" };
   const view = {
     status: "guidance",
-    method: { kind: "method", id: method.id, revision: method.revision },
-    methodUseRef: digest([
-      "method-use",
+    playbook: {
+      kind: "playbook",
+      id: playbook.id,
+      revision: playbook.revision,
+    },
+    playbookUseRef: digest([
+      "playbook-use",
       request.callerId,
       request.taskRef,
-      method.id,
-      method.revision,
+      playbook.id,
+      playbook.revision,
     ]),
-    title: method.title,
-    goal: method.goal,
-    conditions: method.conditions,
-    exceptions: method.exceptions,
-    validFrom: method.validFrom,
-    validUntil: method.validUntil,
-    steps: method.steps,
-    completionChecks: method.completionChecks,
-    stopConditions: method.stopConditions,
+    title: playbook.title,
+    goal: playbook.goal,
+    conditions: playbook.conditions,
+    exceptions: playbook.exceptions,
+    validFrom: playbook.validFrom,
+    validUntil: playbook.validUntil,
+    steps: playbook.steps,
+    completionChecks: playbook.completionChecks,
+    stopConditions: playbook.stopConditions,
     executionBoundary:
       "Guidance only; the agent checks applicability and chooses the path. Check all global conditions and exceptions before acting. Start at the first step; a step without choices continues to the next step. At a choice, complete the step and use current observations to follow exactly one matching next step or stop. If facts are missing, no choice matches, or choices conflict, investigate or ask instead of guessing. Do not run unselected branches. Apply global checks and checks scoped to the selected steps. Use fresh results for checks that depend on execution; old results do not prove this run completed. Respect task permissions. Verify the actual outcome before reporting success.",
   };

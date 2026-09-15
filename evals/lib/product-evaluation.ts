@@ -224,7 +224,7 @@ export async function productContext(
     review: false,
     notifications: false,
   });
-  const receipt = await core.submitMaterial(
+  const receipt = await core.submitSource(
     host,
     {
       scopeId: scope,
@@ -233,7 +233,7 @@ export async function productContext(
         role: "external" as const,
       })),
     },
-    "historical-material",
+    "historical-inputSource",
   );
   stages.push({ stage: "submit", receipt });
   const job = await until(
@@ -264,9 +264,7 @@ export async function productContext(
         await core.syncProjections([scope]);
         publishedJob = await core.getJob(host, receipt.jobId);
         publication.job = publishedJob;
-        const products = publishedJob.results.filter(
-          (result) => result.kind !== "work_case",
-        );
+        const products = publishedJob.results;
         if (!products.length) {
           publication.status = "no_memory_output";
           return true;
@@ -286,7 +284,7 @@ export async function productContext(
             ).map((projection) => [projection.id, projection]),
           );
           let pending = 0;
-          for (const kind of ["method", "experience"] as const)
+          for (const kind of ["playbook", "experience"] as const)
             for (const object of await tx.list<{
               id: string;
               state: string;
@@ -322,27 +320,27 @@ export async function productContext(
   }
   const search = await core.search(host, fixture.request),
     task = await core.startTask(host, scope);
-  const method = search.results[0]?.method;
-  const prepared = method
+  const playbook = search.results[0]?.playbook;
+  const prepared = playbook
     ? await core.prepare(host, {
-        methodId: method.id,
-        revision: method.revision,
+        playbookId: playbook.id,
+        revision: playbook.revision,
         taskRef: task.taskRef,
         requestId: "evaluation",
       })
     : null;
-  const methodAvailable =
+  const playbookAvailable =
     prepared &&
     typeof prepared.status === "string" &&
     prepared.status === "guidance";
-  const recalled = methodAvailable
+  const recalled = playbookAvailable
     ? null
     : await core.recall(host, fixture.request);
   stages.push({ stage: "retrieval", search, prepared, recalled });
   return {
     context: JSON.stringify(
-      methodAvailable
-        ? { preparedMethod: prepared }
+      playbookAvailable
+        ? { preparedPlaybook: prepared }
         : { experiences: recalled },
     ),
     stages,
@@ -350,7 +348,7 @@ export async function productContext(
       scope,
       taskRef: task.taskRef,
       product: "actual_core_and_hindsight",
-      retrieval: methodAvailable ? "method" : "experience_fallback",
+      retrieval: playbookAvailable ? "playbook" : "experience_fallback",
     },
     nativeUsage: {
       status: publishedJob.usage.status,

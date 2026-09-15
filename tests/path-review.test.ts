@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pathReviewErrors, methodPaths } from "../src/domain/method-paths.js";
+import {
+  pathReviewErrors,
+  playbookPaths,
+} from "../src/domain/playbook-paths.js";
 const previous = {
   id: "old",
   steps: [
     { stepId: "s1", instruction: "Update schema fields", supportIndexes: [0] },
   ],
 };
-const method = {
+const playbook = {
   replaces: { id: "old" },
   steps: [
     {
@@ -22,11 +25,11 @@ const method = {
     { stepId: "s2", instruction: "Update schema fields", supportIndexes: [0] },
   ],
 };
-test("A blanket method approval cannot replace branch-by-branch and predecessor checks", () => {
-  assert.equal(pathReviewErrors([method], [previous], {}).length, 3);
+test("A blanket playbook approval cannot replace branch-by-branch and predecessor checks", () => {
+  assert.equal(pathReviewErrors([playbook], [previous], {}).length, 3);
   const review = {
     pathChecks: [0, 1].map((pathIndex) => ({
-      methodIndex: 0,
+      playbookIndex: 0,
       pathIndex,
       globalConditionsCompatible: true,
       stepsCompatible: true,
@@ -34,23 +37,23 @@ test("A blanket method approval cannot replace branch-by-branch and predecessor 
     })),
     preservedPaths: [
       {
-        methodId: "old",
+        playbookId: "old",
         pathIndex: 0,
         preserved: true,
         reason: "Field edits remain reachable",
       },
     ],
   };
-  assert.deepEqual(pathReviewErrors([method], [previous], review), []);
+  assert.deepEqual(pathReviewErrors([playbook], [previous], review), []);
   review.pathChecks[0]!.globalConditionsCompatible = false;
   review.pathChecks[0]!.reason =
     "Extension-only global requirement excludes ordinary field edits";
-  assert.deepEqual(pathReviewErrors([method], [previous], review), [
+  assert.deepEqual(pathReviewErrors([playbook], [previous], review), [
     review.pathChecks[0]!.reason,
   ]);
   review.pathChecks[0]!.globalConditionsCompatible = true;
   review.preservedPaths[0]!.preserved = false;
-  assert.equal(pathReviewErrors([method], [previous], review).length, 1);
+  assert.equal(pathReviewErrors([playbook], [previous], review).length, 1);
 });
 test("The path budget accepts exactly 64 paths and detects a 65th", () => {
   const steps = Array.from({ length: 3 }, (_, i) => ({
@@ -62,8 +65,8 @@ test("The path budget accepts exactly 64 paths and detects a 65th", () => {
       next: i === 2 ? "stop" : `s${i + 1}`,
     })),
   }));
-  assert.equal(methodPaths({ steps }).paths.length, 64);
-  assert.equal(methodPaths({ steps }).truncated, false);
+  assert.equal(playbookPaths({ steps }).paths.length, 64);
+  assert.equal(playbookPaths({ steps }).truncated, false);
   steps[0]!.choices.push({ when: { text: "extra" }, next: "stop" });
-  assert.equal(methodPaths({ steps }).truncated, true);
+  assert.equal(playbookPaths({ steps }).truncated, true);
 });

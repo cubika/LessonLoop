@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  methodSchema,
+  playbookSchema,
   matchText,
   fingerprint,
   identity,
   conditionSchema,
 } from "../src/domain/schema.js";
 import {
-  prepareMethod,
+  preparePlaybook,
   eligible,
   type Eligibility,
 } from "../src/domain/prepare.js";
@@ -48,7 +48,7 @@ function fixture() {
     const match = { key: "kind", values: [value] };
     return { text: matchText(match), match };
   };
-  return methodSchema.parse({
+  return playbookSchema.parse({
     ...identity("test"),
     title: "Edit the maintenance source",
     goal: "Preserve changes",
@@ -88,7 +88,6 @@ function fixture() {
     change: {
       kind: "create",
       summary: "Observed maintenance sources",
-      caseRefs: [],
       predecessors: [],
     },
   });
@@ -121,14 +120,14 @@ test("canonical conditions reject misleading text and fingerprints separate iden
     fingerprint({ ...source, text: source.text }, "trusted:test"),
   );
 });
-test("method rejects backward branches, dangling checks and support", () => {
+test("playbook rejects backward branches, dangling checks and support", () => {
   const m = fixture();
   m.steps[0]!.choices![0]!.next = "inspect";
-  assert.equal(methodSchema.safeParse(m).success, false);
+  assert.equal(playbookSchema.safeParse(m).success, false);
 });
 test("complete guidance preserves branches and scoped checks without task observations", () => {
   const { m, d } = setup();
-  const r = prepareMethod(m, { callerId: "c", taskRef: "t", revision: 1 }, d);
+  const r = preparePlaybook(m, { callerId: "c", taskRef: "t", revision: 1 }, d);
   assert.equal(r.status, "guidance");
   assert.deepEqual(r.steps, m.steps);
   assert.deepEqual(r.completionChecks, m.completionChecks);
@@ -146,7 +145,7 @@ test("unknown applicability returns all boundaries for the agent to check", () =
   m.stopConditions = [{ text: "The generator cannot be identified" }];
   const request = { callerId: "c", taskRef: "t", revision: 1 };
   for (let i = 0; i < 12; i++) {
-    const r = prepareMethod(m, request, d);
+    const r = preparePlaybook(m, request, d);
     assert.equal(r.status, "guidance");
     assert.deepEqual(r.conditions, m.conditions);
     assert.deepEqual(r.exceptions, m.exceptions);
@@ -158,28 +157,28 @@ test("unknown applicability returns all boundaries for the agent to check", () =
 test("usage references are stable without sessions and separate tasks, owners and revisions", () => {
   const { m, d } = setup();
   const request = { callerId: "c", taskRef: "t", revision: 1 };
-  const ref = prepareMethod(m, request, d).methodUseRef;
+  const ref = preparePlaybook(m, request, d).playbookUseRef;
   assert.equal(
-    prepareMethod(m, request, { ...d, now: d.now + 1800001 }).methodUseRef,
+    preparePlaybook(m, request, { ...d, now: d.now + 1800001 }).playbookUseRef,
     ref,
   );
   assert.equal(
-    prepareMethod(m, { ...request, viewMode: "expanded" }, d).methodUseRef,
+    preparePlaybook(m, { ...request, viewMode: "expanded" }, d).playbookUseRef,
     ref,
   );
   assert.notEqual(
-    prepareMethod(m, { ...request, taskRef: "other" }, d).methodUseRef,
+    preparePlaybook(m, { ...request, taskRef: "other" }, d).playbookUseRef,
     ref,
   );
   assert.notEqual(
-    prepareMethod(m, { ...request, callerId: "other" }, d).methodUseRef,
+    preparePlaybook(m, { ...request, callerId: "other" }, d).playbookUseRef,
     ref,
   );
   const updated = { ...m, revision: 2 };
   const published = new Map(d.published).set(m.id, 2);
   assert.notEqual(
-    prepareMethod(updated, { ...request, revision: 2 }, { ...d, published })
-      .methodUseRef,
+    preparePlaybook(updated, { ...request, revision: 2 }, { ...d, published })
+      .playbookUseRef,
     ref,
   );
 });
@@ -187,9 +186,9 @@ test("usage references are stable without sessions and separate tasks, owners an
 test("repeated preparation checks current revisions, permissions and supporting sources", () => {
   const { m, d } = setup();
   const request = { callerId: "c", taskRef: "t", revision: 1 };
-  assert.equal(prepareMethod(m, request, d).status, "guidance");
+  assert.equal(preparePlaybook(m, request, d).status, "guidance");
   assert.equal(
-    prepareMethod(m, { ...request, revision: 2 }, d).status,
+    preparePlaybook(m, { ...request, revision: 2 }, d).status,
     "target_changed",
   );
   for (const data of [
@@ -202,13 +201,16 @@ test("repeated preparation checks current revisions, permissions and supporting 
       experiences: new Map([[experience.id, { ...experience, revision: 2 }]]),
     },
   ])
-    assert.equal(prepareMethod(m, request, data).status, "target_unavailable");
+    assert.equal(
+      preparePlaybook(m, request, data).status,
+      "target_unavailable",
+    );
   assert.equal(
-    prepareMethod({ ...m, state: "disabled" }, request, d).status,
+    preparePlaybook({ ...m, state: "disabled" }, request, d).status,
     "target_unavailable",
   );
   assert.equal(
-    prepareMethod(
+    preparePlaybook(
       { ...m, validUntil: new Date(d.now - 1).toISOString() },
       request,
       d,
@@ -227,15 +229,18 @@ test("oversized guidance requires explicit expansion without dropping branches o
   }));
   m.completionChecks = [{ text: "Verify actual output" }];
   const request = { callerId: "c", taskRef: "t", revision: 1 };
-  assert.deepEqual(prepareMethod(m, request, d), {
+  assert.deepEqual(preparePlaybook(m, request, d), {
     status: "requires_expansion",
   });
-  const expanded = prepareMethod(m, { ...request, viewMode: "expanded" }, d);
+  const expanded = preparePlaybook(m, { ...request, viewMode: "expanded" }, d);
   assert.equal(expanded.status, "guidance");
   assert.deepEqual(expanded.steps, m.steps);
   assert.deepEqual(expanded.completionChecks, m.completionChecks);
   m.steps.forEach((s) => (s.instruction = "x ".repeat(900)));
-  assert.deepEqual(prepareMethod(m, { ...request, viewMode: "expanded" }, d), {
-    status: "too_large",
-  });
+  assert.deepEqual(
+    preparePlaybook(m, { ...request, viewMode: "expanded" }, d),
+    {
+      status: "too_large",
+    },
+  );
 });
