@@ -1,6 +1,6 @@
 # Windows 组件开发工具
 
-alpha.2优先复用系统运行时；最低版本、确认流程和安装用法见[安装说明](../docs/14-alpha-release.md)。build-bundle.ps1仍用于准备开发组件，用户发行包由package-release.py生成。
+当前alpha优先复用系统运行时；最低版本、确认流程和安装用法见[安装说明](../docs/14-alpha-release.md)。build-bundle.ps1仍用于准备开发组件，用户发行包由package-release.py生成。
 
 | 文件 | 当前用途 |
 |---|---|

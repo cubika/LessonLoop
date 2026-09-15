@@ -1,6 +1,6 @@
 param([string]$InstallRoot=(Join-Path $env:LOCALAPPDATA "LessonLoopRuntime"),[string]$DataRoot=(Join-Path $env:LOCALAPPDATA "LessonLoop"),[string[]]$AllowRoot=@(),[int]$BasePort=19431,[string]$PythonPath,[string]$NodePath,[string]$PostgresPath,[string]$ModelCache,[switch]$NonInteractive)
 $ErrorActionPreference="Stop"
-$version="0.1.0-alpha.2"
+$version="0.1.0-alpha.3"
 $asset="LessonLoop-$version-windows-x64.zip"
 $base="https://github.com/cubika/LessonLoop/releases/download/v$version"
 $staging=Join-Path ([IO.Path]::GetTempPath()) ("LessonLoop-download-"+[Guid]::NewGuid().ToString())

@@ -683,13 +683,17 @@ export async function runUiLibraryChecks() {
       notifications: false,
     };
     const settingWrites = [];
+    let settingsReads = 0;
     context.fetch = async (path, options) => {
       const { operation, input } = JSON.parse(options.body);
-      if (operation === "settings.get")
+      if (operation === "settings.get") {
+        settingsReads++;
+        const snapshot = structuredClone(savedSettings);
         return {
           ok: true,
-          json: async () => ({ result: [structuredClone(savedSettings)] }),
+          json: async () => ({ result: [snapshot] }),
         };
+      }
       if (operation === "settings.update")
         return new Promise((resolve) => settingWrites.push({ input, resolve }));
       return baselineFetch(path, options);
@@ -723,9 +727,98 @@ export async function runUiLibraryChecks() {
     assert.equal(controls[1].checked, false);
     assert.equal(controls[0].checked, true);
     assert.ok(controls.every((control) => !control.disabled));
-    context.fetch = baselineFetch;
     checks.push(
       "settings prevent overlapping writes and roll back a failed save",
+    );
+    const settingsNav = nav.find((item) => item.dataset.view === "settings");
+    controls[1].checked = true;
+    const retryRecommendation = controls[1].onchange();
+    const readsBeforeReentry = settingsReads;
+    const reentry = settingsNav.click();
+    await Promise.resolve();
+    assert.equal(settingsReads, readsBeforeReentry);
+    assert.ok(controls.every((control) => control.disabled));
+    savedSettings = { ...savedSettings, recommendation: true, revision: 2 };
+    settingWrites[2].resolve({
+      ok: true,
+      json: async () => ({ result: structuredClone(savedSettings) }),
+    });
+    await Promise.all([retryRecommendation, reentry]);
+    let liveControls = walk($("settings-form")).filter(
+      (e) => e.tag === "input",
+    );
+    assert.notEqual(liveControls[0], controls[0]);
+    assert.equal(liveControls[0].checked, true);
+    assert.equal(liveControls[1].checked, true);
+    assert.ok(liveControls.every((control) => !control.disabled));
+    checks.push(
+      "settings reentry waits for an active save and renders its committed values",
+    );
+
+    liveControls[2].checked = true;
+    const failedReview = liveControls[2].onchange();
+    assert.equal(settingWrites[3].input.expectedRevision, 2);
+    const beforeFailedReentry = settingsReads;
+    const failedReentry = settingsNav.click(),
+      newestReentry = settingsNav.click();
+    await Promise.resolve();
+    assert.equal(settingsReads, beforeFailedReentry);
+    settingWrites[3].resolve({
+      ok: false,
+      json: async () => ({ error: "offline" }),
+    });
+    await Promise.all([failedReview, failedReentry, newestReentry]);
+    assert.equal(settingsReads, beforeFailedReentry + 1);
+    liveControls = walk($("settings-form")).filter((e) => e.tag === "input");
+    assert.equal(liveControls[2].checked, false);
+    assert.equal(liveControls[1].checked, true);
+    assert.ok(liveControls.every((control) => !control.disabled));
+    checks.push(
+      "failed setting saves release reentry and only the latest navigation renders",
+    );
+
+    const settingsFetch = context.fetch,
+      delayedSettingsReads = [];
+    context.fetch = async (path, options) => {
+      if (JSON.parse(options.body).operation === "settings.get") {
+        const snapshot = structuredClone(savedSettings);
+        return new Promise((resolve) =>
+          delayedSettingsReads.push({
+            finish: () =>
+              resolve({ ok: true, json: async () => ({ result: [snapshot] }) }),
+          }),
+        );
+      }
+      return settingsFetch(path, options);
+    };
+    const staleRead = settingsNav.click();
+    liveControls[2].checked = true;
+    const saveReview = liveControls[2].onchange();
+    savedSettings = { ...savedSettings, review: true, revision: 3 };
+    settingWrites[4].resolve({
+      ok: true,
+      json: async () => ({ result: structuredClone(savedSettings) }),
+    });
+    await saveReview;
+    delayedSettingsReads[0].finish();
+    await staleRead;
+    assert.equal(
+      walk($("settings-form")).find((e) => e.tag === "input"),
+      liveControls[0],
+    );
+    assert.equal(liveControls[2].checked, true);
+    const earlierRead = settingsNav.click();
+    savedSettings = { ...savedSettings, notifications: true, revision: 4 };
+    const laterRead = settingsNav.click();
+    delayedSettingsReads[2].finish();
+    await laterRead;
+    delayedSettingsReads[1].finish();
+    await earlierRead;
+    liveControls = walk($("settings-form")).filter((e) => e.tag === "input");
+    assert.equal(liveControls[3].checked, true);
+    context.fetch = baselineFetch;
+    checks.push(
+      "stale settings reads cannot overwrite a newer save or navigation response",
     );
 
     $("playbook-topic").value = "";

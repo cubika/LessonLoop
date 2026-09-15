@@ -1,12 +1,14 @@
 let token = "",
   current,
   settings = [],
+  settingsRequest = 0,
   playbookCursors = [undefined],
   playbookPage = 0,
   playbookFilterKey = "",
   playbookListRequest = 0,
   recordPage = 0;
 const pageSize = 12;
+const settingsSaves = new Map();
 const labels = {
   active: "可用",
   held: "待核实",
@@ -531,7 +533,12 @@ async function taskOutcomeForm(panel, taskRef) {
   panel.append(status, save, reload);
 }
 async function renderSettings() {
-  settings = await rpc("settings.get");
+  const request = ++settingsRequest;
+  if (settingsSaves.size) await Promise.allSettled(settingsSaves.values());
+  if (request !== settingsRequest) return;
+  const loaded = await rpc("settings.get");
+  if (request !== settingsRequest) return;
+  settings = loaded;
   const form = $("settings-form");
   form.replaceChildren();
   for (const s of settings) {
@@ -563,16 +570,20 @@ async function renderSettings() {
         }
         const checked = i.checked;
         saving = true;
+        settingsRequest++;
         for (const [, control] of controls) control.disabled = true;
         const { id, revision, ...body } = s;
+        const pending = rpc("settings.update", {
+          ...body,
+          [key]: checked,
+          expectedRevision: revision,
+        });
+        settingsSaves.set(s.scopeId, pending);
         try {
-          const saved = await rpc("settings.update", {
-            ...body,
-            [key]: checked,
-            expectedRevision: revision,
-          });
+          const saved = await pending;
           Object.assign(s, saved);
         } finally {
+          settingsSaves.delete(s.scopeId);
           saving = false;
           reset();
         }

@@ -82,7 +82,7 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = self.build_fixture(directory, archive=True)
             manifest = audit.audit_files(output)
-            self.assertEqual(manifest["version"], "0.1.0-alpha.2")
+            self.assertEqual(manifest["version"], "0.1.0-alpha.3")
             self.assertEqual(manifest["runtimePolicy"], "system_reuse")
             self.assertEqual(manifest["minimumVersions"], package.MINIMUM_VERSIONS)
             for name in ["python", "node", "postgres", "models"]:
@@ -107,11 +107,11 @@ class PackagingTests(unittest.TestCase):
             output = self.build_fixture(directory)
             write(output, "python/python.exe")
             with self.assertRaisesRegex(RuntimeError, "runtime components"):
-                package.manifest(output, "0.1.0-alpha.2")
+                package.manifest(output, "0.1.0-alpha.3")
             (output / "python/python.exe").unlink()
             (output / "config/python-requirements.txt").unlink()
             with self.assertRaisesRegex(RuntimeError, "Required product file"):
-                package.manifest(output, "0.1.0-alpha.2")
+                package.manifest(output, "0.1.0-alpha.3")
 
     def test_each_release_uses_fresh_code_and_installs_its_locked_dependencies(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -183,8 +183,8 @@ class PackagingTests(unittest.TestCase):
                 return package.archive_files(target, [])
             destination = root / "release"
             with patch.object(package, "postgres_archive", side_effect=postgres):
-                package.release_assets(output, root / "postgres", destination, "0.1.0-alpha.2", {}, root / "output-model-assets")
-            self.assertEqual((destination / "install.ps1").read_text(), '$version="0.1.0-alpha.2"\n')
+                package.release_assets(output, root / "postgres", destination, "0.1.0-alpha.3", {}, root / "output-model-assets")
+            self.assertEqual((destination / "install.ps1").read_text(), '$version="0.1.0-alpha.3"\n')
             self.assertFalse((destination / "install-alpha.ps1").exists())
             lines = (destination / "SHA256SUMS.txt").read_text().splitlines()
             assets = set()
@@ -194,7 +194,7 @@ class PackagingTests(unittest.TestCase):
                 assets.add(name)
             self.assertEqual(assets, {path.name for path in destination.iterdir()} - {"SHA256SUMS.txt"})
             self.assertIn("dependencies.ps1", assets)
-            self.assertIn("LessonLoop-0.1.0-alpha.2-postgresql-windows-x64.zip", assets)
+            self.assertIn("LessonLoop-0.1.0-alpha.3-postgresql-windows-x64.zip", assets)
 
     def test_installed_python_check_requires_venv_and_official_migrations(self):
         with tempfile.TemporaryDirectory() as directory:

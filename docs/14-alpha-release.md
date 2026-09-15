@@ -1,12 +1,12 @@
-# LessonLoop 0.1.0-alpha.2
+# LessonLoop 0.1.0-alpha.3
 
 Windows x64预览版，用于个人本机试用。复用电脑上符合最低版本的Python、Node.js和PostgreSQL；工作与学习模型使用已有Copilot CLI登录。Copilot CLI需要单独安装并登录。
 
-最低要求为Python 3.11 x64、Node.js 18.14.1 x64、PostgreSQL 15 x64及pgvector 0.5.0、pg_trgm扩展。满足条件直接使用；版本过旧时询问是否升级，缺失时询问是否安装，默认拒绝。具体检测与安装方式见[兼容说明](15-runtime-compatibility.md)。alpha.1仍使用原来的随包运行时，升级到alpha.2需使用新的InstallRoot和DataRoot；原数据保留。
+最低要求为Python 3.11 x64、Node.js 18.14.1 x64、PostgreSQL 15 x64及pgvector 0.5.0、pg_trgm扩展。满足条件直接使用；版本过旧时询问是否升级，缺失时询问是否安装，默认拒绝。具体检测与安装方式见[兼容说明](15-runtime-compatibility.md)。本版从当前数据格式初始化，不提供旧数据迁移。
 
 ## 安装与启动
 
-从[GitHub Releases](https://github.com/cubika/LessonLoop/releases/tag/v0.1.0-alpha.2)下载install.ps1和SHA256SUMS.txt，核对脚本摘要后，用普通用户PowerShell运行：
+从[GitHub Releases](https://github.com/cubika/LessonLoop/releases/tag/v0.1.0-alpha.3)下载install.ps1和SHA256SUMS.txt，核对脚本摘要后，用普通用户PowerShell运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
@@ -17,7 +17,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 & "$env:LOCALAPPDATA\LessonLoopRuntime\lessonloop.ps1" ui
 ```
 
-脚本先检查依赖，按需确认，再下载并校验约16MB的程序ZIP。E5和MultiBERT模型在安装时在线下载，已有合格文件或缓存就复用。Python与Node.js安装或升级交给winget；官方安装器可能要求管理员权限。没有winget时会提供官方下载地址。PostgreSQL及扩展不满足条件时，经确认下载独立组件；已有数据库保持原样。安装本身不需要Docker。
+脚本先检查依赖，按需确认，再下载并校验程序ZIP。E5和MultiBERT模型在安装时在线下载，已有合格文件或缓存就复用。Python与Node.js安装或升级交给winget；官方安装器可能要求管理员权限。没有winget时会提供官方下载地址。PostgreSQL及扩展不满足条件时，经确认下载独立组件；已有数据库保持原样。安装本身不需要Docker。
 
 也可下载Windows产品ZIP和可选PostgreSQL组件ZIP，校验摘要后解压。在产品目录执行distribution/install.ps1 -Bundle .；若PostgreSQL不在常见安装位置，加-PostgresPath指向包含bin、lib、share的根目录。产品ZIP不含模型或Python、Node.js、PostgreSQL运行时。安装模型需访问对应Release，Python应用依赖需访问PyPI；已下载模型ZIP可用-ModelCache指定目录。不要直接解压到已有安装目录。
 
@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## 本次范围与限制
 
-已提供方法学习、查看/编辑/导出、Copilot有界会话采集与方法准备、样例JSON Connector及效果回顾。真实宿主回填、补证发布和自动演进的局部流程已有验证。
+已提供方法学习、查看/编辑/导出、Copilot会话采集与方法准备、样例JSON Connector及效果回顾。本版修复纠正文本、来源擦除、使用记录、设置保存、脱敏导出、搜索和分页问题；方法详情补齐停止条件与检查范围，并删除旧数据迁移及未使用的代码。
 
 这是alpha，不表示P0–P3正式质量门槛全部通过。跨场景泛化、长期收益、所有故障场景和干净Windows虚拟机矩阵仍待验证。Copilot按会话采集，追问与恢复沿用原关联；需要独立关联时新建Copilot会话。new/continue不再切分任务。采集缺失或截断会报告缺口，长会话用最近窗口学习。
 

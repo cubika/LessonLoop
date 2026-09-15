@@ -1134,7 +1134,11 @@ export class CoreService {
       if (!old) throw new ApiError("job_missing");
       if (
         ["completed", "failed", "canceled"].includes(old.status) ||
-        (beginStep && old.cancelRequestedAt)
+        (old.cancelRequestedAt &&
+          (beginStep ||
+            (fields.status !== undefined &&
+              fields.status !== "uncertain" &&
+              fields.status !== "canceled")))
       )
         throw new ApiError("job_no_longer_runnable");
       const next = mutate(old, fields);
@@ -1339,7 +1343,16 @@ export class CoreService {
             });
         },
       );
-      if (j.cancelRequestedAt) return;
+      const current = await this.store.transaction((tx) =>
+        tx.get<Job>("job", j.id),
+      );
+      if (
+        !current ||
+        current.cancelRequestedAt ||
+        ["completed", "failed", "canceled"].includes(current.status)
+      )
+        return;
+      j = current;
       if (result.status === "failed")
         await this.updateJob(j.id, {
           status: "failed",
@@ -3036,7 +3049,8 @@ export class CoreService {
             const remaining = experience.evidence.map((e) =>
               e.fingerprint === source.id
                 ? {
-                    excerpt: "[erased source]",
+                    // One byte cannot enlarge an already full evidence budget.
+                    excerpt: "-",
                     role: e.role,
                     relation: e.relation,
                     fingerprint: e.fingerprint,
@@ -3084,7 +3098,7 @@ export class CoreService {
               evidence: workView.evidence.map((e) =>
                 e.fingerprint === source.id
                   ? {
-                      excerpt: "[erased source]",
+                      excerpt: "-",
                       role: e.role,
                       relation: e.relation,
                       fingerprint: e.fingerprint,

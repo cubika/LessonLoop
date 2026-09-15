@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base", type=Path, default=ROOT / ".local-validation/bundle-dev")
     parser.add_argument("--reranker", type=Path, default=ROOT / ".local-validation/reranker-prepared")
-    parser.add_argument("--version", default="0.1.0-alpha.2")
+    parser.add_argument("--version", default="0.1.0-alpha.3")
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--postgres-archive", type=Path, help="Optional separate ZIP of the fixed PostgreSQL runtime")
     parser.add_argument("--release-dir", type=Path, help="New directory for both ZIPs, install.ps1, dependencies.ps1, documentation and checksums")

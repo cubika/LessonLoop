@@ -84,7 +84,7 @@ class InstallerTests(unittest.TestCase):
         (self.bundle / "python/python.exe").write_bytes(b"tampered")
         result = self.install()
         self.assertNotEqual(result.returncode, 2)
-        self.assertIn("hash mismatch", result.stderr)
+        self.assertRegex(result.stderr, r"hash\s+mismatch")
         self.assertFalse(self.program.exists())
 
     def test_system_reuse_reinstall_repairs_missing_environment(self):

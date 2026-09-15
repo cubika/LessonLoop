@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/playbook-engine.js";
-import { identity, playbookSchema } from "../src/domain/schema.js";
+import { byteSize, identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 import { dispatch } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
@@ -103,6 +103,124 @@ const put = (
     value: value as unknown as Record<string, unknown>,
   },
   expected,
+});
+
+test("Erasure completes when replacing a one-byte excerpt at the evidence budget", async () => {
+  const store = new ProductStore(url!);
+  await store.open(true);
+  try {
+    const scopeId = randomUUID();
+    const user = {
+      id: randomUUID(),
+      channel: "user" as const,
+      scopes: [scopeId],
+    };
+    const core = new CoreService(store, new CleanupEngine());
+    await core.configure(user, {
+      scopeId,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    });
+    const receipt = await core.submitSource(
+      user,
+      {
+        scopeId,
+        segments: [{ role: "user", text: "x" }],
+      },
+      randomUUID(),
+    );
+    const source = (await core.listSources(user))[0]!;
+    const evidence = [
+      {
+        excerpt: "x",
+        role: "user",
+        relation: "supports",
+        fingerprint: source.id,
+      },
+      {
+        excerpt: "b".repeat(512),
+        role: "tool",
+        relation: "supports",
+        fingerprint: "b".repeat(64),
+        locator: "b".repeat(256),
+        author: "b".repeat(128),
+      },
+      {
+        excerpt: "c".repeat(512),
+        role: "tool",
+        relation: "supports",
+        fingerprint: "c".repeat(64),
+        locator: "c",
+      },
+    ];
+    evidence[2]!.locator += "c".repeat(2048 - byteSize(evidence));
+    const experience = experienceSchema.parse({
+      ...identity(scopeId),
+      conclusion: "Observed result",
+      purpose: "fact",
+      applicability: "general",
+      conditions: [],
+      exceptions: [],
+      topics: [],
+      entities: [],
+      basis: "observed",
+      assessment: "supported",
+      evidence,
+      derivedFrom: [],
+      sourceFingerprints: evidence.map((item) => item.fingerprint),
+      state: "active",
+    });
+    assert.equal(byteSize(experience.evidence), 2048);
+    await store.transaction((tx) =>
+      tx.put(put("experience", experience).entry, null),
+    );
+    const cleanup = await core.controlSource(user, {
+      id: source.id,
+      expectedRevision: 1,
+      action: "erase",
+    });
+    await core.processSourceCleanups([scopeId]);
+    const scrubbed = experienceSchema.parse(
+      await core.inspect(user, "experience", experience.id),
+    );
+    assert.equal(scrubbed.state, "disabled");
+    assert.equal(scrubbed.evidence[0]!.excerpt, "-");
+    assert.equal(byteSize(scrubbed.evidence), 2048);
+    assert.deepEqual(scrubbed.evidence.slice(1), experience.evidence.slice(1));
+    const erased = (await core.listSources(user)).find(
+      (item) => item.id === source.id,
+    )!;
+    assert.equal(erased.erased, true);
+    assert.equal(erased.segment, undefined);
+    assert.equal(
+      ((await core.inspect(user, "source_cleanup", cleanup.cleanupId)) as any)
+        .status,
+      "completed",
+    );
+    assert.equal(
+      ((await core.inspect(user, "scope_barrier", scopeId)) as any).pending,
+      false,
+    );
+    assert.equal((await core.getJob(user, receipt.jobId)).status, "canceled");
+    assert.equal(
+      (
+        await core.submitSource(
+          user,
+          {
+            scopeId,
+            segments: [{ role: "user", text: "A subsequent observation" }],
+          },
+          randomUUID(),
+        )
+      ).accepted,
+      true,
+    );
+  } finally {
+    await store.close();
+  }
 });
 test("Erasure resumes after native and projection failures, scrubs transient and task copies, and rejects replay", async () => {
   let store = new ProductStore(url!);
@@ -279,7 +397,14 @@ test("Erasure resumes after native and projection failures, scrubs transient and
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
     const feedback = (await new Effects(store).cases([scope]))[0]!;
-    await core.configure(owner, {scopeId:scope,expectedRevision:1,learning:true,recommendation:false,review:true,notifications:false});
+    await core.configure(owner, {
+      scopeId: scope,
+      expectedRevision: 1,
+      learning: true,
+      recommendation: false,
+      review: true,
+      notifications: false,
+    });
     await assert.rejects(
       new Effects(store).update(host, {
         taskRef: task.taskRef,

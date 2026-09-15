@@ -277,3 +277,85 @@ test("Cancellation during submission recovery returns to the shared drain path",
     await store.close();
   }
 });
+
+test("Cancellation wins over known-operation responses and errors before draining", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    for (const stage of ["compose", "assess"] as const) {
+      for (const result of [
+        "failed",
+        "completed",
+        "invalid",
+        "unavailable",
+      ] as const) {
+        const engine = new Engine();
+        engine.fail.clear();
+        const f = await setup(store, engine);
+        await store.transaction(async (tx) => {
+          const job = await tx.get<any>("job", f.receipt.jobId);
+          const next = {
+            ...job,
+            revision: job.revision + 1,
+            stage,
+            status: "running",
+            payload: {
+              inputSources: await Promise.all(
+                job.sourceIds.map((id: string) => tx.get("source", id)),
+              ),
+              candidate: draft,
+            },
+            ...(stage === "compose"
+              ? { modelId: "job-" + job.id, operationId: "known-operation" }
+              : {
+                  assessmentId: "assess-" + job.id,
+                  assessmentOperationId: "known-operation",
+                }),
+          };
+          await tx.put(
+            {
+              kind: "job",
+              id: job.id,
+              scopeId: f.scope,
+              revision: next.revision,
+              value: next,
+            },
+            job.revision,
+          );
+        });
+        let drains = 0;
+        engine.drainRegisteredBank = async () => {
+          drains++;
+          return { drained: true, remaining: 0 };
+        };
+        engine.operation = async () => {
+          await f.core.cancelJob(f.p, f.receipt.jobId);
+          if (result === "unavailable") throw new Error("native_response_lost");
+          return { status: result === "failed" ? "failed" : "completed" };
+        };
+        if (result === "invalid")
+          engine.model = async () => ({
+            reflect_response: { structured_output: {} },
+          });
+        await f.core.tick([f.scope]);
+        const waiting = await store.transaction((tx) =>
+          tx.get<any>("job", f.receipt.jobId),
+        );
+        assert.equal(waiting.status, "uncertain", stage + "/" + result);
+        assert.ok(waiting.cancelRequestedAt);
+        assert.ok(waiting.payload);
+        assert.equal(engine.requests.length, 0);
+        assert.equal(drains, 0);
+        await f.core.tick([f.scope]);
+        const canceled = await store.transaction((tx) =>
+          tx.get<any>("job", f.receipt.jobId),
+        );
+        assert.equal(canceled.status, "canceled");
+        assert.equal(canceled.payload, undefined);
+        assert.equal(drains, 1);
+      }
+    }
+  } finally {
+    await store.close();
+  }
+});
