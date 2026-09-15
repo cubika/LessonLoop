@@ -350,6 +350,13 @@ export async function runUiLibraryChecks() {
     checks.push(
       "task selection changes discard an in-flight preparation response",
     );
+    await nav.find((e) => e.dataset.view === "effects").click();
+    assert.match($("effect-cases").textContent, /任务结果：未知/);
+    assert.match($("effect-cases").textContent, /投递未知/);
+    assert.match($("effect-cases").textContent, /评价：有帮助/);
+    checks.push(
+      "feedback renders unknown delivery and result independently from a helpful rating",
+    );
     return checks;
   } finally {
     await fixture.close();

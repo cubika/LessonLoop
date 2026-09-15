@@ -35,7 +35,6 @@ class Engine extends HindsightEngine {
           result: "true" as const,
           excerpt: "Observed version 2",
         })),
-        completed_steps: [],
       },
       usage: { input_tokens: 10, output_tokens: 10 },
     };
@@ -216,8 +215,6 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
         eventId: "fake",
         text: "not host evidence",
         values: {},
-        completedStepIds: [],
-        conditionResults: {},
       }),
       /task_identity_mismatch/,
     );
@@ -252,6 +249,25 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
         ?.status,
       "ignored",
     );
+    await f.core.prepare(f.host, {
+      playbookId: m.id,
+      revision: m.revision,
+      taskRef: task.taskRef,
+    });
+    await effects.record(f.host, [
+      {
+        eventId: "after-clear",
+        kind: "collection_gap",
+        taskRef: task.taskRef,
+        scopeId: f.scope,
+        occurredAt: new Date(Date.now() + 2).toISOString(),
+        text: "New observation after clear",
+      },
+    ]);
+    assert.equal(
+      (await effects.cases([f.scope]))[0]!.feedback[0]!.delivered,
+      null,
+    );
     assert.equal(
       ((await f.core.inspect(f.owner, "playbook", m.id)) as any).revision,
       1,
@@ -280,6 +296,19 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       requestId: "first",
     };
     const first = await f.core.prepare(f.host, input);
+    const initialFeedback = (await new Effects(store).cases([f.scope])).find(
+      (c) => c.taskRef === task.taskRef,
+    );
+    assert.deepEqual(initialFeedback?.feedback, [
+      {
+        taskRef: task.taskRef,
+        playbookId: m.id,
+        revision: m.revision,
+        delivered: null,
+        taskOutcome: "unknown",
+        userRating: null,
+      },
+    ]);
     const restarted = new CoreService(store, f.engine);
     assert.deepEqual(
       await restarted.prepare(f.host, { ...input, requestId: "again" }),
@@ -289,14 +318,14 @@ test("Playbook guidance survives core restart and retains task, source and feedb
     const uses = await store.transaction((tx) =>
       tx.list<any>("playbook_use", [f.scope]),
     );
-    assert.equal(uses.length, 2); // One return record for each caller, independent of requestId.
+    assert.equal(uses.length, 1); // Host and agent share one task/playbook/revision association.
     assert.ok(
       uses.every(
         (u) =>
           u.playbookUseRef === first.playbookUseRef &&
-          u.delivery === "unknown" &&
-          u.adoption === "unknown" &&
-          u.outcome === "unknown",
+          !["delivery", "adoption", "outcome", "stepIds"].some(
+            (key) => key in u,
+          ),
       ),
     );
     assert.equal(f.engine.calls, 0);
@@ -351,8 +380,6 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       eventId: "end",
       text: "Ended",
       values: {},
-      completedStepIds: [],
-      conditionResults: {},
       ended: true,
     });
     await assert.rejects(

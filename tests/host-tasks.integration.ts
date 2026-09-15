@@ -83,7 +83,7 @@ test("host boundaries commit task and effects together, survive retries and enfo
     );
 
     // Fail after effect writes but before the task row update. PostgreSQL must
-    // roll back both effects; a retry produces exactly one terminal pair.
+    // roll back the end event; a retry produces exactly one task closure.
     const put = Transaction.prototype.put;
     Transaction.prototype.put = async function (entry, expected) {
       if (
@@ -115,8 +115,7 @@ test("host boundaries commit task and effects together, survive retries and enfo
     events = (await new Effects(store).cases([scopeId])).flatMap(
       (c) => c.events,
     );
-    assert.equal(events.filter((e) => e.kind === "outcome").length, 1);
-    assert.equal(events.find((e) => e.kind === "outcome")?.outcome, "failed");
+    assert.equal(events.filter((e) => e.kind === "outcome").length, 0);
     assert.equal(events.filter((e) => e.kind === "task_ended").length, 1);
     const second = await rpc(
       input("prompt", 4, { promptKey: "second", boundary: "continue" }),

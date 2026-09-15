@@ -81,17 +81,6 @@ export async function hostTaskBoundary(
       await effects([
         {
           ...base,
-          eventId: digest([task.id, "outcome"]),
-          kind: "outcome",
-          outcome: ["error", "timeout"].includes(reason)
-            ? "failed"
-            : ["abort", "user_exit"].includes(reason)
-              ? "abandoned"
-              : "unknown",
-          text: `Copilot host execution ended (${reason}); task goal success was not inferred.`,
-        },
-        {
-          ...base,
           eventId: digest([task.id, "ended"]),
           kind: "task_ended",
           text: `Copilot task boundary: ${reason}.`,

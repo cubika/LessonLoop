@@ -2,6 +2,8 @@ import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
 import type { Principal } from "./service.js";
+import { feedbackSummary, taskFeedback } from "./feedback.js";
+import { Effects } from "./effects.js";
 const DAY = 86400000;
 type Stored = { id: string; revision: number; scopeId: string };
 type Review = Stored & {
@@ -219,6 +221,7 @@ export class Reviews {
       .parse(input);
     return this.store.transaction(async (tx) => {
       const cases = [];
+      const feedbackCases = await new Effects(this.store).cases(p.scopes, tx);
       for (const id of new Set(v.caseIds)) {
         const task = await tx.get<Task>("effect_task", id);
         if (!task || !p.scopes.includes(task.scopeId))
@@ -242,6 +245,16 @@ export class Reviews {
         cases.push({
           scopeId: task.scopeId,
           taskRef: task.taskRef,
+          ...taskFeedback(
+            { ...task, events },
+            (feedbackCases.find((c) => c.id === task.id)?.feedback ?? []).map(
+              (f) => ({
+                kind: "playbook",
+                id: f.playbookId,
+                revision: f.revision,
+              }),
+            ),
+          ),
           events,
           observations,
           coverage: {
@@ -377,13 +390,11 @@ export class Reviews {
               Date.parse(schedule.through) < start
                 ? "older_observations_expired"
                 : "retained_observations_only",
-            playbookRefs: playbooks
-              .slice(0, 3)
-              .map((m) => ({
-                kind: "playbook",
-                id: m.id,
-                revision: m.revision,
-              })),
+            playbookRefs: playbooks.slice(0, 3).map((m) => ({
+              kind: "playbook",
+              id: m.id,
+              revision: m.revision,
+            })),
           };
           await tx.put(entry("effect_review", review), null);
           created.push(id);
@@ -465,39 +476,17 @@ export class Reviews {
               (e) => Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
             ),
           }))
-          .filter((t) => t.events.length);
-        const count = (kind: string, value?: string) =>
-          cohort.filter((t) =>
-            t.events.some(
-              (e) =>
-                e.kind === kind &&
-                (!value || e.outcome === value || e.rating === value),
-            ),
-          ).length;
+          .filter((t) => t.events.length)
+          .map((t) => ({ ...t, ...taskFeedback(t) }));
+        const totals = feedbackSummary(cohort);
         const summary = {
-          tasks: cohort.length,
-          delivered: count("delivery"),
-          usageReported: count("usage"),
-          succeeded: count("outcome", "succeeded"),
-          failed: count("outcome", "failed"),
-          abandoned: count("outcome", "abandoned"),
-          helpfulCount: count("user_rating", "helpful"),
-          problemCount: count("user_rating", "incorrect"),
-          unknownOutcome: cohort.filter(
-            (t) =>
-              !t.events.some(
-                (e) =>
-                  e.kind === "outcome" && e.outcome && e.outcome !== "unknown",
-              ),
-          ).length,
+          ...totals,
+          helpfulCount: totals.helpful,
+          problemCount: totals.reportedIncorrect,
         };
         const select = (rating: string) =>
           cohort
-            .filter((t) =>
-              t.events.some(
-                (e) => e.kind === "user_rating" && e.rating === rating,
-              ),
-            )
+            .filter((t) => t.feedback.some((f) => f.userRating === rating))
             .slice(0, 3)
             .map((t) => ({
               id: t.id,
@@ -511,15 +500,7 @@ export class Reviews {
           helpful: select("helpful"),
           problems: select("incorrect"),
           needsVerification: cohort
-            .filter(
-              (t) =>
-                !t.events.some(
-                  (e) =>
-                    e.kind === "outcome" &&
-                    e.outcome &&
-                    e.outcome !== "unknown",
-                ),
-            )
+            .filter((t) => t.taskOutcome === "unknown")
             .slice(0, 2)
             .map((t) => ({ id: t.id, taskRef: t.taskRef })),
           playbooks: review.playbookRefs.flatMap((r) => {

@@ -420,6 +420,26 @@ document.querySelectorAll("[data-view]").forEach(
             const section = node("section", "");
             section.className = "card";
             section.append(node("h2", c.classification), node("p", c.taskRef));
+            const outcomes = {
+              succeeded: "成功",
+              failed: "失败",
+              abandoned: "放弃",
+              unknown: "未知",
+            };
+            const ratings = {
+              helpful: "有帮助",
+              incorrect: "有问题",
+              irrelevant: "不相关",
+            };
+            section.append(node("p", "任务结果：" + outcomes[c.taskOutcome]));
+            c.feedback.forEach((f) =>
+              section.append(
+                node(
+                  "p",
+                  `${f.playbookId} · 修订 ${f.revision} · 投递${f.delivered ? "已确认" : "未知"} · 评价：${ratings[f.userRating] ?? "暂无"}`,
+                ),
+              ),
+            );
             c.events.forEach((e) => section.append(node("p", e.text)));
             const report = node("button", "标记方法问题");
             report.onclick = handle(() => issueForm(section, c));

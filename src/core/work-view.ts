@@ -61,10 +61,10 @@ export const workViewSchema = z
             taskRef: id,
             callerId: id,
             playbook: refSchema.extend({ kind: z.literal("playbook") }),
-            stepIds: z.array(id).max(12),
             returnedAt: z.string().datetime(),
           })
-          .strict(),
+          // Strip obsolete returned-step snapshots from historical views.
+          .strip(),
       )
       .max(8),
   })

@@ -253,6 +253,10 @@ try {
   }).catch(() => []);
   const traces = [];
   const runtimeTools: Array<{ name: string; success?: boolean }> = [];
+  const guidanceReceipts: Array<{
+    taskRef: string;
+    playbooks: Array<{ playbookUseRef?: string }>;
+  }> = [];
   const toolNames = new Map<string, string>();
   const finalTexts: string[] = [];
   for (const directory of directories) {
@@ -283,6 +287,18 @@ try {
             name: toolNames.get(e.data.toolCallId) ?? "unknown",
             success: e.data.success,
           });
+        if (
+          e.type === "tool.execution_complete" &&
+          toolNames.get(e.data.toolCallId) === "lessonloop-getGuidance" &&
+          e.data.success
+        ) {
+          const response = JSON.parse(e.data.result.content);
+          if (
+            response.result?.taskRef &&
+            Array.isArray(response.result.playbooks)
+          )
+            guidanceReceipts.push(response.result);
+        }
         if (e.type === "hook.end")
           traces.push({
             hook: e.data.hookType,
@@ -327,17 +343,18 @@ try {
       sameUseAcrossHostAndAgent: uses.some(
         (u) =>
           u.callerId === principal.id &&
-          uses.some(
-            (other) =>
-              other.callerId === "host-validation-agent" &&
-              other.playbookUseRef === u.playbookUseRef,
+          guidanceReceipts.some(
+            (receipt) =>
+              receipt.taskRef === u.taskRef &&
+              receipt.playbooks.some(
+                (p) => p.playbookUseRef === u.playbookUseRef,
+              ),
           ),
       ),
       playbookUses: uses.map((u) => ({
         callerId: u.callerId,
         taskRef: u.taskRef,
         playbookUseRef: u.playbookUseRef,
-        stepIds: u.stepIds,
       })),
     };
   });
@@ -363,7 +380,8 @@ try {
     evidence.sameUseAcrossHostAndAgent &&
     traces.some((e) => e.hook === "agentStop" && e.success) &&
     effectEvents.some((e) => e.kind === "delivery") &&
-    effectEvents.some((e) => e.kind === "outcome" && e.outcome === "unknown")
+    effectEvents.some((e) => e.kind === "task_ended") &&
+    !effectEvents.some((e) => e.kind === "outcome")
       ? "host_loop_observed"
       : "failed";
 } catch (error) {
