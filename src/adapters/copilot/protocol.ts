@@ -12,6 +12,12 @@ export interface HookEvent {
   toolResult?: unknown;
   toolCallId?: string;
   timestamp?: string | number;
+  source?: "startup" | "resume" | "new";
+  reason?: string;
+  stopReason?: string;
+  finalMessage?: string;
+  agentId?: string;
+  parentToolCallId?: string;
 }
 export function eventTime(
   value: string | number | undefined,
@@ -27,6 +33,7 @@ export function promptEnvelope(event: HookEvent, context: string) {
   };
 }
 export function transcriptEvent(raw: unknown) {
+  if (!raw || typeof raw !== "object") return;
   const event = raw as {
     id?: string;
     type?: string;
@@ -43,7 +50,7 @@ export function transcriptEvent(raw: unknown) {
           : undefined;
   const content =
     typeof event.data?.content === "string"
-      ? event.data.content
+      ? stripInjectedMemory(event.data.content).trim()
       : event.type === "tool.execution_complete"
         ? JSON.stringify(event.data)
         : "";
@@ -51,7 +58,41 @@ export function transcriptEvent(raw: unknown) {
   return {
     role: role as "user" | "agent" | "tool",
     text: content,
-    ...(event.timestamp ? { observedAt: event.timestamp } : {}),
+    ...(eventTime(event.timestamp)
+      ? { observedAt: eventTime(event.timestamp)! }
+      : {}),
     eventId: event.id ?? event.data?.toolCallId,
   };
+}
+
+// Adapted from the pinned upstream core/transcript-util.ts. Product guidance
+// is excluded as well, so recalled methods do not become new source evidence.
+const MEMORY_TAG_RE =
+  /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh|lessonloop-method)\b[\s\S]*?<\/\1>/g;
+export function stripInjectedMemory(text: string) {
+  return text.replace(MEMORY_TAG_RE, "");
+}
+
+export function toolText(toolName: unknown, _args: unknown, result: unknown) {
+  const value =
+    result && typeof result === "object"
+      ? (result as Record<string, unknown>)
+      : {};
+  return JSON.stringify({
+    toolName,
+    result: {
+      content: value.textResultForLlm ?? value.content ?? result,
+      ...(typeof value.success === "boolean"
+        ? { success: value.success }
+        : typeof value.resultType === "string"
+          ? { success: value.resultType === "success" }
+          : {}),
+    },
+  });
+}
+
+export function isProductTool(name: unknown) {
+  return (
+    typeof name === "string" && /(?:^|[._-])lessonloop(?:[._-]|$)/i.test(name)
+  );
 }

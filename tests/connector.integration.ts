@@ -8,6 +8,7 @@ import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { SampleConnector } from "../src/connectors/sample.js";
 import { dispatch } from "../src/core/server.js";
+import { digest } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("database required");
 test("Sample connector requires an explicit file scope and advances only after receipt", async () => {
@@ -430,6 +431,269 @@ test("Scheduled connector sync coalesces overdue periods and respects pause acro
       (await connector.tick([scope], now + 120 * 60000)).results.length,
       0,
     );
+  } finally {
+    await store.close();
+  }
+});
+
+test("Connector receives complete snapshots atomically and tracks every learning part across restart", async () => {
+  let store = new ProductStore(url!);
+  await store.open(true);
+  const scope = randomUUID();
+  const p = { id: randomUUID(), channel: "user" as const, scopes: [scope] };
+  try {
+    let core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    let connector = new SampleConnector(core, store);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    });
+    const file = resolve(".local-validation/connector-tests", scope + ".json");
+    const material = (text: string) => ({
+      scopeId: scope,
+      segments: [{ text, role: "external" }],
+    });
+    const changes: any[] = [
+      {
+        sourceKey: "document",
+        parentSourceKey: "collection",
+        mutation: "snapshot",
+        material: material("Original snapshot"),
+      },
+    ];
+    await writeFile(file, JSON.stringify(changes));
+    const added = await connector.add(p, { scopeId: scope, file });
+    await connector.state(p, added.connection.id, 1, "active");
+    await connector.sync(p, added.connection.id);
+    const initial = (await connector.bindings(p, added.connection.id))[0]!;
+    const setJobStatus = (id: string, status: string) =>
+      store.transaction(async (tx) => {
+        const job = await tx.get<any>("job", id);
+        await tx.put(
+          {
+            kind: "job",
+            id,
+            scopeId: scope,
+            revision: job.revision + 1,
+            value: { ...job, revision: job.revision + 1, status },
+          },
+          job.revision,
+        );
+      });
+    await setJobStatus(initial.pending!.jobId, "completed");
+    changes.push({
+      sourceKey: "document",
+      parentSourceKey: "collection",
+      mutation: "snapshot",
+      complete: false,
+      partKeys: ["intro", "body"],
+      parts: [{ partKey: "intro", material: material("New introduction") }],
+    });
+    await writeFile(file, JSON.stringify(changes));
+    await assert.rejects(
+      connector.sync(p, added.connection.id),
+      /source_parts_incomplete/,
+    );
+    assert.equal((await connector.list(p))[0]!.cursor, 1);
+    assert.equal(
+      (await core.listSources(p)).filter((source) => !source.blocked).length,
+      1,
+    );
+    changes[1].complete = true;
+    changes[1].parts.push({
+      partKey: "body",
+      material: material("New full body"),
+    });
+    await writeFile(file, JSON.stringify(changes));
+    const submit = core.submitMaterial.bind(core);
+    let count = 0;
+    core.submitMaterial = async (...args) => {
+      if (++count === 2) throw new Error("interrupted second part receipt");
+      return submit(...args);
+    };
+    await assert.rejects(
+      connector.sync(p, added.connection.id),
+      /interrupted second part/,
+    );
+    assert.equal((await connector.list(p))[0]!.cursor, 1);
+    assert.equal((await core.listSources(p)).length, 1);
+    assert.equal((await core.listSources(p))[0]!.blocked, false);
+    core.submitMaterial = submit;
+    const accepted = (await connector.sync(p, added.connection.id))
+      .results![0]!;
+    assert.deepEqual(accepted.partKeys, ["intro", "body"]);
+    assert.equal(accepted.jobIds!.length, 2);
+    let binding = (await connector.bindings(p, added.connection.id))[0]!;
+    assert.equal(binding.pending!.parts.length, 2);
+    assert.equal(binding.current, undefined);
+    assert.equal(binding.sourceRevision, 2);
+    await store.transaction(async (tx) => {
+      const parts = await Promise.all(
+        binding.pending!.parts.map((part) =>
+          tx.get<any>("material", part.materialId),
+        ),
+      );
+      assert.equal(new Set(parts.map((part) => part.sourceFamily)).size, 1);
+      assert.equal(new Set(parts.map((part) => part.sourceIdentity)).size, 2);
+      assert.equal(
+        parts[0].sourceFamily,
+        digest([scope, `${added.connection.id}:collection`]),
+      );
+    });
+    assert.equal(
+      (await core.listSources(p)).filter((source) => source.blocked).length,
+      1,
+    );
+    await setJobStatus(binding.pending!.parts[0]!.jobId, "completed");
+    binding = (await connector.bindings(p, added.connection.id))[0]!;
+    assert.equal(binding.learningStatus, "pending");
+    assert.equal(binding.current, undefined);
+    await store.close();
+    store = new ProductStore(url!);
+    await store.open();
+    core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    connector = new SampleConnector(core, store);
+    assert.equal((await connector.list(p))[0]!.cursor, 2);
+    await setJobStatus(binding.pending!.parts[1]!.jobId, "failed");
+    binding = (await connector.bindings(p, added.connection.id))[0]!;
+    assert.equal(binding.learningStatus, "failed");
+    assert.equal(binding.current, undefined);
+    assert.equal(binding.pending, undefined);
+    const completedJob = binding.received!.parts[0]!.jobId;
+    const retry = await connector.retry(p, binding.id, "retry-failed-parts");
+    assert.equal(retry.jobIds.length, 1);
+    assert.deepEqual(
+      (await connector.retry(p, binding.id, "retry-failed-parts")).jobIds,
+      retry.jobIds,
+    );
+    binding = (await connector.bindings(p, added.connection.id))[0]!;
+    assert.equal(binding.pending!.parts[0]!.jobId, completedJob);
+    assert.equal(binding.sourceRevision, 2);
+    await setJobStatus(retry.jobId, "completed");
+    binding = (await connector.bindings(p, added.connection.id))[0]!;
+    assert.equal(binding.learningStatus, "completed");
+    assert.equal(binding.current!.parts.length, 2);
+    changes.push({ ...changes[1], sourceVersion: "different-opaque-version" });
+    await writeFile(file, JSON.stringify(changes));
+    assert.equal(
+      (await connector.sync(p, added.connection.id)).results![0]!.status,
+      "unchanged",
+    );
+    assert.equal((await core.listSources(p)).length, 3);
+    await connector.forget(p, added.connection.id, "collection");
+    assert.equal(
+      (await core.listSources(p)).every((source) => source.excluded),
+      true,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
+test("Connector draft inputs enter material learning without creating trusted product records", async () => {
+  const store = new ProductStore(url!);
+  await store.open(true);
+  try {
+    const scope = randomUUID();
+    const p = { id: randomUUID(), channel: "user" as const, scopes: [scope] };
+    const core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    const connector = new SampleConnector(core, store);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    });
+    const evidence = [
+      {
+        text: "Build completed with exit code 0.",
+        role: "tool",
+        author: "Selected source",
+        locator: "build.log:42",
+      },
+    ];
+    const inputs = [
+      {
+        kind: "work_case",
+        scopeId: scope,
+        goal: "Build the project",
+        unresolved: ["Deployment not checked"],
+        evidence,
+      },
+      {
+        kind: "experience_draft",
+        scopeId: scope,
+        conclusion: "The build command succeeded",
+        conditions: ["Local environment"],
+        evidence,
+      },
+      {
+        kind: "method_draft",
+        scopeId: scope,
+        title: "Build verification",
+        goal: "Check the project build",
+        steps: [
+          {
+            stepId: "build",
+            instruction: "Run the build",
+            evidenceIndexes: [0],
+          },
+        ],
+        completionChecks: ["Exit code is 0"],
+        evidence,
+      },
+    ];
+    const file = resolve(".local-validation/connector-tests", scope + ".json");
+    await writeFile(
+      file,
+      JSON.stringify(
+        inputs.map((input) => ({
+          sourceKey: input.kind,
+          mutation: "snapshot",
+          input,
+        })),
+      ),
+    );
+    const added = await connector.add(p, { scopeId: scope, file });
+    assert.equal(added.preview.materialParts, 3);
+    await connector.state(p, added.connection.id, 1, "active");
+    assert.equal(
+      (await connector.sync(p, added.connection.id)).results!.length,
+      3,
+    );
+    await store.transaction(async (tx) => {
+      for (const kind of ["work_case", "experience", "method"])
+        assert.deepEqual(await tx.list(kind, [scope]), []);
+      const materials = await tx.list<any>("material", [scope]);
+      assert.equal(materials.length, 3);
+      for (const material of materials) {
+        assert.equal(
+          material.segments.every(
+            (segment: any) => segment.role === "external",
+          ),
+          true,
+        );
+        assert.equal(material.segments[1].text, evidence[0]!.text);
+        assert.equal(material.segments[1].locator, evidence[0]!.locator);
+        assert.equal(material.segments[1].author, evidence[0]!.author);
+        assert.equal(material.taskRef, undefined);
+      }
+    });
   } finally {
     await store.close();
   }

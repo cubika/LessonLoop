@@ -1,0 +1,17 @@
+{
+  "id": "development-native-three-arm",
+  "description": "Two authored workspace probes compare no memory, the official Hindsight SDK learning path, and LessonLoop. This profile does not validate official Agent hooks or release quality.",
+  "tasks": ["generated-client-transfer", "handwritten-exception"],
+  "repeats": 1,
+  "officialBaseline": "native_sdk",
+  "model": "gpt-5.5",
+  "python": ".local-validation/bundle-dev/python/python.exe",
+  "contextTokens": 1800,
+  "learningTimeoutSeconds": 900,
+  "pollMilliseconds": 1500,
+  "official": {
+    "retainMission": "Retain useful working knowledge from the supplied past task records. Keep observed behavior, causes, conditions, and exceptions. Preserve source attribution and distinguish reports from direct observations.",
+    "reflectMission": "Use retained working knowledge to help with a new workspace task. Explain the applicable mechanism and boundaries. State missing information and avoid assuming that a different project's file paths or behavior are identical.",
+    "knowledgeQuery": "Summarize the working knowledge supported by these task records: mechanisms, conditions, exceptions, and checks that may transfer to another project."
+  }
+}

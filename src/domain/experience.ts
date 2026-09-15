@@ -227,9 +227,7 @@ export function decide(
   let excluded = false;
   for (const field of ["conditions", "exceptions"] as const) {
     record[field].forEach((item, index) => {
-      const evaluated = !item.match
-        ? input.conditionEvidence?.get(digest(item))
-        : undefined;
+      const evaluated = input.conditionEvidence?.get(digest(item));
       if (evaluated !== undefined) {
         if (
           (field === "conditions" && !evaluated) ||

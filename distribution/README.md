@@ -11,7 +11,7 @@
 | hindsight_compat.py | 保留原始 JSON Schema，验证嵌套必填、枚举、nullable 和格式 |
 | build-bundle.ps1 | 汇集私有运行时、数据库、本地模型与产品构建，生成逐文件摘要 |
 | install.ps1 | 验证本地 bundle 清单并复制；开发包必须显式选择 AllowDevelopmentBuild |
-| runtime.py | DPAPI、独立数据库初始化、后台 start/status/stop/doctor；支持缺失组件恢复，升级管理仍未完成 |
+| runtime.py | DPAPI、独立数据库初始化、后台 start/status/stop/doctor；支持缺失组件恢复及兼容升级/回滚，完整发行生命周期待验收 |
 
 `extract-postgres.py` 不随用户安装流程运行。runtime.py 已在中文空格 DataRoot 验证 DPAPI、独立初始化、后台启动、状态和停止；私有 Python 从完整搬迁目录导入 Hindsight 成功。冷启动超时会保留初始化中的组件，可再次运行 start 等待；核心单独退出、私有数据库退出后的恢复及重复停止已在隔离安装验证。不要把当前开发工具用于其他人的生产数据库。
 

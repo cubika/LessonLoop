@@ -1,13 +1,8 @@
-import { readFile, realpath } from "node:fs/promises";
 import { z } from "zod";
 import { CoreService, ApiError, type Principal } from "../core/service.js";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
-import {
-  identity,
-  digest,
-  byteSize,
-  materialInputSchema,
-} from "../domain/schema.js";
+import { identity, digest } from "../domain/schema.js";
+import { readPage, readSampleFile } from "./sample-source.js";
 const entry = <T extends { id: string; revision: number; scopeId: string }>(
   kind: string,
   v: T,
@@ -32,6 +27,21 @@ interface Connection {
   nextSyncAt?: string;
   scheduleRevision?: number;
 }
+interface PartReceipt {
+  partKey: string;
+  materialId: string;
+  jobId: string;
+}
+interface Receipt {
+  materialId: string;
+  jobId: string;
+  parts: PartReceipt[];
+}
+const receipt = (parts: PartReceipt[]): Receipt => ({
+  materialId: parts[0]!.materialId,
+  jobId: parts[0]!.jobId,
+  parts,
+});
 interface Binding {
   id: string;
   revision: number;
@@ -42,35 +52,14 @@ interface Binding {
   sourceRevision: number;
   hash: string;
   excluded: boolean;
-  current?: { materialId: string; jobId: string };
-  received?: { materialId: string; jobId: string };
-  pending?: { materialId: string; jobId: string };
+  current?: Receipt;
+  received?: Receipt;
+  pending?: Receipt;
   materialIds?: string[];
   learningStatus?: string;
   resourceType?: "snapshot" | "event";
   mutation: "snapshot" | "append" | "correct" | "withdraw" | "erase";
 }
-const changeSchema = z
-  .object({
-    sourceKey: z.string().min(1).max(128),
-    parentSourceKey: z.string().min(1).max(128).optional(),
-    mutation: z.enum(["snapshot", "append", "correct", "withdraw", "erase"]),
-    sourceVersion: z.string().max(128).optional(),
-    correctsRef: z
-      .object({
-        bindingId: z.string(),
-        sourceRevision: z.number().int().positive(),
-      })
-      .strict()
-      .optional(),
-    material: materialInputSchema.optional(),
-  })
-  .strict()
-  .refine(
-    (v) =>
-      ["withdraw", "erase"].includes(v.mutation) ? !v.material : !!v.material,
-    "material_required_only_for_content_changes",
-  );
 export class SampleConnector {
   private running = new Set<string>();
   constructor(
@@ -85,13 +74,7 @@ export class SampleConnector {
       .strict()
       .parse(input);
     if (!p.scopes.includes(v.scopeId)) throw new ApiError("not_found", 404);
-    const file = await realpath(v.file);
-    const content = await readFile(file, "utf8");
-    if (Buffer.byteLength(content) > 2 * 1024 * 1024)
-      throw new ApiError("sample_file_too_large");
-    const rows = z.array(changeSchema).max(1000).parse(JSON.parse(content));
-    if (rows.some((r) => r.material && r.material.scopeId !== v.scopeId))
-      throw new ApiError("scope_mismatch");
+    const { file, changes: rows } = await readSampleFile(v.file, v.scopeId);
     const connection: Connection = {
       ...identity(v.scopeId),
       file,
@@ -106,6 +89,7 @@ export class SampleConnector {
       connection,
       preview: {
         changes: rows.length,
+        materialParts: rows.reduce((count, row) => count + row.parts.length, 0),
         initialRange: "entire_selected_file",
         requiresResume: true,
       },
@@ -232,37 +216,24 @@ export class SampleConnector {
           (connection.scheduleRevision ?? 0) !== scheduledRevision)
       )
         return { status: "schedule_changed" };
-      if ((await realpath(connection.file)) !== connection.file)
-        throw new ApiError("selected_file_changed", 409);
-      const text = await readFile(connection.file, "utf8");
-      if (Buffer.byteLength(text) > 2 * 1024 * 1024)
-        throw new ApiError("sample_file_too_large");
-      const changes = z.array(changeSchema).max(1000).parse(JSON.parse(text));
-      const parents = new Map<string, string>();
-      for (const change of changes)
-        if (change.parentSourceKey) {
-          if (
-            parents.has(change.sourceKey) &&
-            parents.get(change.sourceKey) !== change.parentSourceKey
-          )
-            throw new Conflict("parent_source_changed");
-          parents.set(change.sourceKey, change.parentSourceKey);
-        }
+      const snapshot = await readSampleFile(
+        connection.file,
+        connection.scopeId,
+        true,
+      );
+      const { changes, parents } = snapshot;
       if (
         digest(changes.slice(0, connection.cursor)) !== connection.prefixDigest
       )
         throw new Conflict("sample_history_changed");
       const results = [];
+      const page = readPage(snapshot, connection.cursor);
       for (
         let index = connection.cursor;
-        index < Math.min(changes.length, connection.cursor + 8);
+        index < connection.cursor + page.length;
         index++
       ) {
         const change = changes[index]!;
-        if (byteSize(change) > 32768)
-          throw new ApiError("source_change_too_large");
-        if (change.material && change.material.scopeId !== connection.scopeId)
-          throw new ApiError("scope_mismatch");
         const result = await this.store.transaction(async (tx) => {
           const latest = await tx.get<Connection>("connection", id);
           if (!latest || latest.status !== "active")
@@ -308,12 +279,18 @@ export class SampleConnector {
               }),
               null,
             );
-          let result: { index: number; status: string; jobId?: string } = {
+          let result: {
+            index: number;
+            status: string;
+            jobId?: string;
+            jobIds?: string[];
+            partKeys?: string[];
+          } = {
             index,
             status: ignored ? "ignored" : "unchanged",
           };
           if (!ignored && old?.hash !== hash) {
-            if (old?.pending && change.material)
+            if (old?.pending && change.parts.length)
               return { index, status: "pending_learning" };
             if (old && change.mutation === "append")
               throw new Conflict("append_key_conflict");
@@ -340,20 +317,29 @@ export class SampleConnector {
             if (old && old.parentSourceKey !== change.parentSourceKey)
               throw new Conflict("parent_source_changed");
             const sourceRevision = (old?.sourceRevision ?? 0) + 1;
-            let accepted;
-            if (change.material)
-              accepted = await this.core.submitMaterial(
+            const acceptedParts: PartReceipt[] = [];
+            for (const part of change.parts) {
+              const accepted = await this.core.submitMaterial(
                 {
                   id: `connector:${id}`,
                   channel: "connector",
                   scopes: [connection.scopeId],
                 },
-                change.material,
-                digest([id, change.sourceKey, sourceRevision]),
-                `${id}:${change.sourceKey}:${sourceRevision}`,
+                part.material,
+                digest([id, change.sourceKey, sourceRevision, part.partKey]),
+                `${id}:${change.sourceKey}:${sourceRevision}:${part.partKey}`,
                 tx,
                 `${id}:${[...ancestors].at(-1)}`,
               );
+              acceptedParts.push({
+                partKey: part.partKey,
+                materialId: accepted.materialId,
+                jobId: accepted.jobId,
+              });
+            }
+            const accepted = acceptedParts.length
+              ? receipt(acceptedParts)
+              : undefined;
             if (old) {
               const previous = new Set([
                 ...(old.materialIds ?? []),
@@ -380,7 +366,7 @@ export class SampleConnector {
                     },
                     tx,
                   );
-            } else if (!change.material)
+            } else if (!change.parts.length)
               throw new ApiError("source_binding_missing", 404);
             const value: Binding = {
               id: bindingId,
@@ -398,15 +384,12 @@ export class SampleConnector {
               materialIds: [
                 ...(old?.materialIds ??
                   [old?.current?.materialId].filter((v): v is string => !!v)),
-                ...(accepted ? [accepted.materialId] : []),
+                ...acceptedParts.map((part) => part.materialId),
               ],
               ...(old?.current ? { current: old.current } : {}),
               ...(accepted
                 ? {
-                    pending: {
-                      materialId: accepted.materialId,
-                      jobId: accepted.jobId,
-                    },
+                    pending: accepted,
                   }
                 : {}),
               learningStatus: accepted ? "pending" : "source_withdrawn",
@@ -421,17 +404,20 @@ export class SampleConnector {
                   ? "snapshot"
                   : "event");
             if (accepted) {
-              value.received = {
-                materialId: accepted.materialId,
-                jobId: accepted.jobId,
-              };
+              value.received = accepted;
               delete value.current;
             }
             await tx.put(entry("source_binding", value), old?.revision ?? null);
             result = {
               index,
               status: "accepted",
-              ...(accepted ? { jobId: accepted.jobId } : {}),
+              ...(accepted
+                ? {
+                    jobId: accepted.jobId,
+                    jobIds: accepted.parts.map((part) => part.jobId),
+                    partKeys: change.partKeys,
+                  }
+                : {}),
             };
           }
           delete latest.lastError;
@@ -481,17 +467,28 @@ export class SampleConnector {
       connection.scopeId,
     ])) {
       if (binding.connectionId !== connection.id || !binding.pending) continue;
-      const job = await tx.get<{ status: string }>(
-        "job",
-        binding.pending.jobId,
+      const jobs = await Promise.all(
+        binding.pending.parts.map((part) =>
+          tx.get<{ status: string }>("job", part.jobId),
+        ),
       );
-      if (!job || !["completed", "failed", "canceled"].includes(job.status))
+      if (
+        jobs.some(
+          (job) =>
+            !job || !["completed", "failed", "canceled"].includes(job.status),
+        )
+      )
         continue;
+      const status = jobs.every((job) => job!.status === "completed")
+        ? "completed"
+        : jobs.some((job) => job!.status === "failed")
+          ? "failed"
+          : "canceled";
       const next: Binding = {
         ...binding,
         revision: binding.revision + 1,
-        learningStatus: job.status,
-        ...(job.status === "completed" ? { current: binding.pending } : {}),
+        learningStatus: status,
+        ...(status === "completed" ? { current: binding.pending } : {}),
       };
       delete next.pending;
       await tx.put(entry("source_binding", next), binding.revision);
@@ -513,35 +510,57 @@ export class SampleConnector {
   async retry(p: Principal, id: string, key: string) {
     if (p.channel !== "user")
       throw new ApiError("user_operation_required", 403);
+    if (!key || key.length > 128)
+      throw new ApiError("idempotency_key_required");
     return this.store.transaction(async (tx) => {
       const binding = await tx.get<Binding>("source_binding", id);
       if (!binding || !p.scopes.includes(binding.scopeId))
         throw new ApiError("not_found", 404);
       const receiptId = digest([p.id, id, key]);
       const previous = await tx.get<{
-        result: { accepted: boolean; jobId: string; duplicate: boolean };
+        result: {
+          accepted: boolean;
+          jobId: string;
+          jobIds: string[];
+          duplicate: boolean;
+        };
       }>("connector_retry", receiptId);
       if (previous) return { ...previous.result, duplicate: true };
       if (binding.excluded || !binding.received)
         throw new ApiError("binding_not_retryable", 409);
-      const result = await this.core.retryJob(
-        p,
-        binding.received.jobId,
-        key,
-        tx,
-      );
+      const parts: PartReceipt[] = [];
+      const jobIds: string[] = [];
+      for (const part of binding.received.parts) {
+        const job = await tx.get<{ status: string }>("job", part.jobId);
+        if (!job || !["completed", "failed", "canceled"].includes(job.status))
+          throw new ApiError("binding_not_retryable", 409);
+        if (job.status === "completed") {
+          parts.push(part);
+          continue;
+        }
+        const retried = await this.core.retryJob(
+          p,
+          part.jobId,
+          digest([key, part.partKey]),
+          tx,
+        );
+        parts.push({ ...part, jobId: retried.jobId });
+        jobIds.push(retried.jobId);
+      }
+      if (!jobIds.length) throw new ApiError("binding_not_retryable", 409);
+      const result = {
+        accepted: true,
+        jobId: jobIds[0]!,
+        jobIds,
+        duplicate: false,
+      };
+      const received = receipt(parts);
       await tx.put(
         entry("source_binding", {
           ...binding,
           revision: binding.revision + 1,
-          pending: {
-            materialId: binding.received.materialId,
-            jobId: result.jobId,
-          },
-          received: {
-            materialId: binding.received.materialId,
-            jobId: result.jobId,
-          },
+          pending: received,
+          received,
           learningStatus: "pending",
         }),
         binding.revision,

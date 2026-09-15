@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Destination,[Parameter(Mandatory=$true)][string]$PythonBase,[Parameter(Mandatory=$true)][string]$SitePackages,[Parameter(Mandatory=$true)][string]$Postgres,[Parameter(Mandatory=$true)][string]$Models)
+param([Parameter(Mandatory=$true)][string]$Destination,[Parameter(Mandatory=$true)][string]$PythonBase,[Parameter(Mandatory=$true)][string]$SitePackages,[Parameter(Mandatory=$true)][string]$Postgres,[Parameter(Mandatory=$true)][string]$Models,[string]$Reranker)
 $ErrorActionPreference="Stop"
 $repoRoot=Split-Path $PSScriptRoot -Parent
 $bundleRoot=[IO.Path]::GetFullPath($Destination)
@@ -13,6 +13,21 @@ Copy-Tree $Postgres (Join-Path $bundleRoot "postgres")
 Copy-Tree $Models (Join-Path $bundleRoot "models")
 foreach($name in @("distribution","dist","node_modules","config","third-party")){Copy-Item -Path (Join-Path $repoRoot "$name/*") -Destination (Join-Path $bundleRoot $name) -Recurse}
 Copy-Item -LiteralPath (Join-Path $repoRoot "package.json") -Destination (Join-Path $bundleRoot "package.json")
+if($Reranker){
+  & (Join-Path $bundleRoot "python/python.exe") (Join-Path $repoRoot "distribution/reranker.py") $Reranker --manifest (Join-Path $repoRoot "config/reranker.json") --require-ready
+  if($LASTEXITCODE -ne 0){throw "Pinned reranker files failed verification"}
+  Copy-Tree (Join-Path $Reranker "models/reranker") (Join-Path $bundleRoot "models/reranker")
+  Copy-Tree (Join-Path $Reranker "third-party/flashrank") (Join-Path $bundleRoot "third-party/flashrank")
+}
+$rerankerState=& (Join-Path $bundleRoot "python/python.exe") (Join-Path $bundleRoot "distribution/reranker.py") $bundleRoot
+if($LASTEXITCODE -ne 0){throw "Reranker configuration check failed"}
+$rerankerProfile=$rerankerState | ConvertFrom-Json
+if($Reranker -and $rerankerProfile.status -ne "ready"){throw "Copied reranker files failed verification"}
+$componentPath=Join-Path $bundleRoot "config/components.json"
+$componentProfile=Get-Content -LiteralPath $componentPath -Raw | ConvertFrom-Json
+$componentProfile.reranker=$rerankerProfile.provider
+$componentProfile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $componentPath -Encoding UTF8
+if($rerankerProfile.status -ne "ready"){Write-Output ("Local reranker unavailable; bundled profile uses rrf: "+$rerankerProfile.reason)}
 $files=Get-ChildItem -LiteralPath $bundleRoot -Recurse -File | ForEach-Object {
   $relative=$_.FullName.Substring($bundleRoot.Length+1).Replace([char]92,[char]47)
   @{path=$relative;size=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}

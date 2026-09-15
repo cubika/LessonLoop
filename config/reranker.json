@@ -1,0 +1,52 @@
+{
+  "provider": "flashrank",
+  "fallbackProvider": "rrf",
+  "hindsightVersion": "0.9.2",
+  "modelName": "ms-marco-MultiBERT-L-12",
+  "cacheDirectory": "models/reranker",
+  "pythonDirectory": "third-party/flashrank",
+  "batchSize": 8,
+  "maxCandidates": 64,
+  "model": {
+    "repository": "prithivida/flashrank",
+    "revision": "858a1ac046a05663a35367eac852d7f76feeefdd",
+    "license": "CC-BY-SA-4.0",
+    "url": "https://huggingface.co/prithivida/flashrank/resolve/858a1ac046a05663a35367eac852d7f76feeefdd/ms-marco-MultiBERT-L-12.zip",
+    "filename": "ms-marco-MultiBERT-L-12.zip",
+    "size": 103473926,
+    "sha256": "2c8ae5542f1538e355e9f295d349fc030b5cf7d398c8728c362f0e5129776971",
+    "files": {
+      "config.json": "b32201ee1c654b59f4c97b2139286edcae9cce525217c6d2131425fa50161946",
+      "tokenizer_config.json": "eaf913a687e8eed3010b6479d0d84631038212aa50c14d9b812e08cbc891d925",
+      "special_tokens_map.json": "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3",
+      "tokenizer.json": "ce64fce797c24f68df90b40a3f74f579b336a493db14bd583fd520ea0d8c9a98",
+      "vocab.txt": "87b44292b452f6c05afa49b2e488e7eedf79ea4f4c39db6f2f4b37764228ef3f",
+      "flashrank-MultiBERT-L12_Q.onnx": "ff24c4abf96a982ce24b021bab80d9d8a1c3c2ba6926fb41e372a9be1d8cba9b"
+    }
+  },
+  "flashrank": {
+    "version": "0.2.9",
+    "revision": "00486e55ad9ad86158cea7e56eb51969f6498c54",
+    "license": "Apache-2.0",
+    "url": "https://codeload.github.com/PrithivirajDamodaran/FlashRank/zip/00486e55ad9ad86158cea7e56eb51969f6498c54",
+    "filename": "FlashRank-0.2.9-source.zip",
+    "archivePrefix": "FlashRank-00486e55ad9ad86158cea7e56eb51969f6498c54/",
+    "size": 2370304,
+    "sha256": "34c2fec910578c6113ce6a266c4f95724f647040ff9c05d8ba8aeb9f62cf36cc",
+    "files": {
+      "flashrank/Config.py": "bb003eaa68ecfe944643e66a3e23c8c15da4c15d67c1ed889d3b686b5aedb2e3",
+      "flashrank/Ranker.py": "f8451757a1d85871340fcd6b4a1ea31ea413bd4792847a57de1e446ebe514ce9",
+      "flashrank/__init__.py": "b2ea266c9c40f0192a626d034e7ea258070334643378e933a922b7fa8674df4d",
+      "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  },
+  "tokenizerRepair": {
+    "reason": "The official archive tokenizer has 30522 English tokens; the ONNX model and supplied vocabulary use multilingual BERT.",
+    "generator": "tokenizers.BertWordPieceTokenizer",
+    "tokenizersVersion": "0.22.2",
+    "lowercase": true,
+    "stripAccents": null,
+    "handleChineseChars": true,
+    "sha256": "dc735c5392be8037d411ae5ad8110b77f14d911b1038023699743e8f0a9d087b"
+  }
+}

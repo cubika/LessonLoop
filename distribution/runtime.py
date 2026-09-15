@@ -146,6 +146,11 @@ def start_components():
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
     env={**os.environ,"PYTHONUTF8":"1","PYTHONIOENCODING":"utf-8","PYTHONUNBUFFERED":"1","HINDSIGHT_API_DATABASE_URL":cfg["databaseUrl"],"HINDSIGHT_API_DATABASE_SCHEMA":"hindsight","HINDSIGHT_API_HOST":"127.0.0.1","HINDSIGHT_API_PORT":str(record["enginePort"]),"HINDSIGHT_API_LLM_PROVIDER":"github-copilot","HINDSIGHT_API_LLM_MODEL":"gpt-5.5","HINDSIGHT_API_EMBEDDINGS_PROVIDER":"onnx","HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH":str(runtime/"models/e5/onnx/model.onnx"),"HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH":str(runtime/"models/e5"),"HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS":"384","HINDSIGHT_API_RERANKER_PROVIDER":"rrf","HINDSIGHT_API_TENANT_EXTENSION":"hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension","HINDSIGHT_API_TENANT_API_KEY":secret["engineToken"],"HF_HUB_OFFLINE":"1","TRANSFORMERS_OFFLINE":"1","COPILOT_SKIP_CLI_DOWNLOAD":"1","HINDSIGHT_API_LOG_LEVEL":"WARNING","HINDSIGHT_API_ACCESS_LOG":"false"}
+    from reranker import configuration as reranker_configuration,environment as reranker_environment
+    reranker=reranker_configuration(runtime)
+    env={key:value for key,value in env.items() if not key.startswith("HINDSIGHT_API_RERANKER_")}
+    env.update(reranker_environment(reranker))
+    if reranker["status"]=="ready":env["PYTHONPATH"]=os.pathsep.join(filter(None,[reranker["pythonDirectory"],env.get("PYTHONPATH")]))
     copilot=shutil.which("copilot.exe")
     env.update(LITELLM_LOCAL_MODEL_COST_MAP="true",HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
     env.update(HINDSIGHT_API_HTTP_EXTENSION="hindsight_product:LessonLoopProduct",HINDSIGHT_API_HTTP_PRODUCT_KEY=secret["engineToken"])
@@ -160,8 +165,9 @@ def start_components():
         temporary.replace(processes_path)
     if not existing["engine"]:
         with (root/"engine.log").open("ab") as log:
+            log.write((json.dumps({"reranker":reranker})+"\n").encode());log.flush()
             engine=subprocess.Popen([str(python),str(runtime/"distribution/hindsight_server.py")],env=env,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
-        saved["engine"]=process_record(engine);save_processes()
+        saved["engine"]=process_record(engine);saved["reranker"]=reranker;save_processes()
     if not existing["core"]:
         with (root/"core.log").open("ab") as log:
             core_args=[str(node),str(runtime/"dist/cli/main.js"),"serve"]
@@ -197,6 +203,9 @@ if args.action=="start":
 elif args.action=="doctor":
     processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {}
     state={"installation":"owned","runtimeFiles":all(path.exists() for path in [python,node,runtime/"postgres/bin/postgres.exe",runtime/"models/e5/onnx/model.onnx"]),"copilotCli":"available" if shutil.which("copilot.exe") else "missing","modelAuthentication":"not_verified","hostIntegration":"needs_configuration"}
+    from reranker import configuration as reranker_configuration
+    state["rerankerPrepared"]=reranker_configuration(runtime)
+    state["rerankerProcess"]=processes.get("reranker",{"provider":"unknown","status":"not_recorded"}) if owned_process(processes.get("engine",{}),python) else {"status":"not_running"}
     for name,exe in [("core",node),("engine",python)]:state[name+"Process"]="owned_running" if owned_process(processes.get(name,{}),exe) else "not_running"
     try:state["health"]=health(secret)
     except Exception:state["health"]={"core":"unavailable"}

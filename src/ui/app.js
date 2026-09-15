@@ -1,6 +1,22 @@
 let token = "",
   current,
-  settings = [];
+  settings = [],
+  methodCursors = [undefined],
+  methodPage = 0,
+  methodFilterKey = "",
+  methodListRequest = 0,
+  recordPage = 0;
+const pageSize = 12;
+const labels = {
+  active: "可用",
+  held: "待核实",
+  disabled: "已停用",
+  succeeded: "成功",
+  failed: "失败",
+  partial: "部分完成",
+  abandoned: "已放弃",
+  unknown: "结果未知",
+};
 const $ = (id) => document.getElementById(id);
 const node = (tag, text) => {
   const e = document.createElement(tag);
@@ -32,13 +48,41 @@ const handle = (fn) => async (event) => {
 $("connect").onclick = handle(async () => {
   token = $("token").value;
   settings = await rpc("settings.get");
+  for (const id of ["method-scope", "record-scope"])
+    for (const setting of settings) {
+      const option = node("option", setting.scopeId);
+      option.value = setting.scopeId;
+      $(id).append(option);
+    }
   $("login").hidden = true;
   $("workspace").hidden = false;
   await list();
   await renderReviewNotifications();
 });
 async function list() {
-  const methods = await rpc("browseMethods", { query: $("query").value });
+  const filter = {
+    query: $("query").value,
+    ...($("method-scope").value ? { scopeIds: [$("method-scope").value] } : {}),
+    ...($("method-topic").value.trim()
+      ? { topic: $("method-topic").value.trim() }
+      : {}),
+    ...($("method-state").value ? { state: $("method-state").value } : {}),
+    ...($("method-pinned").checked ? { pinnedOnly: true } : {}),
+  };
+  const filterKey = JSON.stringify(filter);
+  if (filterKey !== methodFilterKey) {
+    methodFilterKey = filterKey;
+    methodCursors = [undefined];
+    methodPage = 0;
+  }
+  const request = ++methodListRequest;
+  const result = await rpc("browseMethods", {
+    ...filter,
+    limit: pageSize,
+    ...(methodCursors[methodPage] ? { cursor: methodCursors[methodPage] } : {}),
+  });
+  if (request !== methodListRequest) return;
+  const methods = result.items;
   $("cards").replaceChildren();
   if (!methods.length)
     $("cards").append(
@@ -50,20 +94,77 @@ async function list() {
     card.append(
       node("h2", method.title),
       node("p", method.goal),
-      node("span", `${method.state} · 修订 ${method.revision}`),
+      node(
+        "span",
+        `${labels[method.state]} · ${method.scopeId} · 修订 ${method.revision}`,
+      ),
     );
+    const pin = node("button", method.pinned ? "取消常用" : "设为常用");
+    pin.setAttribute("aria-pressed", String(method.pinned));
+    pin.onclick = handle(async (event) => {
+      event.stopPropagation();
+      await rpc("pinMethod", { id: method.id, pinned: !method.pinned });
+      methodPage = 0;
+      methodCursors = [undefined];
+      await list();
+    });
+    card.append(pin);
+    card.tabIndex = 0;
+    card.onkeydown = (event) => {
+      if (event.target === card && ["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        card.click();
+      }
+    };
     card.onclick = handle(() => show(method.id));
     $("cards").append(card);
   }
+  const previous = node("button", "上一页"),
+    next = node("button", "下一页");
+  previous.disabled = methodPage === 0;
+  next.disabled = !result.nextCursor;
+  previous.onclick = handle(async () => {
+    methodPage--;
+    await list();
+  });
+  next.onclick = handle(async () => {
+    methodCursors[++methodPage] = result.nextCursor;
+    await list();
+  });
+  $("method-pages").replaceChildren(
+    previous,
+    node("span", `第 ${methodPage + 1} 页 · 共 ${result.total} 项`),
+    next,
+  );
 }
 $("search").onsubmit = handle(async (e) => {
   e.preventDefault();
+  methodCursors = [undefined];
+  methodPage = 0;
   await list();
 });
 async function show(id) {
   current = await rpc("inspectMethod", { id });
   const d = $("detail");
   d.replaceChildren(node("h2", current.title), node("p", current.goal));
+  d.append(
+    node(
+      "p",
+      `${labels[current.state]} · ${current.scopeId} · 修订 ${current.revision}`,
+    ),
+  );
+  const reference = field(
+    d,
+    "方法引用（可带回宿主任务）",
+    JSON.stringify({
+      kind: "method",
+      id: current.id,
+      revision: current.revision,
+    }),
+  );
+  reference.readOnly = true;
+  reference.className = "reference";
+  reference.onclick = () => reference.select();
   for (const [label, key] of [
     ["适用条件", "conditions"],
     ["例外", "exceptions"],
@@ -130,13 +231,16 @@ async function show(id) {
             ),
           );
       panel.append(details);
+      const restore = node("button", "用这版内容修改并送审");
+      restore.onclick = handle(() => editMethod(d, version));
+      details.append(restore);
     }
     d.append(panel);
   });
   d.append(state, history);
   const edit = node("button", "修改方法");
   edit.onclick = handle(() => editMethod(d));
-  const prepare = node("button", "为新任务准备");
+  const prepare = node("button", "关联宿主任务");
   prepare.onclick = handle(() => prepareMethod(d));
   const evidence = node("button", "查看依据");
   evidence.onclick = handle(async () => {
@@ -154,10 +258,68 @@ async function show(id) {
       value.evidence.forEach((e) =>
         panel.append(node("blockquote", `[${e.role}] ${e.excerpt}`)),
       );
+      if (value.state === "held") {
+        const supplement = node("button", "为这条经验补充证据");
+        supplement.onclick = handle(() => {
+          const form = node("section", "");
+          form.append(
+            node(
+              "p",
+              value.review?.question ??
+                "补充可核对的观察；提交不等于证据通过。",
+            ),
+          );
+          const text = field(form, "实际原文或观察", "", true);
+          const send = node("button", "提交补证");
+          send.onclick = handle(async () => {
+            const receipt = await rpc("submitMaterial", {
+              scopeId: value.scopeId,
+              verificationFor: {
+                kind: "experience",
+                id: value.id,
+                revision: value.revision,
+              },
+              segments: [{ text: text.value, role: "user" }],
+            });
+            form.replaceChildren(
+              node("p", "补证已接收，作业 " + receipt.jobId),
+            );
+            const check = node("button", "查询补证结果");
+            check.onclick = handle(async () =>
+              form.append(
+                node(
+                  "pre",
+                  JSON.stringify(
+                    await rpc("getJob", { id: receipt.jobId }),
+                    null,
+                    2,
+                  ),
+                ),
+              ),
+            );
+            form.append(check);
+          });
+          form.append(send);
+          panel.append(form);
+        });
+        panel.append(supplement);
+      }
     }
     d.append(panel);
   });
   d.append(edit, prepare, evidence);
+  const feedback = node("button", "评价或报告错误");
+  feedback.onclick = handle(() =>
+    feedbackForm(d, "method", current, () => show(id)),
+  );
+  const remove = node("button", "删除方法");
+  remove.onclick = handle(async () => {
+    if (!confirm("删除这个方法？删除后将不再推荐它。")) return;
+    await rpc("removeMethod", { id, expectedRevision: current.revision });
+    d.replaceChildren(node("p", "方法已删除。"));
+    await list();
+  });
+  d.append(feedback, remove);
   const format = node("select", "");
   format.setAttribute("aria-label", "导出格式");
   for (const [value, label] of [
@@ -194,6 +356,7 @@ document.querySelectorAll("[data-view]").forEach(
     (button.onclick = handle(async () => {
       [
         "methods",
+        "records",
         "materials",
         "settings",
         "effects",
@@ -201,6 +364,7 @@ document.querySelectorAll("[data-view]").forEach(
         "connections",
       ].forEach((id) => ($(id).hidden = id !== button.dataset.view));
       if (button.dataset.view === "settings") await renderSettings();
+      if (button.dataset.view === "records") await renderRecords();
       if (button.dataset.view === "sources") await renderSources();
       if (button.dataset.view === "connections") await renderConnections();
       if (button.dataset.view === "effects") {
@@ -273,15 +437,34 @@ function field(parent, label, value, multiline = false) {
   parent.append(wrapper);
   return input;
 }
-function editMethod(parent) {
-  const method = structuredClone(current),
+function selectField(parent, label, options, value) {
+  const wrapper = node("label", label),
+    input = node("select", "");
+  for (const [key, text] of options) {
+    const option = node("option", text);
+    option.value = key;
+    input.append(option);
+  }
+  if (value !== undefined) input.value = value;
+  wrapper.append(input);
+  parent.append(wrapper);
+  return input;
+}
+async function editMethod(parent, previous) {
+  const latest = structuredClone(current),
+    method = structuredClone(previous ?? current),
     panel = node("section", "");
   panel.append(
-    node("h3", "修改方法"),
+    node(
+      "h3",
+      previous ? `以修订 ${previous.revision} 为基础修改` : "修改方法",
+    ),
     node("p", "提交后暂停旧建议，依据审查通过后再启用新修订。"),
   );
+  parent.append(panel);
   const title = field(panel, "名称", method.title),
-    goal = field(panel, "目标", method.goal, true);
+    goal = field(panel, "目标", method.goal, true),
+    topics = field(panel, "主题（每行一项）", method.topics.join("\n"), true);
   const editConditions = (input, original) =>
     input.value
       .split("\n")
@@ -300,49 +483,279 @@ function editMethod(parent) {
     method.exceptions.map((c) => c.text).join("\n"),
     true,
   );
-  const instructions = method.steps.map((step) => ({
-    step,
-    input: field(panel, `步骤 ${step.stepId}`, step.instruction, true),
-  }));
-  const checks = field(
+  const loadedSupport = await Promise.allSettled(
+    method.supportRefs.map((ref) => rpc("inspect", { id: ref.id })),
+  );
+  const missing = loadedSupport.flatMap((result, index) =>
+    result.status === "rejected" ? [method.supportRefs[index].id] : [],
+  );
+  if (missing.length) {
+    panel.append(
+      node(
+        "p",
+        `以下依据已不可读取，无法安全提交这版内容：${missing.join("、")}。请先在经验页核对来源。`,
+      ),
+    );
+    return;
+  }
+  const support = loadedSupport.map((result) => result.value),
+    outdated = support.filter(
+      (experience, index) =>
+        experience.revision !== method.supportRefs[index].revision,
+    );
+  let updateSupport;
+  if (outdated.length) {
+    panel.append(node("h4", "原依据已更新"));
+    for (const experience of outdated)
+      panel.append(
+        node(
+          "p",
+          `${experience.conclusion} · 当前修订 ${experience.revision} · ${labels[experience.state]}`,
+        ),
+      );
+    updateSupport = field(panel, "送审时改用上述当前依据修订（仍需审查）", "");
+    updateSupport.type = "checkbox";
+    panel.append(node("p", "请先核对当前依据，再勾选送审。旧依据不会被恢复。"));
+  }
+  const stepArea = node("div", ""),
+    checkArea = node("div", "");
+  panel.append(
+    node("h4", "步骤与分支"),
+    node("p", "没有分支时按顺序进入下一步。每个分支只能指向后续步骤或结束。"),
+    stepArea,
+  );
+  const checkGroups = [
+    { key: "completionChecks", title: "完成检查", required: true },
+    { key: "stopConditions", title: "停止条件", required: false },
+  ];
+  const renderChecks = () => {
+    checkArea.replaceChildren();
+    for (const group of checkGroups) {
+      const area = node("div", "");
+      area.append(node("h4", group.title));
+      method[group.key].forEach((check, index) => {
+        const row = node("div", "");
+        row.className = "branch-editor";
+        const text = field(row, group.title, check.text, true);
+        text.oninput = () => {
+          check.text = text.value;
+        };
+        const targets = selectField(
+          row,
+          "适用步骤（不选表示整个方法，可多选）",
+          method.steps.map((s, i) => [
+            s.stepId,
+            `步骤 ${i + 1}：${s.instruction.slice(0, 55)}`,
+          ]),
+        );
+        targets.multiple = true;
+        for (const option of targets.options)
+          option.selected = check.stepIds?.includes(option.value) ?? false;
+        targets.onchange = () => {
+          const chosen = [...targets.selectedOptions].map(
+            (option) => option.value,
+          );
+          if (chosen.length) check.stepIds = chosen;
+          else delete check.stepIds;
+        };
+        const remove = node("button", "移除");
+        remove.disabled = group.required && method[group.key].length === 1;
+        remove.onclick = () => {
+          method[group.key].splice(index, 1);
+          renderChecks();
+        };
+        row.append(remove);
+        area.append(row);
+      });
+      const add = node("button", `添加${group.title}`);
+      add.disabled = method[group.key].length >= 4;
+      add.onclick = () => {
+        method[group.key].push({ text: "" });
+        renderChecks();
+      };
+      area.append(add);
+      checkArea.append(area);
+    }
+  };
+  const renderSteps = () => {
+    stepArea.replaceChildren();
+    method.steps.forEach((step, index) => {
+      const row = node("div", "");
+      row.className = "step-editor";
+      row.append(node("h4", `步骤 ${index + 1}`));
+      const instruction = field(row, "操作", step.instruction, true);
+      instruction.oninput = () => {
+        step.instruction = instruction.value;
+      };
+      const rationale = field(row, "理由（可选）", step.rationale ?? "");
+      rationale.oninput = () => {
+        if (rationale.value.trim()) step.rationale = rationale.value;
+        else delete step.rationale;
+      };
+      const sources = selectField(
+        row,
+        "支持这一步的经验（至少一项，可多选）",
+        support.map((e, i) => [
+          String(i),
+          `${e.conclusion} · 当前修订 ${e.revision}${e.revision !== method.supportRefs[i].revision ? "（已更新，提交前需确认）" : ""}`,
+        ]),
+      );
+      sources.multiple = true;
+      for (const option of sources.options)
+        option.selected = step.supportIndexes.includes(Number(option.value));
+      sources.onchange = () => {
+        step.supportIndexes = [...sources.selectedOptions].map((o) =>
+          Number(o.value),
+        );
+      };
+      for (const [offset, label] of [
+        [-1, "上移"],
+        [1, "下移"],
+      ]) {
+        const move = node("button", label);
+        move.disabled =
+          index + offset < 0 || index + offset >= method.steps.length;
+        move.onclick = () => {
+          [method.steps[index], method.steps[index + offset]] = [
+            method.steps[index + offset],
+            method.steps[index],
+          ];
+          renderSteps();
+          renderChecks();
+        };
+        row.append(move);
+      }
+      const remove = node("button", "删除步骤");
+      remove.disabled = method.steps.length === 1;
+      remove.onclick = handle(() => {
+        if (
+          method.steps.some(
+            (s) => s !== step && s.choices?.some((c) => c.next === step.stepId),
+          ) ||
+          [...method.completionChecks, ...method.stopConditions].some((c) =>
+            c.stepIds?.includes(step.stepId),
+          )
+        )
+          throw new Error("这个步骤仍被分支或检查引用，请先修改这些引用。");
+        method.steps.splice(index, 1);
+        renderSteps();
+        renderChecks();
+      });
+      row.append(remove);
+      for (const [choiceIndex, choice] of (step.choices ?? []).entries()) {
+        const branch = node("div", "");
+        branch.className = "branch-editor";
+        const when = field(branch, "分支条件", choice.when.text);
+        when.oninput = () => {
+          choice.when = { text: when.value };
+        };
+        const candidates = [
+          ["stop", "结束"],
+          ...method.steps
+            .slice(index + 1)
+            .map((s, i) => [
+              s.stepId,
+              `步骤 ${index + i + 2}：${s.instruction.slice(0, 55)}`,
+            ]),
+        ];
+        if (!candidates.some(([id]) => id === choice.next))
+          candidates.unshift([choice.next, "原目标已在前方，请重新选择"]);
+        const next = selectField(branch, "满足条件后", candidates, choice.next);
+        next.onchange = () => {
+          choice.next = next.value;
+        };
+        const removeChoice = node("button", "删除分支");
+        removeChoice.onclick = () => {
+          step.choices.splice(choiceIndex, 1);
+          if (!step.choices.length) delete step.choices;
+          renderSteps();
+        };
+        branch.append(removeChoice);
+        row.append(branch);
+      }
+      const branch = node("button", "添加分支");
+      branch.disabled = (step.choices?.length ?? 0) >= 4;
+      branch.onclick = () => {
+        (step.choices ??= []).push({ when: { text: "" }, next: "stop" });
+        renderSteps();
+      };
+      row.append(branch);
+      stepArea.append(row);
+    });
+  };
+  renderSteps();
+  const addStep = node("button", "添加步骤");
+  addStep.onclick = handle(() => {
+    if (method.steps.length >= 12)
+      throw new Error("一个方法最多 12 步，请拆成独立方法。");
+    method.steps.push({
+      stepId: crypto.randomUUID(),
+      instruction: "",
+      supportIndexes: [],
+    });
+    renderSteps();
+    renderChecks();
+  });
+  panel.append(addStep, checkArea);
+  renderChecks();
+  const reason = field(
     panel,
-    "完成检查（每行一项）",
-    method.completionChecks.map((c) => c.text).join("\n"),
+    "修改说明",
+    previous ? `基于修订 ${previous.revision} 的内容重新审查` : "",
     true,
   );
-  const reason = field(panel, "修改说明", "", true);
   const save = node("button", "提交审查"),
     cancel = node("button", "取消");
   cancel.onclick = () => panel.remove();
   save.onclick = handle(async () => {
-    const checkTexts = checks.value
-      .split("\n")
-      .map((v) => v.trim())
-      .filter(Boolean);
+    if (updateSupport && !updateSupport.checked)
+      throw new Error("原依据已更新，请核对并确认使用当前修订后再送审。");
+    if (updateSupport) {
+      if (outdated.some((e) => e.state !== "active"))
+        throw new Error("更新后的依据仍未可用，请先完成经验补证审查。");
+      method.supportRefs = method.supportRefs.map((ref, index) => ({
+        ...ref,
+        revision: support[index].revision,
+      }));
+    }
+    for (const [index, step] of method.steps.entries()) {
+      if (!step.instruction.trim() || !step.supportIndexes.length)
+        throw new Error(`请填写步骤 ${index + 1} 的操作并选择依据。`);
+      for (const choice of step.choices ?? []) {
+        if (!choice.when.text.trim())
+          throw new Error(`请填写步骤 ${index + 1} 的分支条件。`);
+        if (
+          choice.next !== "stop" &&
+          method.steps.findIndex((s) => s.stepId === choice.next) <= index
+        )
+          throw new Error(`步骤 ${index + 1} 的分支需指向后续步骤或结束。`);
+      }
+    }
+    if (!reason.value.trim()) throw new Error("请填写修改说明。");
     const result = await rpc("reviseMethod", {
-      id: method.id,
-      expectedRevision: method.revision,
+      id: latest.id,
+      expectedRevision: latest.revision,
       body: {
         title: title.value,
         goal: goal.value,
+        topics: topics.value
+          .split("\n")
+          .map((v) => v.trim())
+          .filter(Boolean),
         conditions: editConditions(conditions, method.conditions),
         exceptions: editConditions(exceptions, method.exceptions),
         applicability:
           conditions.value.trim() || exceptions.value.trim()
             ? "conditional"
             : "general",
-        steps: instructions.map(({ step, input }) => ({
-          ...step,
-          instruction: input.value,
-        })),
-        completionChecks: checkTexts.map((text, index) => ({
-          ...method.completionChecks[index],
-          text,
-        })),
+        steps: method.steps,
+        completionChecks: method.completionChecks,
+        stopConditions: method.stopConditions,
+        supportRefs: method.supportRefs,
         change: { ...method.change, kind: "correction", summary: reason.value },
       },
     });
-    await show(method.id);
+    await show(latest.id);
     await list();
     const status = node("p", "修改已接收，新修订等待审查。"),
       refresh = node("button", "检查审查结果");
@@ -354,67 +767,496 @@ function editMethod(parent) {
     $("detail").append(status, refresh);
   });
   panel.append(save, cancel);
-  parent.append(panel);
 }
 async function prepareMethod(parent) {
-  const method = structuredClone(current),
-    task = await rpc("startTask", {
-      scopeId: method.scopeId,
-      eventId: crypto.randomUUID(),
-    });
+  const method = structuredClone(current);
   const panel = node("section", "");
-  panel.append(node("h3", "本次任务的方法"));
+  panel.append(
+    node("h3", "关联宿主任务"),
+    node(
+      "p",
+      "选择正在进行的宿主任务，按该任务已有观察准备方法。继续工作和核实分支仍在宿主中进行。",
+    ),
+  );
   parent.append(panel);
-  let use;
+  const tasks = (await rpc("listTasks", { scopeId: method.scopeId })).filter(
+    (t) => !t.ended,
+  );
+  if (!tasks.length) {
+    panel.append(
+      node(
+        "p",
+        "这个范围内暂无进行中的宿主任务。可以先复制上方方法引用，带回宿主任务使用。",
+      ),
+    );
+    return;
+  }
+  const task = selectField(
+    panel,
+    "宿主任务",
+    tasks.map((t) => [
+      t.taskRef,
+      `${t.callerId} · ${new Date(t.createdAt).toLocaleString()} · ${t.taskRef}`,
+    ]),
+  );
+  const output = node("div", "");
+  let use,
+    preparationRequest = 0;
+  task.onchange = () => {
+    preparationRequest++;
+    use = undefined;
+    output.replaceChildren();
+  };
   const prepare = async () => {
+    const taskRef = task.value,
+      request = ++preparationRequest;
     const result = await rpc("prepareMethod", {
       methodId: method.id,
       revision: method.revision,
-      taskRef: task.taskRef,
+      taskRef,
       ...(use ? { methodUseRef: use } : {}),
       requestId: crypto.randomUUID(),
     });
+    if (request !== preparationRequest || task.value !== taskRef) return;
     use = result.methodUseRef ?? use;
-    panel.replaceChildren(node("h3", "本次任务的方法"));
+    output.replaceChildren(node("h4", "本次任务的方法"));
     if (result.status === "lead") {
-      panel.append(node("p", "需要先核实以下条件，再准备步骤。"));
+      output.append(
+        node("p", "请回到宿主核实以下条件。取得实际观察后再准备步骤。"),
+      );
       result.missingChecks.forEach((c) =>
-        panel.append(node("p", c.text ?? c.question ?? String(c))),
+        output.append(node("p", c.text ?? c.question ?? String(c))),
       );
     } else if (result.status === "guidance") {
       const steps = node("ol", "");
       result.steps.forEach((s) => steps.append(node("li", s.instruction)));
-      panel.append(steps);
+      output.append(steps);
       if (result.pendingDecision)
-        panel.append(node("p", "取得实际观察后才能选择后续分支。"));
+        output.append(node("p", "取得实际观察后才能选择后续分支。"));
       result.completionChecks.forEach((c) =>
-        panel.append(node("p", `完成检查：${c.text}`)),
+        output.append(node("p", `完成检查：${c.text}`)),
       );
     } else
-      panel.append(
+      output.append(
         node(
           "p",
           `准备结果：${result.status}${result.reason ? " · " + result.reason : ""}`,
         ),
       );
-    const refresh = node("button", "重新准备");
-    refresh.onclick = handle(prepare);
-    const end = node("button", "结束本次任务");
-    end.onclick = handle(async () => {
-      await rpc("observeTask", {
-        taskRef: task.taskRef,
-        eventId: crypto.randomUUID(),
-        text: "用户结束显式准备任务",
-        values: {},
-        completedStepIds: [],
-        conditionResults: {},
-        ended: true,
-      });
-      panel.replaceChildren(node("p", "本次任务已结束。"));
-    });
-    panel.append(refresh, end);
+    if (use) {
+      const reference = field(
+        output,
+        "带回宿主的任务引用",
+        JSON.stringify({
+          taskRef,
+          methodId: method.id,
+          revision: method.revision,
+          methodUseRef: use,
+        }),
+      );
+      reference.readOnly = true;
+      reference.onclick = () => reference.select();
+      const rate = node("button", "评价这次使用");
+      const methodUseRef = use;
+      rate.onclick = handle(() => rateUseForm(output, taskRef, methodUseRef));
+      output.append(rate);
+    }
   };
-  await prepare();
+  const refresh = node("button", "按任务观察准备");
+  refresh.onclick = handle(prepare);
+  panel.append(refresh, output);
+}
+function feedbackForm(parent, kind, value, refresh) {
+  const target = { kind, id: value.id, revision: value.revision },
+    panel = node("section", "");
+  panel.append(node("h3", "评价与纠正"));
+  const rating = selectField(panel, "评价", [
+    ["helpful", "有帮助"],
+    ["irrelevant", "不适用"],
+    ["incorrect", "有错误，需要纠正"],
+  ]);
+  const correction = field(panel, "说明或建议修订的内容", "", true);
+  panel.append(
+    node("p", "报告错误会暂停当前内容。补充证据并通过审查后，新内容才可使用。"),
+  );
+  const save = node("button", "提交评价");
+  save.onclick = handle(async () => {
+    if (rating.value === "incorrect" && !correction.value.trim())
+      throw new Error("请说明哪里有误、应如何修订。");
+    await rpc("feedback", {
+      target,
+      rating: rating.value,
+      ...(correction.value.trim()
+        ? { correctionText: correction.value.trim() }
+        : {}),
+    });
+    await refresh();
+    $("notice").textContent =
+      rating.value === "incorrect"
+        ? "纠正已记录，当前内容等待补证审查。"
+        : "评价已记录。";
+  });
+  panel.append(save);
+  parent.append(panel);
+}
+function rateUseForm(parent, taskRef, methodUseRef) {
+  const panel = node("section", "");
+  panel.append(node("h3", "评价这次使用"));
+  const rating = selectField(panel, "实际感受", [
+      ["helpful", "有帮助"],
+      ["irrelevant", "不适用"],
+      ["incorrect", "指导有误"],
+    ]),
+    text = field(panel, "说明（可选）", "", true);
+  const save = node("button", "保存评价");
+  save.onclick = handle(async () => {
+    const receipt = await rpc("rateMethodUse", {
+      taskRef,
+      methodUseRef,
+      rating: rating.value,
+      ...(text.value.trim() ? { text: text.value.trim() } : {}),
+    });
+    const rejected = receipt.results?.find(
+      (result) => !["accepted", "duplicate"].includes(result.status),
+    );
+    if (rejected)
+      throw new Error(`评价未保存：${rejected.reason ?? rejected.status}`);
+    panel.replaceChildren(node("p", "这次使用的评价已记录。"));
+  });
+  panel.append(save);
+  parent.append(panel);
+}
+function jobControls(parent, receipt, refresh) {
+  const panel = node("section", ""),
+    status = node("pre", `已接收，作业 ${receipt.jobId}`);
+  let jobId = receipt.jobId;
+  const check = node("button", "查询复盘结果"),
+    cancel = node("button", "取消作业"),
+    retry = node("button", "重试");
+  retry.hidden = true;
+  const read = async () => {
+    const job = await rpc("getJob", { id: jobId });
+    status.textContent = JSON.stringify(job, null, 2);
+    cancel.disabled = ["completed", "failed", "canceled"].includes(job.status);
+    retry.hidden = !["failed", "canceled"].includes(job.status);
+    if (job.status === "completed") {
+      const reload = node("button", "查看最新内容");
+      reload.onclick = handle(refresh);
+      if (!panel.querySelector("[data-reload]")) {
+        reload.dataset.reload = "true";
+        panel.append(reload);
+      }
+    }
+  };
+  check.onclick = handle(read);
+  cancel.onclick = handle(async () => {
+    await rpc("cancelJob", { id: jobId });
+    await read();
+  });
+  retry.onclick = handle(async () => {
+    const next = await rpc("retryJob", { id: jobId });
+    jobId = next.jobId;
+    await read();
+  });
+  panel.append(status, check, cancel, retry);
+  parent.append(panel);
+}
+function supplementExperience(parent, experience) {
+  const panel = node("section", "");
+  panel.append(
+    node("h3", "补充核实依据"),
+    node(
+      "p",
+      experience.review?.question ??
+        "补充可核对的观察，说明这条经验如何得到验证。",
+    ),
+  );
+  const evidence = field(panel, "实际原文或观察", "", true),
+    send = node("button", "提交补证");
+  send.onclick = handle(async () => {
+    if (!evidence.value.trim()) throw new Error("请填写可核对的原文或观察。");
+    const receipt = await rpc("submitMaterial", {
+      scopeId: experience.scopeId,
+      verificationFor: {
+        kind: "experience",
+        id: experience.id,
+        revision: experience.revision,
+      },
+      segments: [{ text: evidence.value.trim(), role: "user" }],
+    });
+    send.disabled = true;
+    jobControls(panel, receipt, () => showRecord("experience", experience.id));
+  });
+  panel.append(send);
+  parent.append(panel);
+}
+function resetRecordStates() {
+  const states =
+    $("record-kind").value === "experience"
+      ? ["active", "held", "disabled"]
+      : ["succeeded", "failed", "partial", "abandoned", "unknown"];
+  $("record-state").replaceChildren(node("option", "全部状态"));
+  $("record-state").firstChild.value = "";
+  for (const state of states) {
+    const option = node("option", labels[state]);
+    option.value = state;
+    $("record-state").append(option);
+  }
+}
+$("record-kind").onchange = handle(async () => {
+  resetRecordStates();
+  recordPage = 0;
+  await renderRecords();
+});
+$("record-search").onsubmit = handle(async (event) => {
+  event.preventDefault();
+  recordPage = 0;
+  await renderRecords();
+});
+$("new-case").onclick = () => {
+  const d = $("record-detail");
+  d.replaceChildren(
+    node("h2", "记录工作案例"),
+    node("p", "写下实际尝试和观察。复盘会保留依据，不确定的结果可以继续补充。"),
+  );
+  const scope = selectField(
+      d,
+      "范围",
+      settings.map((s) => [s.scopeId, s.scopeId]),
+      $("record-scope").value || settings[0]?.scopeId,
+    ),
+    topic = field(d, "主题", ""),
+    goal = field(d, "工作目标", "", true),
+    context = field(d, "背景与限制", "", true),
+    attempts = field(d, "实际尝试、观察及原文依据", "", true),
+    status = selectField(
+      d,
+      "结果",
+      ["unknown", "partial", "succeeded", "failed", "abandoned"].map((key) => [
+        key,
+        labels[key],
+      ]),
+    ),
+    result = field(d, "结果说明与仍待确认的问题", "", true),
+    submit = node("button", "提交案例复盘");
+  submit.onclick = handle(async () => {
+    if (!topic.value.trim() || !goal.value.trim() || !attempts.value.trim())
+      throw new Error("请填写主题、目标和实际尝试。");
+    const text = `主题：${topic.value.trim()}\n工作目标：${goal.value.trim()}\n背景与限制：${context.value.trim()}\n实际尝试与观察：${attempts.value.trim()}\n用户报告结果：${labels[status.value]}\n结果说明与未解决问题：${result.value.trim()}`;
+    const receipt = await rpc("submitMaterial", {
+      scopeId: scope.value,
+      segments: [{ role: "user", text }],
+    });
+    submit.disabled = true;
+    jobControls(d, receipt, async () => {
+      $("record-kind").value = "work_case";
+      resetRecordStates();
+      recordPage = 0;
+      await renderRecords();
+    });
+  });
+  d.append(submit);
+};
+resetRecordStates();
+async function renderRecords() {
+  const kind = $("record-kind").value,
+    query = $("record-query").value.trim().toLowerCase(),
+    scope = $("record-scope").value,
+    state = $("record-state").value;
+  const rows = (await rpc(kind === "experience" ? "browse" : "browseWorkCases"))
+    .filter(
+      (row) =>
+        (!scope || row.scopeId === scope) &&
+        (!state || (row.state ?? row.result?.status) === state) &&
+        (!query || JSON.stringify(row).toLowerCase().includes(query)),
+    )
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  recordPage = Math.min(
+    recordPage,
+    Math.max(0, Math.ceil(rows.length / pageSize) - 1),
+  );
+  $("record-cards").replaceChildren();
+  for (const row of rows.slice(
+    recordPage * pageSize,
+    (recordPage + 1) * pageSize,
+  )) {
+    const card = node("section", "");
+    card.className = "card";
+    card.tabIndex = 0;
+    card.append(
+      node("h2", row.topic ?? row.conclusion),
+      node(
+        "p",
+        `${row.scopeId} · ${labels[row.state ?? row.result?.status]} · 修订 ${row.revision}`,
+      ),
+    );
+    card.onclick = handle(() => showRecord(kind, row.id));
+    card.onkeydown = (event) => {
+      if (["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        card.click();
+      }
+    };
+    $("record-cards").append(card);
+  }
+  if (!rows.length) $("record-cards").append(node("p", "暂无符合条件的内容。"));
+  const previous = node("button", "上一页"),
+    next = node("button", "下一页");
+  previous.disabled = recordPage === 0;
+  next.disabled = (recordPage + 1) * pageSize >= rows.length;
+  previous.onclick = handle(async () => {
+    recordPage--;
+    await renderRecords();
+  });
+  next.onclick = handle(async () => {
+    recordPage++;
+    await renderRecords();
+  });
+  $("record-pages").replaceChildren(
+    previous,
+    node("span", `第 ${recordPage + 1} 页 · 共 ${rows.length} 项`),
+    next,
+  );
+}
+async function showRecord(kind, id) {
+  const value = await rpc(
+      kind === "experience" ? "inspect" : "inspectWorkCase",
+      { id },
+    ),
+    d = $("record-detail");
+  d.replaceChildren(
+    node("h2", value.topic ?? value.conclusion),
+    node("p", `${value.scopeId} · 修订 ${value.revision}`),
+  );
+  const reference = field(
+    d,
+    "内容引用",
+    JSON.stringify({ kind, id, revision: value.revision }),
+  );
+  reference.readOnly = true;
+  reference.onclick = () => reference.select();
+  if (kind === "work_case") {
+    d.append(node("h3", "目标与背景"), node("p", value.goal));
+    for (const [key, text] of Object.entries(value.context))
+      d.append(
+        node("p", `${key}：${Array.isArray(text) ? text.join("、") : text}`),
+      );
+    d.append(node("h3", "尝试与观察"));
+    for (const attempt of value.attempts)
+      d.append(
+        node("h4", attempt.action),
+        node("p", attempt.observation),
+        node("p", labels[attempt.outcome]),
+      );
+    d.append(
+      node("h3", "结果"),
+      node("p", `${labels[value.result.status]}：${value.result.summary}`),
+    );
+    if (value.unresolved.length)
+      d.append(
+        node("h3", "仍待确认"),
+        ...value.unresolved.map((text) => node("p", text)),
+      );
+    if (value.coverage.length)
+      d.append(
+        node("h3", "记录范围"),
+        ...value.coverage.map((text) => node("p", text)),
+      );
+    if (value.taskRef) d.append(node("p", `关联任务：${value.taskRef}`));
+    for (const use of value.methodUses) {
+      const rate = node(
+        "button",
+        `评价方法 ${use.method.id.slice(0, 8)} 的使用`,
+      );
+      rate.onclick = handle(() =>
+        rateUseForm(d, use.taskRef, use.methodUseRef),
+      );
+      d.append(rate);
+    }
+    const supplement = node("button", "补充结果或后续观察");
+    supplement.onclick = () => {
+      const panel = node("section", "");
+      const result = selectField(
+          panel,
+          "观察到的结果",
+          ["unknown", "partial", "succeeded", "failed", "abandoned"].map(
+            (status) => [status, labels[status]],
+          ),
+        ),
+        text = field(panel, "实际结果、尝试及可核对的依据", "", true),
+        send = node("button", "提交结果复盘");
+      send.onclick = handle(async () => {
+        if (!text.value.trim()) throw new Error("请填写实际结果和依据。");
+        const receipt = await rpc("submitMaterial", {
+          scopeId: value.scopeId,
+          caseFor: { kind: "work_case", id, revision: value.revision },
+          segments: [
+            {
+              role: "user",
+              text: `用户报告结果：${labels[result.value]}。\n${text.value.trim()}`,
+            },
+          ],
+        });
+        send.disabled = true;
+        jobControls(panel, receipt, () => showRecord(kind, id));
+      });
+      panel.append(send);
+      d.append(panel);
+    };
+    d.append(supplement);
+  } else {
+    d.append(
+      node(
+        "p",
+        `${value.level} · ${labels[value.state]} · ${value.assessment}`,
+      ),
+    );
+    for (const [key, title] of [
+      ["conditions", "适用条件"],
+      ["exceptions", "例外"],
+    ])
+      if (value[key].length)
+        d.append(
+          node("h3", title),
+          ...value[key].map((item) => node("p", item.text)),
+        );
+    if (value.review)
+      d.append(
+        node("h3", "待核实问题"),
+        node("p", value.review.question),
+        node(
+          "p",
+          `核实期限：${new Date(value.review.reviewBy).toLocaleString()}`,
+        ),
+      );
+    const feedback = node("button", "评价或提交修订意见");
+    feedback.onclick = handle(() =>
+      feedbackForm(d, kind, value, () => showRecord(kind, id)),
+    );
+    d.append(feedback);
+    if (value.state === "held") {
+      const supplement = node("button", "补充证据并审查");
+      supplement.onclick = () => supplementExperience(d, value);
+      d.append(supplement);
+    }
+    const state = node(
+      "button",
+      value.state === "disabled" ? "重新启用" : "停用经验",
+    );
+    state.onclick = handle(async () => {
+      await rpc("setState", {
+        id,
+        expectedRevision: value.revision,
+        state: value.state === "disabled" ? "active" : "disabled",
+      });
+      await showRecord(kind, id);
+      await renderRecords();
+    });
+    d.append(state);
+  }
+  d.append(node("h3", "原文依据"));
+  for (const evidence of value.evidence)
+    d.append(node("blockquote", `[${evidence.role}] ${evidence.excerpt}`));
 }
 async function renderSources() {
   const container = $("source-list");

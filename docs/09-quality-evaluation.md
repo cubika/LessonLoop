@@ -76,6 +76,6 @@ runStatus=completed/error/blocked表示执行过程；gateStatus=passed/failed/b
 
 ## 现有工具与实施
 
-当前可用的是npm run validate:docs、npm run validate:evals、npm run typecheck、npm test及Copilot协议探针。evals/lib/experience.ts为Experience子集检查，task-runner基于两个实际文件任务；没有WorkCase/Method学习或官方三组对照。
+当前检查入口包括文档/材料校验、类型检查、单元测试、真实PostgreSQL集成测试和构建。scripts中已有真实provider的方法生成、修订、演进、补证及宿主局部验证，结果见[运行记录](research/2026-09-14-implementation/README.md)。evals/lib/experience.ts仍是Experience子集工具，task-runner基于两个实际文件任务；已有evaluate:product开发三组执行器，复用官方SDK的retain/知识归纳/reflect与产品核心；它不支持官方Agent hooks完整基线，要求该能力的profile会明确阻止。正式材料规模与对照验收仍未完成。
 
 先完成P0最小切片和可判定的报告，再在P1/P2扩完整学习和方法变化，P3验证正式界面、宿主、回顾及发行。材料说明见[evals](../evals/README.md)，宿主说明见[probes](../probes/copilot/README.md)。

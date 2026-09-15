@@ -1,6 +1,6 @@
 # 接口与 Agent 接入
 
-日期：2026-09-14。状态：当前应用合同，尚未实现。方法名属于 LessonLoop API，字段与容量见[07](07-storage-model.md)。
+日期：2026-09-15。状态：当前应用合同，主要接口已有实现，剩余差距见[13](13-implementation-plan.md)；操作表包含尚未开放的目标接口。方法名属于 LessonLoop API，字段与容量见[07](07-storage-model.md)。
 
 ## 调用原则
 
@@ -13,9 +13,9 @@ ObjectRef={kind,id,revision} 用于跨对象结果、反馈、纠正和回执。
 | 操作 | 主要输入 | 输出与行为 |
 |---|---|---|
 | submitMaterial | scopeId、segments、可选context/caseFor/verificationFor | material/job引用，可靠接收后回报；未形成案例也可提炼经验 |
-| submitWorkCase | scope、案例片段、可选caseId/expectedRevision | WorkCase修订和LearningJob；支持自主探索、失败或部分结果 |
-| appendCaseResult | caseId/expectedRevision、eventId、动作或结果及原文 | 幂等追加或冲突；不覆盖旧观察，实际纠正须指定目标 |
-| reviewTopic | scope、主题、caseRefs/methodRefs、预算profile | 有限复盘作业，不执行真实任务 |
+| submitWorkCase | 与submitMaterial相同的scopeId/segments，可选caseFor | 复用材料接收及案例综合，返回material/job引用；案例修订在作业通过后形成 |
+| appendCaseResult | scopeId、caseId/expectedRevision、segments；请求幂等键 | 转为submitMaterial.caseFor，保留原案例/任务关联及旧观察；实际纠正须指定目标 |
+| reviewTopic | scopeId、topic | 在当前有界材料中创建复盘作业，不执行真实任务 |
 | getJob | jobId | 当前阶段、产出ObjectRef、处置与回执；正常完成可以零产出 |
 | cancelJob | jobId | 停止未发的新步骤；已发原生操作须确认，不能伪报取消成功 |
 
@@ -27,8 +27,9 @@ ObjectRef={kind,id,revision} 用于跨对象结果、反馈、纠正和回执。
 
 | 操作 | 行为 |
 |---|---|
-| searchMethods | 按query、scopeIds、context和筛选检索当前已发布方法摘要；结果不授予执行资格 |
+| searchMethods | 按query和授权范围内scopeIds检索已发布方法摘要；当前条件在prepare中核对 |
 | browseMethods | UI/CLI按scope、状态、主题、query和cursor分页查看有权限的active/held/disabled方法；不自动注入，cursor绑定筛选范围 |
+| pinMethod | 用户按id/pinned保存常用标记，不改变方法正文或发布修订 |
 | inspectMethod | 查看当前方法、步骤、来源和状态，可查看有权限的暂停项 |
 | methodHistory | 查看仍保留的旧版与变化，缺失内容明确标注 |
 | prepareMethod | 为任务准备当前可执行前缀，见下节 |
@@ -41,7 +42,7 @@ ObjectRef={kind,id,revision} 用于跨对象结果、反馈、纠正和回执。
 
 ## 方法使用与结果回传
 
-prepareMethod 输入 methodId/revision、taskRef、query、scopeIds、context/contextEvidence、viewMode=auto/expanded。续用还带 methodUseRef、completedStepIds。taskRef 由可信宿主绑定；UI/CLI独立使用时由核心生成，不能复用一个任意模型字符串冒充其他任务。
+prepareMethod 输入 methodId/revision、taskRef、requestId、viewMode=auto/expanded。当前上下文来自核心已保存的任务观察，宿主先recordHostObservation，再reassessTask。续用还带 methodUseRef、completedStepIds。taskRef 由可信宿主绑定；UI/CLI独立使用时由核心生成，不能复用一个任意模型字符串冒充其他任务。
 
 核心先核对授权、当前修订、发布状态、有效期、来源和支持经验，再判断方法全局条件及本次路径。已知例外优先于未知项。搜索相关不等于适用，方法指定也不跳过检查。
 
@@ -65,7 +66,9 @@ PrepareContext由核心计数，预算和期限见07。正常方法步骤不算�
 
 recall、browse、inspect、revise、setState、remove 用于 Experience。recall 同样在资格过滤后限额，返回guidance或lead；browse/inspect可显式查看有权限的held/disabled项，不转为自动指导。semantic、exact实体和field检索能力分别声明，exceptions字段只供browse调查。
 
-recall输入query、scopeIds、context，可选includeLeads、target={id,revision}和contextEvidence。线索列出条件/例外的具体缺口；补查后定向重评，不将当次适用性永久写回。跨scope材料不能自动用于修改原范围的经验。
+recall输入query、scopeIds、context，可选includeLeads、target={id,revision}和contextEvidence={taskRef,observationIds?}。补查只引用核心保存的宿主观察，绑定目标修订并核对观察变化；普通context不能自授可信身份。线索列出条件/例外的具体缺口；补查后定向重评，不将当次适用性永久写回。跨scope材料不能自动用于修改原范围的经验。
+
+经验revise({id,expectedRevision,correctionText})复用用户incorrect反馈，先暂停，再通过verificationFor补证审查；不直接把用户改稿当已验证事实。
 
 feedback输入ObjectRef、helpful/irrelevant/incorrect和可选correctionText。helpful是评价，irrelevant是本次不相关，均不直接增加事实支持。可信用户明确纠错可先暂停指定旧版；代理怀疑形成待检查反馈，不冒领用户修改意图。
 
@@ -87,6 +90,8 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 ## Copilot 适配
 
 首个工作宿主是Copilot CLI，P0前固定候选官方包与版本，比较统一coding-agents和专用copilot-cli中实际可用模块。官方VS Code Copilot和通用Agent Plugin的Skills+MCP能力不等同CLI生命周期hooks，见[官方核查](research/2026-09-14-agent-integration-reuse/README.md)。
+
+官方专用插件已有会话开始召回、按轮次写回、结束保存及工具记录选项；统一包也提供会话写回、注册和日志。分别固定版本并验证覆盖后复用。LessonLoop补充真实任务身份、方法修订、准备续用与结果关联；当前适配未接通的官方能力归为接入工作。
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
@@ -112,6 +117,8 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 学习、自动推荐、效果回顾、提醒以及scope配置分别存储。关闭学习停止新摄取和新自动复盘，已接收作业默认完成，可显式取消；自动推荐关闭仍可显式准备。上游历史导入、git摄取和自行更新默认值按产品配置固定，不隐式扩大范围。
 
 ## 本地效果回顾接口
+
+listTasks按用户授权范围列出当前任务供页面关联。rateMethodUse({taskRef,methodUseRef,rating,text?})仅接收真实用户评价，检查已返回的方法引用、回顾开关和清空边界；用户不能通过recordTaskObservation冒充宿主事件。
 
 recordTaskObservation是可信适配专用批量入口，事件包含eventId、taskRef、kind、occurredAt、可选responseRef/methodUseRef/ObjectRef/stepId和短证据。kind包括task_started/task_ended/delivery/usage/outcome/user_rating/collection_gap。核心按真实通道确定known/unknown，不能由模型赋值获得可信身份。
 

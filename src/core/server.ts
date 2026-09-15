@@ -81,7 +81,20 @@ export async function dispatch(
     case "reviews.dismiss":
       return new Reviews(core.store).dismiss(p, identifier.parse(input).id);
     case "recordTaskObservation":
+      if (p.channel !== "host")
+        throw new ApiError("trusted_host_required", 403);
       return new Effects(core.store).record(p, input);
+    case "rateMethodUse":
+      return core.rateMethodUse(p, input, key);
+    case "listTasks": {
+      const v = z
+        .object({ scopeId: z.string().optional() })
+        .strict()
+        .parse(input);
+      return core.listTasks(p, v.scopeId);
+    }
+    case "pinMethod":
+      return core.pinMethod(p, input);
     case "getEffectSummary":
       return new Effects(core.store).summary(p.scopes);
     case "listEffectCases":
@@ -98,7 +111,32 @@ export async function dispatch(
     case "settings.update":
       return core.configure(p, input);
     case "submitMaterial":
+    case "submitWorkCase":
       return core.submitMaterial(p, input, key);
+    case "appendCaseResult": {
+      const v = z
+        .object({
+          caseId: z.string(),
+          expectedRevision: z.number().int().positive(),
+          scopeId: z.string(),
+          segments: z.array(z.unknown()).min(1).max(16),
+        })
+        .strict()
+        .parse(input);
+      return core.submitMaterial(
+        p,
+        {
+          scopeId: v.scopeId,
+          segments: v.segments,
+          caseFor: {
+            kind: "work_case",
+            id: v.caseId,
+            revision: v.expectedRevision,
+          },
+        },
+        key,
+      );
+    }
     case "listSources":
       return core.listSources(p);
     case "controlSource":
@@ -122,20 +160,22 @@ export async function dispatch(
     }
     case "searchMethods": {
       const v = z
-        .object({ query: z.string().min(1).max(2048) })
-        .strict()
-        .parse(input);
-      return core.search(p, v.query);
-    }
-    case "browseMethods": {
-      const v = z
         .object({
-          query: z.string().max(2048).optional(),
-          state: z.enum(["active", "held", "disabled"]).optional(),
+          query: z.string().min(1).max(2048),
+          scopeIds: z.array(z.string()).max(32).optional(),
         })
         .strict()
         .parse(input);
-      return core.browse(p, "method", v.query, v.state);
+      return core.search(
+        {
+          ...p,
+          scopes: p.scopes.filter((s) => !v.scopeIds || v.scopeIds.includes(s)),
+        },
+        v.query,
+      );
+    }
+    case "browseMethods": {
+      return core.browseMethods(p, input);
     }
     case "inspectMethod":
       return core.inspect(p, "method", identifier.parse(input).id);
@@ -157,6 +197,23 @@ export async function dispatch(
     }
     case "feedback":
       return core.feedback(p, input);
+    case "revise": {
+      if (p.channel !== "user")
+        throw new ApiError("user_operation_required", 403);
+      const v = z
+        .object({
+          id: z.string(),
+          expectedRevision: z.number().int().positive(),
+          correctionText: z.string().min(1).max(2048),
+        })
+        .strict()
+        .parse(input);
+      return core.feedback(p, {
+        target: { kind: "experience", id: v.id, revision: v.expectedRevision },
+        rating: "incorrect",
+        correctionText: v.correctionText,
+      });
+    }
     case "inspectWorkCase":
       return core.inspect(p, "work_case", identifier.parse(input).id);
     case "browseWorkCases":
@@ -187,11 +244,7 @@ export async function dispatch(
       return core.remove(p, "experience", v.id, v.expectedRevision);
     }
     case "recall": {
-      const v = z
-        .object({ query: z.string().min(1).max(2048) })
-        .strict()
-        .parse(input);
-      return core.recall(p, v.query);
+      return core.recallRequest(p, input);
     }
     case "startTask": {
       const v = z

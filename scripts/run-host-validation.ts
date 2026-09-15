@@ -7,6 +7,7 @@ import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { apiServer } from "../src/core/server.js";
+import { Effects } from "../src/core/effects.js";
 const root = resolve(".local-validation");
 const report = JSON.parse(
   await readFile(join(root, "results/p0-method-path.json"), "utf8"),
@@ -16,9 +17,14 @@ const secret = JSON.parse(
 );
 const folder = join(root, `host-validation-${Date.now()}`);
 await mkdir(folder, { recursive: true });
+const workspace = join(folder, "workspace");
+await mkdir(workspace, { recursive: true });
+const prompt =
+  "Read fixture.txt once. Diagnose the generated client field that disappears after regeneration. If the LessonLoop hook supplied a method, call lessonloop-reassessTask once with its exact taskRef, method.id, revision and methodUseRef in the input object, then call lessonloop-prepareMethod once with the same references and the returned completedStepIds. Stop after these three tools and explain the remaining check. If any required reference is missing or a tool returns an error, stop immediately and report that limitation. Do not guess identifiers, inspect other files, retry tools, edit files, or claim task success.";
 const plugin = join(folder, "plugin");
 await mkdir(join(plugin, "com.github.copilot/hooks"), { recursive: true });
 const token = randomBytes(32).toString("hex");
+const agentToken = randomBytes(32).toString("hex");
 const principal = {
   id: "host-validation",
   channel: "host" as const,
@@ -33,91 +39,141 @@ const core = new CoreService(
   new HindsightEngine("http://127.0.0.1:19888", secret.engineToken),
 );
 const settings = (await core.getSettings(principal))[0]!;
-await core.configure(
-  { ...principal, channel: "user" },
-  {
-    scopeId: report.scope,
-    expectedRevision: settings.revision,
-    learning: false,
-    recommendation: true,
-    review: false,
-    notifications: false,
-  },
-);
-const server = apiServer(core, [{ token, principal }]);
-await new Promise<void>((done) => server.listen(19433, "127.0.0.1", done));
-const config = join(folder, "host-config.json");
-await writeFile(
-  config,
-  JSON.stringify({
-    baseUrl: "http://127.0.0.1:19433",
-    token,
-    scopeId: report.scope,
-    allowedRoots: [folder],
-    stateRoot: join(folder, "state"),
-  }),
-);
-await writeFile(
-  join(plugin, "plugin.json"),
-  JSON.stringify({
-    $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-    name: "lessonloop-validation",
-    version: "0.0.1",
-    description: "Local product method integration validation",
-  }),
-);
-const events = ["userPromptTransformed", "postToolUse", "sessionEnd"];
-await writeFile(
-  join(plugin, "com.github.copilot/hooks/hooks.json"),
-  JSON.stringify({
-    version: 1,
-    hooks: Object.fromEntries(
-      events.map((e) => [
-        e,
-        [
-          {
-            type: "command",
-            exec: process.execPath,
-            args: [resolve("dist/adapters/copilot/hook.js"), e],
-            cwd: folder,
-            timeoutSec: 30,
-            env: { LESSONLOOP_HOST_CONFIG: config },
-          },
-        ],
-      ]),
-    ),
-  }),
-);
-await writeFile(
-  join(folder, "fixture.txt"),
-  "The pipeline copies schema.json to client.json. Generated edits are overwritten.",
-);
-const isolatedHome = join(folder, "copilot-home");
-await mkdir(isolatedHome, { recursive: true });
-const accountConfig = parse(
-  await readFile(
-    join(process.env.USERPROFILE!, ".copilot/config.json"),
-    "utf8",
-  ),
-);
-await writeFile(
-  join(isolatedHome, "config.json"),
-  JSON.stringify({
-    lastLoggedInUser: accountConfig.lastLoggedInUser,
-    loggedInUsers: accountConfig.loggedInUsers,
-    trustedFolders: [folder],
-  }),
-);
 const result: Record<string, unknown> = {
   startedAt: new Date().toISOString(),
   classification: "real_copilot_product_hook",
   scope: report.scope,
+  status: "failed",
+  diagnostics: [],
 };
+const server = apiServer(core, [
+  { token, principal },
+  {
+    token: agentToken,
+    principal: {
+      ...principal,
+      id: "host-validation-agent",
+      channel: "agent",
+      taskOwnerId: principal.id,
+    },
+  },
+]);
 try {
-  const executable = join(
-    process.env.LOCALAPPDATA!,
-    "Microsoft/WinGet/Links/copilot.exe",
+  await core.configure(
+    { ...principal, channel: "user" },
+    {
+      scopeId: report.scope,
+      expectedRevision: settings.revision,
+      learning: true,
+      recommendation: true,
+      review: true,
+      notifications: false,
+    },
   );
+  let available = await core.search(principal, prompt);
+  for (let attempt = 0; !available.results.length && attempt < 12; attempt++) {
+    await core.syncProjections([report.scope]);
+    available = await core.search(principal, prompt);
+  }
+  if (!available.results.length)
+    throw new Error("no_eligible_method_for_host_validation");
+  result.preflightMethod = available.results[0]!.method;
+  await new Promise<void>((done, reject) => {
+    server.once("error", reject);
+    server.listen(19433, "127.0.0.1", done);
+  });
+  const config = join(folder, "host-config.json");
+  await writeFile(
+    config,
+    JSON.stringify({
+      baseUrl: "http://127.0.0.1:19433",
+      token,
+      scopeId: report.scope,
+      allowedRoots: [workspace],
+      stateRoot: join(folder, "state"),
+    }),
+  );
+  await writeFile(
+    join(plugin, "plugin.json"),
+    JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "lessonloop-validation",
+      version: "0.0.1",
+      description: "Local product method integration validation",
+    }),
+  );
+  const events = [
+    "sessionStart",
+    "userPromptTransformed",
+    "postToolUse",
+    "agentStop",
+    "sessionEnd",
+  ];
+  await writeFile(
+    join(plugin, "com.github.copilot/hooks/hooks.json"),
+    JSON.stringify({
+      version: 1,
+      hooks: Object.fromEntries(
+        events.map((e) => [
+          e,
+          [
+            {
+              type: "command",
+              exec: process.execPath,
+              args: [resolve("dist/adapters/copilot/hook.js"), e],
+              cwd: workspace,
+              timeoutSec: 60,
+              env: { LESSONLOOP_HOST_CONFIG: config },
+            },
+          ],
+        ]),
+      ),
+    }),
+  );
+  await writeFile(
+    join(workspace, "fixture.txt"),
+    "The pipeline copies schema.json to client.json. Generated edits are overwritten.",
+  );
+  const mcpConfig = join(folder, "mcp-config.json");
+  await writeFile(
+    mcpConfig,
+    JSON.stringify({
+      mcpServers: {
+        lessonloop: {
+          type: "stdio",
+          command: process.execPath,
+          args: [resolve("dist/adapters/copilot/mcp.js")],
+          env: {
+            LESSONLOOP_AGENT_CONFIG_JSON: JSON.stringify({
+              baseUrl: "http://127.0.0.1:19433",
+              token: agentToken,
+            }),
+          },
+          tools: ["reassessTask", "prepareMethod"],
+        },
+      },
+    }),
+  );
+  const isolatedHome = join(folder, "copilot-home");
+  await mkdir(isolatedHome, { recursive: true });
+  const accountConfig = parse(
+    await readFile(
+      join(process.env.USERPROFILE!, ".copilot/config.json"),
+      "utf8",
+    ),
+  );
+  await writeFile(
+    join(isolatedHome, "config.json"),
+    JSON.stringify({
+      lastLoggedInUser: accountConfig.lastLoggedInUser,
+      loggedInUsers: accountConfig.loggedInUsers,
+      trustedFolders: [workspace],
+    }),
+  );
+  const executable = process.env.LESSONLOOP_COPILOT_SCRIPT
+    ? process.execPath
+    : (process.env.LESSONLOOP_COPILOT_EXECUTABLE ??
+      join(process.env.LOCALAPPDATA!, "Microsoft/WinGet/Links/copilot.exe"));
   const call = await new Promise<{
     exitCode: number | null;
     stdout: string;
@@ -126,14 +182,20 @@ try {
     execFile(
       executable,
       [
+        ...(process.env.LESSONLOOP_COPILOT_SCRIPT
+          ? [resolve(process.env.LESSONLOOP_COPILOT_SCRIPT)]
+          : []),
         "--no-auto-update",
         "--no-custom-instructions",
         "--no-remote",
         "--no-remote-export",
         "--no-ask-user",
         "--disable-builtin-mcps",
-        "--available-tools=view",
+        "--available-tools=view,lessonloop",
         "--allow-tool=read",
+        "--allow-tool=lessonloop",
+        "--additional-mcp-config",
+        `@${mcpConfig}`,
         "--model=gpt-5.5",
         "--output-format=json",
         "--stream=off",
@@ -142,10 +204,10 @@ try {
         "--log-dir",
         join(folder, "logs"),
         "-p",
-        "Read fixture.txt. Explain the first safe diagnostic for a generated client field that disappears after regeneration. If LessonLoop supplied a method or missing checks, explicitly identify them. Do not edit files.",
+        prompt,
       ],
       {
-        cwd: folder,
+        cwd: workspace,
         env: {
           ...process.env,
           COPILOT_HOME: isolatedHome,
@@ -179,24 +241,47 @@ try {
         return [];
       }
     });
-  result.output = outputEvents.filter((e) =>
-    ["assistant.message", "result", "tool.execution_complete"].includes(e.type),
-  );
+  result.output = outputEvents
+    .filter((e) => ["assistant.message", "result"].includes(e.type))
+    .map((e) => ({ type: e.type, text: e.data?.content ?? e.result ?? "" }));
   result.error = call.stderr;
-  const traces = [];
-  for (const directory of await readdir(join(isolatedHome, "session-state"), {
+  result.requiresAuthentication =
+    /No authentication information|not authenticated|login/i.test(call.stderr);
+  const directories = await readdir(join(isolatedHome, "session-state"), {
     withFileTypes: true,
-  })) {
+  }).catch(() => []);
+  const traces = [];
+  const runtimeTools: Array<{ name: string; success?: boolean }> = [];
+  const toolNames = new Map<string, string>();
+  const finalTexts: string[] = [];
+  for (const directory of directories) {
     if (!directory.isDirectory()) continue;
     const lines = (
       await readFile(
         join(isolatedHome, "session-state", directory.name, "events.jsonl"),
         "utf8",
-      )
+      ).catch(() => {
+        (result.diagnostics as string[]).push("host_transcript_unavailable");
+        return "";
+      })
     ).split("\n");
     for (const line of lines) {
       try {
         const e = JSON.parse(line);
+        if (
+          e.type === "assistant.message" &&
+          !e.data.toolRequests?.length &&
+          typeof e.data.content === "string" &&
+          e.data.content.trim()
+        )
+          finalTexts.push(e.data.content.trim());
+        if (e.type === "tool.execution_start")
+          toolNames.set(e.data.toolCallId, e.data.toolName);
+        if (e.type === "tool.execution_complete")
+          runtimeTools.push({
+            name: toolNames.get(e.data.toolCallId) ?? "unknown",
+            success: e.data.success,
+          });
         if (e.type === "hook.end")
           traces.push({
             hook: e.data.hookType,
@@ -209,17 +294,132 @@ try {
     }
   }
   result.hooks = traces;
+  result.tools = runtimeTools;
   result.observedMethod = traces.some(
     (e) => e.hook === "userPromptTransformed" && e.success && e.injected,
   );
+  const stateTasks = [];
+  for (const name of await readdir(join(folder, "state")).catch(() => []))
+    if (name.endsWith(".json"))
+      stateTasks.push(
+        ...JSON.parse(await readFile(join(folder, "state", name), "utf8"))
+          .tasks,
+      );
+  const taskRefs = new Set(stateTasks.map((t) => t.taskRef));
+  const evidence = await store.transaction(async (tx) => {
+    const materials = (await tx.list<any>("material", [report.scope])).filter(
+      (m) => taskRefs.has(m.taskRef),
+    );
+    const uses = (await tx.list<any>("method_use", [report.scope])).filter(
+      (u) => taskRefs.has(u.taskRef),
+    );
+    return {
+      roles: [
+        ...new Set(
+          materials.flatMap((m) => m.segments.map((s: any) => s.role)),
+        ),
+      ],
+      finalAgentCaptured:
+        finalTexts.length > 0 &&
+        materials.some((m) =>
+          m.segments.some(
+            (s: any) => s.role === "agent" && s.text === finalTexts.at(-1),
+          ),
+        ),
+      sameUseAcrossHostAndAgent: uses.some(
+        (u) =>
+          u.callerId === principal.id &&
+          uses.some(
+            (other) =>
+              other.callerId === "host-validation-agent" &&
+              other.methodUseRef === u.methodUseRef,
+          ),
+      ),
+      methodUses: uses.map((u) => ({
+        callerId: u.callerId,
+        taskRef: u.taskRef,
+        methodUseRef: u.methodUseRef,
+        stepIds: u.stepIds,
+      })),
+    };
+  });
+  const cases = (await new Effects(store).cases([report.scope])).filter((c) =>
+    taskRefs.has(c.taskRef),
+  );
+  const effectEvents = cases.flatMap((c) => c.events);
+  result.evidence = {
+    ...evidence,
+    effectKinds: [...new Set(effectEvents.map((e) => e.kind))],
+    outcomes: effectEvents
+      .filter((e) => e.kind === "outcome")
+      .map((e) => e.outcome),
+    sameSessionUserClarification: "adapter_replay_test_only",
+    causalBenefit: "not_inferred",
+  };
   result.status =
-    call.exitCode === 0 && result.observedMethod
-      ? "injection_observed"
+    call.exitCode === 0 &&
+    result.observedMethod &&
+    evidence.finalAgentCaptured &&
+    evidence.roles.includes("user") &&
+    evidence.roles.includes("tool") &&
+    evidence.sameUseAcrossHostAndAgent &&
+    traces.some((e) => e.hook === "agentStop" && e.success) &&
+    effectEvents.some((e) => e.kind === "delivery") &&
+    effectEvents.some((e) => e.kind === "outcome" && e.outcome === "unknown")
+      ? "host_loop_observed"
       : "failed";
+} catch (error) {
+  result.validationError =
+    error instanceof Error ? error.message : "validation_failed";
+  result.status = "failed";
 } finally {
-  server.closeAllConnections();
-  await new Promise<void>((done) => server.close(() => done()));
-  await store.close();
+  // Persist the original failure before cleanup, even if a local service stalls.
+  await writeFile(
+    join(root, "results/host-product-validation.json"),
+    JSON.stringify(result, null, 2),
+  );
+  const watchdog = setTimeout(() => {
+    process.stderr.write(
+      "Host validation cleanup exceeded 15 seconds; closing the validation process.\n",
+    );
+    process.exit(1);
+  }, 15000);
+  watchdog.unref();
+  try {
+    const currentSettings = (await core.getSettings(principal)).find(
+      (s) => s.scopeId === report.scope,
+    );
+    if (currentSettings)
+      await core.configure(
+        { ...principal, channel: "user" },
+        {
+          scopeId: report.scope,
+          expectedRevision: currentSettings.revision,
+          learning: settings.learning,
+          recommendation: settings.recommendation,
+          review: settings.review,
+          notifications: settings.notifications,
+        },
+      );
+    result.settingsRestored = true;
+  } catch (error) {
+    result.cleanupError =
+      error instanceof Error ? error.message : "settings_restore_failed";
+    result.status = "failed";
+  }
+  try {
+    if (server.listening) {
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+    await store.close();
+  } catch (error) {
+    result.cleanupError =
+      error instanceof Error ? error.message : "cleanup_failed";
+    result.status = "failed";
+  } finally {
+    clearTimeout(watchdog);
+  }
   await writeFile(
     join(root, "results/host-product-validation.json"),
     JSON.stringify(result, null, 2),
@@ -233,4 +433,4 @@ console.log(
   }),
 );
 
-process.exitCode = result.status === "injection_observed" ? 0 : 1;
+process.exitCode = result.status === "host_loop_observed" ? 0 : 1;

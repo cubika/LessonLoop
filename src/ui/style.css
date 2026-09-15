@@ -143,6 +143,57 @@ form {
   gap: 12px;
   align-items: baseline;
 }
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.filters label {
+  flex: 1 1 150px;
+}
+.filters input,
+.filters select {
+  margin-bottom: 0;
+}
+.filters .checkbox {
+  flex: 0 1 auto;
+  padding-bottom: 12px;
+}
+.pagination,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.pagination {
+  justify-content: space-between;
+  margin: 16px 0;
+}
+.step-editor,
+.branch-editor {
+  padding: 16px;
+  border: 1px solid #c4d6cc;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+.branch-editor {
+  background: #f4f7f5;
+}
+.reference {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+button:focus-visible,
+.card:focus-visible {
+  outline: 3px solid #3a826e;
+  outline-offset: 3px;
+}
+.card.selected {
+  border-color: #3a826e;
+}
 textarea {
   resize: vertical;
 }

@@ -149,6 +149,24 @@ test("New task snapshots replace one case while older candidates cannot overwrit
     assert.equal((cases[0]!.evidence as unknown[]).length, 3);
     assert.equal((cases[0]!.result as any).summary, "Verification C passed");
     assert.equal((await core.getJob(host, first.jobId)).status, "completed");
+    const supplemented = await core.submitMaterial(
+      owner,
+      {
+        scopeId: scope,
+        caseFor: {
+          kind: "work_case",
+          id: String(caseId),
+          revision: Number(cases[0]!.revision),
+        },
+        segments: [{ text: "User confirmed the output", role: "user" }],
+      },
+      "user-supplement",
+    );
+    await stage(supplemented.jobId);
+    await core.tick([scope]);
+    const supplementCase = (await core.browse(host, "work_case"))[0]!;
+    assert.equal(supplementCase.taskRef, task.taskRef);
+    assert.equal((supplementCase.evidence as unknown[]).length, 4);
     const fourth = await submit("New D observation", "d");
     await stage(fourth.jobId);
     await store.transaction(async (tx) => {
@@ -183,6 +201,11 @@ test("New task snapshots replace one case while older candidates cannot overwrit
     await stage(afterWithdrawal.jobId);
     await core.tick([scope]);
     const updated = await core.browse(host, "work_case");
+    assert.ok(
+      (updated[0]!.evidence as Array<{ excerpt: string }>).some(
+        (e) => e.excerpt === "User confirmed the output",
+      ),
+    );
     assert.equal(updated[0]!.id, caseId);
     assert.equal(
       (updated[0]!.evidence as Array<{ excerpt: string }>).some(

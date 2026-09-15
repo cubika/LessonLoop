@@ -19,7 +19,11 @@
     "probe:copilot": "node --import tsx probes/copilot/host-probe.ts",
     "probe:copilot-hooks": "node --import tsx probes/copilot/host-hook-probe.ts",
     "validate:evolution": "node --import tsx scripts/run-method-evolution.ts",
-    "validate:evolution-resume": "node --import tsx scripts/resume-method-evolution.ts"
+    "validate:evolution-resume": "node --import tsx scripts/resume-method-evolution.ts",
+    "validate:verification": "node --import tsx scripts/run-verification-validation.ts",
+    "validate:host": "node --import tsx scripts/run-host-validation.ts",
+    "validate:product-profile": "node --import tsx scripts/run-product-evaluation.ts --validate",
+    "evaluate:product": "node --import tsx scripts/run-product-evaluation.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

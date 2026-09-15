@@ -1,0 +1,348 @@
+import vm from "node:vm";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { startUiFixture } from "./ui-library-server.mjs";
+// Minimal DOM surface for the shipped event handlers. Layout is outside this test.
+class Element {
+  constructor(tag) {
+    this.tag = tag;
+    this.children = [];
+    this.dataset = {};
+    this.attributes = {};
+    this._text = "";
+    this._value = undefined;
+    this.checked = false;
+    this.hidden = false;
+    this.disabled = false;
+  }
+  set textContent(value) {
+    this._text = String(value);
+    this.children = [];
+  }
+  get textContent() {
+    return this._text + this.children.map((c) => c.textContent).join("");
+  }
+  set value(value) {
+    this._value = value ?? "";
+  }
+  get value() {
+    return (
+      this._value ??
+      (this.tag === "select"
+        ? (this.children.find((c) => c.selected)?.value ??
+          this.children[0]?.value ??
+          "")
+        : "")
+    );
+  }
+  get firstChild() {
+    return this.children[0];
+  }
+  get options() {
+    return this.children;
+  }
+  get selectedOptions() {
+    return this.children.filter((c) => c.selected);
+  }
+  append(...children) {
+    for (const child of children) {
+      child.parent = this;
+      this.children.push(child);
+    }
+  }
+  prepend(...children) {
+    for (const child of children) child.parent = this;
+    this.children.unshift(...children);
+  }
+  replaceChildren(...children) {
+    this._text = "";
+    this.children = [];
+    this.append(...children);
+  }
+  setAttribute(name, value) {
+    this.attributes[name] = value;
+  }
+  remove() {
+    this.parent.children = this.parent.children.filter((c) => c !== this);
+  }
+  querySelector(selector) {
+    return walk(this).find(
+      (c) => selector === "[data-reload]" && c.dataset.reload,
+    );
+  }
+  click() {
+    return this.onclick?.({
+      target: this,
+      stopPropagation() {},
+      preventDefault() {},
+    });
+  }
+  select() {}
+}
+function walk(element) {
+  return element.children.flatMap((c) => [c, ...walk(c)]);
+}
+export async function runUiLibraryChecks() {
+  const fixture = await startUiFixture();
+  try {
+    const html = await readFile(
+        new URL("../../src/ui/index.html", import.meta.url),
+        "utf8",
+      ),
+      elements = new Map();
+    for (const match of html.matchAll(/<([a-z]+)[^>]* id="([^"]+)"/g))
+      elements.set(match[2], new Element(match[1]));
+    const nav = [...html.matchAll(/data-view="([^"]+)"/g)].map((match) => {
+      const e = new Element("button");
+      e.dataset.view = match[1];
+      return e;
+    });
+    elements.get("record-kind").value = "work_case";
+    const requests = [];
+    const context = vm.createContext({
+      document: {
+        getElementById: (id) => elements.get(id),
+        createElement: (tag) => new Element(tag),
+        querySelectorAll: () => nav,
+      },
+      fetch: async (path, options) => {
+        if (options?.body) requests.push(JSON.parse(options.body));
+        return fetch(new URL(path, fixture.baseUrl), options);
+      },
+      crypto,
+      structuredClone,
+      Blob,
+      URL,
+      setTimeout,
+      setInterval: () => 0,
+      confirm: () => true,
+      console,
+    });
+    vm.runInContext(
+      await readFile(new URL("../../src/ui/app.js", import.meta.url), "utf8"),
+      context,
+    );
+    const run = (code) => vm.runInContext(code, context),
+      $ = (id) => elements.get(id),
+      button = (root, text) => {
+        const value = walk(root).find(
+          (e) => e.tag === "button" && e._text === text,
+        );
+        assert.ok(value, "button " + text);
+        return value;
+      },
+      field = (root, label) => {
+        const value = walk(root)
+          .find((e) => e.tag === "label" && e._text === label)
+          ?.children.find((e) =>
+            ["input", "textarea", "select"].includes(e.tag),
+          );
+        assert.ok(value, "field " + label);
+        return value;
+      };
+    async function input(root, label, value) {
+      const f = field(root, label);
+      f.value = value;
+      await f.oninput?.();
+      await f.onchange?.();
+      return f;
+    }
+    async function click(root, text) {
+      await button(root, text).click();
+      assert.equal($("notice").textContent, "", "UI error");
+    }
+    const checks = [];
+    $("token").value = "fixture";
+    await $("connect").click();
+    assert.equal($("cards").children.length, 12);
+    await click($("method-pages"), "下一页");
+    assert.equal($("cards").children.length, 2);
+    checks.push("method pagination");
+    await click($("cards"), "设为常用");
+    assert.equal(requests.at(-2).operation, "pinMethod");
+    assert.ok($("method-pages").textContent.includes("第 1 页"));
+    checks.push("pin resets pagination");
+    $("method-topic").value = "生成文件";
+    $("method-state").value = "active";
+    await $("search").onsubmit({ preventDefault() {} });
+    assert.equal(
+      requests.findLast((r) => r.operation === "browseMethods").input.topic,
+      "生成文件",
+    );
+    checks.push("filter request");
+    await run("show('method-ui')");
+    await click($("detail"), "修改方法");
+    let editor = $("detail").children.find((e) =>
+      e.textContent.includes("修改说明"),
+    );
+    assert.ok(editor);
+    await click(editor, "添加步骤");
+    let steps = walk(editor).filter((e) => e.className === "step-editor");
+    assert.equal(steps.length, 3);
+    await input(steps[2], "操作", "核对新步骤");
+    let supports = field(steps[2], "支持这一步的经验（至少一项，可多选）");
+    supports.children[0].selected = true;
+    supports.onchange();
+    await click(steps[2], "上移");
+    steps = walk(editor).filter((e) => e.className === "step-editor");
+    assert.equal(field(steps[1], "操作").value, "核对新步骤");
+    await click(steps[0], "添加分支");
+    steps = walk(editor).filter((e) => e.className === "step-editor");
+    await input(steps[0], "分支条件", "当前文件已存在");
+    await input(editor, "修改说明", "核对界面编辑请求");
+    await click(editor, "提交审查");
+    const revise = requests.findLast((r) => r.operation === "reviseMethod");
+    assert.equal(revise.input.body.steps.length, 3);
+    assert.equal(revise.input.body.steps[1].instruction, "核对新步骤");
+    assert.equal(revise.input.body.steps[0].choices[0].next, "stop");
+    checks.push("add reorder branch and reviewed revision");
+    await click($("detail"), "查看历史");
+    await click($("detail"), "用这版内容修改并送审");
+    editor = $("detail").children.findLast((e) =>
+      e.textContent.includes("修改说明"),
+    );
+    assert.equal(field(editor, "名称").value, "旧版生成文件检查");
+    await click(editor, "提交审查");
+    assert.equal(
+      requests.findLast((r) => r.operation === "reviseMethod").input
+        .expectedRevision,
+      2,
+    );
+    checks.push("historical body reviews against current revision");
+    await click($("detail"), "关联宿主任务");
+    let taskPanel = $("detail").children.findLast((e) =>
+      e.textContent.includes("宿主任务"),
+    );
+    await click(taskPanel, "按任务观察准备");
+    await click(taskPanel, "评价这次使用");
+    await click(taskPanel, "保存评价");
+    assert.equal(
+      requests.findLast((r) => r.operation === "rateMethodUse").input.taskRef,
+      "task-ui",
+    );
+    assert.ok(!requests.some((r) => r.operation === "observeTask"));
+    checks.push("host task link and use rating without executor");
+    await run("renderRecords()");
+    await run("showRecord('work_case','case-ui')");
+    await click($("record-detail"), "补充结果或后续观察");
+    await input(
+      $("record-detail"),
+      "实际结果、尝试及可核对的依据",
+      "实际读回包含新增字段",
+    );
+    await click($("record-detail"), "提交结果复盘");
+    assert.equal(
+      requests.findLast((r) => r.operation === "submitMaterial").input.caseFor
+        .id,
+      "case-ui",
+    );
+    checks.push("case result links current revision");
+    await run("showRecord('experience','experience-ui')");
+    await click($("record-detail"), "补充证据并审查");
+    await input($("record-detail"), "实际原文或观察", "实际文件包含 auditTag");
+    await click($("record-detail"), "提交补证");
+    assert.equal(
+      requests.findLast((r) => r.operation === "submitMaterial").input
+        .verificationFor.revision,
+      2,
+    );
+    checks.push("experience targeted verification");
+    await $("new-case").click();
+    await input($("record-detail"), "主题", "新增案例");
+    await input($("record-detail"), "工作目标", "保留输出");
+    await input($("record-detail"), "实际尝试、观察及原文依据", "已读取输出");
+    await click($("record-detail"), "提交案例复盘");
+    assert.ok(
+      requests
+        .findLast((r) => r.operation === "submitMaterial")
+        .input.segments[0].text.includes("新增案例"),
+    );
+    checks.push("authored case material");
+    await run("show('method-ui')");
+    await run(
+      "editMethod(document.getElementById('detail'), {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]})",
+    );
+    editor = $("detail").children.findLast((e) =>
+      e.textContent.includes("修改说明"),
+    );
+    let oldRefRequests = requests.filter(
+      (r) => r.operation === "reviseMethod",
+    ).length;
+    await button(editor, "提交审查").click();
+    assert.match($("notice").textContent, /原依据已更新/);
+    assert.equal(
+      requests.filter((r) => r.operation === "reviseMethod").length,
+      oldRefRequests,
+    );
+    field(editor, "送审时改用上述当前依据修订（仍需审查）").checked = true;
+    await button(editor, "提交审查").click();
+    assert.match($("notice").textContent, /依据仍未可用/);
+    assert.equal(
+      requests.filter((r) => r.operation === "reviseMethod").length,
+      oldRefRequests,
+    );
+    checks.push(
+      "changed or held supporting evidence blocks historical submission",
+    );
+    const realFetch = context.fetch;
+    context.fetch = async (path, options) =>
+      JSON.parse(options.body).operation === "inspect"
+        ? { ok: false, json: async () => ({ error: "not_found" }) }
+        : realFetch(path, options);
+    await run("editMethod(document.getElementById('detail'), current)");
+    assert.ok($("detail").textContent.includes("以下依据已不可读取"));
+    context.fetch = realFetch;
+    checks.push("missing supporting evidence is shown without an editor crash");
+    await run("list()");
+    await click($("method-pages"), "下一页");
+    $("method-topic").value = "different";
+    await click($("method-pages"), "上一页");
+    assert.equal(
+      requests.findLast((r) => r.operation === "browseMethods").input.cursor,
+      undefined,
+    );
+    assert.ok($("method-pages").textContent.includes("第 1 页"));
+    checks.push("changed filter resets the cursor before any page action");
+    await run("show('method-ui')");
+    await click($("detail"), "关联宿主任务");
+    taskPanel = $("detail").children.findLast((e) =>
+      e.textContent.includes("宿主任务"),
+    );
+    const taskSelector = field(taskPanel, "宿主任务");
+    let release;
+    const blockingFetch = context.fetch;
+    context.fetch = async (path, options) => {
+      if (JSON.parse(options.body).operation === "prepareMethod")
+        return new Promise((resolve) => {
+          release = () =>
+            resolve({
+              ok: true,
+              json: async () => ({
+                result: {
+                  status: "guidance",
+                  methodUseRef: "old-task-use",
+                  steps: [],
+                  completionChecks: [],
+                },
+              }),
+            });
+        });
+      return blockingFetch(path, options);
+    };
+    const pendingPrepare = button(taskPanel, "按任务观察准备").click();
+    await Promise.resolve();
+    taskSelector.value = "new-task";
+    taskSelector.onchange();
+    release();
+    await pendingPrepare;
+    assert.ok(!taskPanel.textContent.includes("old-task-use"));
+    assert.ok(!walk(taskPanel).some((e) => e._text === "评价这次使用"));
+    context.fetch = blockingFetch;
+    checks.push(
+      "task selection changes discard an in-flight preparation response",
+    );
+    return checks;
+  } finally {
+    await fixture.close();
+  }
+}

@@ -1,6 +1,7 @@
 """Hindsight 0.9.2 structured-schema compatibility shim. No extraction replacement."""
 import copy
 import json
+import hindsight_usage
 from importlib.metadata import version
 from jsonschema import Draft7Validator, FormatChecker
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -9,6 +10,7 @@ def install():
     if version("hindsight-api-slim") != "0.9.2":
         raise RuntimeError("Compatibility shim requires Hindsight 0.9.2")
     from hindsight_api.engine.reflect import agent
+    hindsight_usage.install()
 
     async def generate(answer, response_schema, llm_config, reflect_id, max_tokens=None):
         Draft7Validator.check_schema(response_schema)
@@ -49,12 +51,14 @@ def install():
                     max_completion_tokens=max_tokens,max_retries=0,skip_validation=True,return_usage=True,
                 )
                 for name in totals:totals[name]+=getattr(usage,name,0) or 0
+                hindsight_usage.add(usage, "structured_conversion")
                 value=result.model_dump() if hasattr(result,"model_dump") else result
                 StructuredResponse.model_validate(value)
                 return agent.StructuredOutputResult(structured_output=value,**totals)
             except Exception as error:
                 agent.logger.warning("LessonLoop structured output rejected: type=%s schema_checks=%s",type(error).__name__,invalid_fields)
                 if usage is None:
+                    hindsight_usage.unknown()
                     agent.logger.warning("LessonLoop failed structured call usage is unknown; do not treat it as zero cost")
                 if not invalid_fields or attempt==1:
                     return agent.StructuredOutputResult(**totals)

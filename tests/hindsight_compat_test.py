@@ -1,7 +1,9 @@
 import asyncio
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+sys.path.insert(0, str(Path(__file__).parents[1]/"distribution"))
 
 spec=importlib.util.spec_from_file_location("hindsight_compat",Path(__file__).parents[1]/"distribution/hindsight_compat.py")
 module=importlib.util.module_from_spec(spec)

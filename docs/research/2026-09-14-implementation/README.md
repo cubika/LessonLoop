@@ -1,5 +1,7 @@
 # P0 实现与运行记录
 
+本页按运行先后保留局部证据和失败，早期“仍需完成”不作为当前待办。最新范围与剩余工作见[实现计划](../../13-implementation-plan.md)。开发期没有旧用户数据，旧共享 bank 布局转换已移出首版范围；当前格式的清理、恢复和方法用于新任务的能力仍须验收。
+
 本轮从 W01、W02、W03/W04 最小路径开始。当前仍在开发，P0–P3 均未宣布通过；安装包尚不可交付。
 
 ## 已实现并检查
@@ -89,3 +91,27 @@ Windows 管理器可恢复单独退出的核心进程，并保留正在运行的
 
 
 Windows兼容升级/回滚实测：中文空格 DataRoot 从开发bundle切换到摘要版本目录，新核心与引擎均ready；激活后写入设置revision 1，再回滚旧程序，仍保持同一设置。流程生成整库dump及配置/DPAPI副本，数据库没有恢复旧快照。首轮失败暴露备份连接未关闭导致单写锁自阻塞，已修复并保留日志；中文pg_dump使用系统短路径。稳定launcher、只读兼容检查、包路径/哈希/复制中断重试已有检查。故障中断矩阵、卸载/自启/永久清理及最终发行包仍未完成。报告：compatible-update-validation.json、compatible-rollback-validation.json。
+
+## 2026-09-15 非发行功能补齐
+
+本轮在现有产品核心上补接口与页面，沿用PostgreSQL对象存储和官方Hindsight/Copilot模块。没有增加第二引擎、页面执行器、远程Connector、迁移框架或新通知服务。
+
+方法库增加范围/主题/状态筛选、分页、常用固定、步骤增删重排、分支和检查编辑、旧版内容送审。旧依据已更新时需明确确认当前引用，缺失或暂停依据会阻止提交。页面关联活跃宿主任务并提供可复制引用；用户评价绑定真实methodUseRef。案例与经验增加查看、结果补充、纠正、补证及CLI包装；用户补充保留案例taskRef，后续宿主综合仍纳入补充材料。
+
+Copilot会话读取参考固定官方coding-agents 0.4.2模块，捕获user/tool/agent及最终回复，去除注入记忆和产品MCP派生结果。采集受预算限制，缺口显式记录。真实CLI的userPromptTransformed先于sessionStart曾使新任务误关闭，已用实测顺序修复；无可用方法时验证入口先等待发布投影，不再让Agent猜引用。宿主回填回执才算delivery；同引用MCP复核及续用通过，正常结束保持unknown，本次没有已确认步骤完成所以未记录usage。
+
+Connector增加普通读取/规范化模块、三类草稿输入及完整分片事务。所有片段共用来源族；中途失败不撤旧支持、不跳游标，父忘记覆盖历史与全部片，重试只处理失败片。
+
+自动方法审查新增逐执行路径和原路径保留的判定，整体批准不能覆盖路径否决。新的干净P0产出方法，随后自动演进形成新修订；未人工改正文的原字段路径和版本2扩展路径经真实provider重评后均可准备相应步骤。此前扩展条件误排旧任务的失败仍保留，不据这两个案例宣布MTH或L1–L5全部通过。
+
+数值计量适配只在既有原生模型响应记录计数，不保留额外prompt或全文trace。按操作去重汇总reflection和结构化转换；未知原生提取成本仍标partial。真实定向补证更新同一经验为revision 2，发布回执effective，定向召回返回lead；两次操作测得输入46,892、输出3,276 token。lead只表示当前条件仍需核实。
+
+开发三组执行器复用官方provider和SDK提取/知识模型/reflect，并与产品核心和无记忆组隔离。一条生成文件合成任务在三组都通过实际文件检查，配对成功差值为0；这只验证执行器，不证明LessonLoop收益。首次沙箱provider权限/认证失败全部保留，改用已登录系统CLI后完成。正式Agent hooks对照、完整独立材料规模、L2–L5、性能与收益门槛仍未验收。
+
+本地FlashRank使用固定官方权重和源码，修正官方包中不匹配的tokenizer，4组中英离线排序通过，详见[记录](../2026-09-15-reranker/README.md)。缺文件或摘要不符时明确使用RRF，启动不下载；当前独立学习验证引擎仍为RRF。
+
+验证入口：npm test、npm run test:postgres、npm run typecheck、npm run build、npm run validate:docs、npm run validate:evals、npm run validate:host、npm run validate:verification、scripts/validate-evolved-paths.ts、scripts/run-product-evaluation.ts；Python兼容、数值计量、reranker、runtime与bundle检查分别通过。UI的13条实际事件流程已纳入npm test，使用轻量DOM和真实本地HTTP fixture；本次浏览器不可用，未做视觉验收。
+
+本地报告：automatic-path-validation.json、targeted-verification.json、host-product-validation.json、reranker-prepared/validation.json；三组报告位于.local-validation/product-evaluations/b61add0b-638f-43b2-82bb-781cf801daf2/report.json，失败组报告26dd58c5-6d84-466e-a353-9ca74c7e76a2另存。P0–P3总体验收与最终发行仍未通过。
+
+提交前最终回归：65项单元测试（含13条UI事件流程）和29项PostgreSQL集成测试通过，类型检查、构建、文档与材料校验通过。最后一次案例补充回归曾暴露混合材料被误判为不同任务，已按可信taskRef及caseFor绑定修复，并确认用户补充在后续宿主快照中保留。

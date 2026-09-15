@@ -160,7 +160,8 @@ try {
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
-  await core.syncProjections([base.scope]);
+  for (let attempt = 0; attempt < 8; attempt++)
+    await core.syncProjections([base.scope]);
   report.after = await core.browse(host, "method");
   report.experiences = await core.browse(host, "experience");
   const after = report.after as Method[];

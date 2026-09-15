@@ -34,6 +34,7 @@ import {
   learningAssessmentJsonSchema,
   learningAssessmentSchema,
   parseLearningAssessment,
+  verificationAssessmentJsonSchema,
   assessmentSchema,
   learningOutputSchema,
   learningQuery,
@@ -47,7 +48,8 @@ import {
   legacyAssessmentJsonSchema,
 } from "./legacy-learning-profile.js";
 import { methodPlanKey, methodSupportKey } from "../domain/method-evolution.js";
-import { methodPaths } from "../domain/method-paths.js";
+import { methodPaths, pathReviewErrors } from "../domain/method-paths.js";
+import { modelUsage, aggregateUsage, type OperationUsage } from "./usage.js";
 
 export interface Principal {
   id: string;
@@ -96,6 +98,10 @@ interface Job {
   synthesisTopicId?: string;
   inputCaseRefs?: ObjectRef[];
   methodRepairCount?: number;
+  verificationTarget?: Experience;
+  verificationControlRevision?: number;
+  verificationByUser?: boolean;
+  verificationControl?: { reason: string; correctionText?: string };
   cancelRequestedAt?: string;
   results: ObjectRef[];
   decisions: unknown[];
@@ -108,6 +114,7 @@ interface Job {
   nativeIsolation?: "job";
   evidenceStaged?: boolean;
   engineOperations?: string[];
+  operationUsage?: Record<string, OperationUsage>;
   modelQuery?: string;
   assessmentQuery?: string;
 }
@@ -388,8 +395,6 @@ export class CoreService {
     this.authorize(p, parsed.scopeId);
     if (!key || key.length > 128)
       throw new ApiError("idempotency_key_required");
-    if (parsed.verificationFor)
-      throw new ApiError("targeted_material_not_yet_supported", 501);
     const data = {
       ...parsed,
       segments: parsed.segments.map((s) => ({
@@ -460,6 +465,51 @@ export class CoreService {
           )
             throw new Conflict();
         }
+      let verificationTarget: Experience | undefined,
+        verificationControlRevision = 0;
+      let verificationControl: Job["verificationControl"];
+      if (data.verificationFor) {
+        verificationTarget = await this.owned<Experience>(
+          tx,
+          p,
+          "experience",
+          data.verificationFor.id,
+        );
+        if (verificationTarget.state !== "held" || !verificationTarget.review)
+          throw new ApiError("verification_target_not_held", 409);
+        if (Date.parse(verificationTarget.review.reviewBy) <= Date.now())
+          throw new ApiError("verification_target_expired", 409);
+        const control = await tx.get<{
+          revision: number;
+          reason: string;
+          correctionText?: string;
+        }>("control", verificationTarget.id);
+        if (control && p.channel !== "user")
+          throw new ApiError("user_verification_required", 403);
+        if (control && control.reason !== "user_correction")
+          throw new ApiError("verification_control_not_releasable", 409);
+        if (
+          verificationTarget.validUntil &&
+          Date.parse(verificationTarget.validUntil) <= Date.now()
+        )
+          throw new ApiError("verification_target_expired", 409);
+        if (
+          (await tx.list<Job>("job", [data.scopeId])).some(
+            (j) =>
+              j.verificationTarget?.id === verificationTarget!.id &&
+              ["queued", "running", "uncertain"].includes(j.status),
+          )
+        )
+          throw new ApiError("verification_already_running", 409);
+        verificationControlRevision = control?.revision ?? 0;
+        if (control)
+          verificationControl = {
+            reason: control.reason,
+            ...(control.correctionText
+              ? { correctionText: control.correctionText }
+              : {}),
+          };
+      }
       const material: Material = {
         ...data,
         id: randomUUID(),
@@ -480,13 +530,22 @@ export class CoreService {
           .filter((s) => s.blocked)
           .map((s) => s.id),
       );
+      const linkedCases =
+        p.channel === "host" && typeof data.context?.taskRef === "string"
+          ? new Set(
+              (await tx.list<WorkCase>("work_case", [data.scopeId]))
+                .filter((c) => c.taskRef === data.context!.taskRef)
+                .map((c) => c.id),
+            )
+          : new Set<string>();
       const taskMaterials =
         p.channel === "host" && typeof data.context?.taskRef === "string"
           ? (await tx.list<Material>("material", [data.scopeId]))
               .filter(
                 (m) =>
-                  m.sourceFamily === material.sourceFamily &&
-                  m.taskRef === data.context!.taskRef &&
+                  ((m.sourceFamily === material.sourceFamily &&
+                    m.taskRef === data.context!.taskRef) ||
+                    (m.caseFor && linkedCases.has(m.caseFor.id))) &&
                   !m.fingerprints.some((fp) => blockedSources.has(fp)),
               )
               .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -515,11 +574,31 @@ export class CoreService {
           counter?.revision ?? null,
         );
       }
-      const learningMaterials = [...taskMaterials, material];
+      const retainedMaterials = verificationTarget
+        ? (await tx.list<Material>("material", [data.scopeId])).filter(
+            (m) =>
+              m.fingerprints.some((fp) =>
+                verificationTarget!.sourceFingerprints.includes(fp),
+              ) && !m.fingerprints.some((fp) => blockedSources.has(fp)),
+          )
+        : [];
+      const learningMaterials = verificationTarget
+        ? [...retainedMaterials, material]
+        : [...taskMaterials, material];
+      if (learningMaterials.length > 12 || byteSize(learningMaterials) > 131072)
+        throw new ApiError("verification_material_budget", 413);
       const job: Job = {
         ...identity(data.scopeId),
-        kind: taskMaterials.length ? "synthesis" : "case_review",
-        stage: taskMaterials.length ? "compose" : "queued",
+        kind: verificationTarget
+          ? "synthesis"
+          : taskMaterials.length
+            ? "synthesis"
+            : "case_review",
+        stage: verificationTarget
+          ? "compose"
+          : taskMaterials.length
+            ? "compose"
+            : "queued",
         status: "queued",
         materialIds: learningMaterials.map((m) => m.id),
         ...(material.taskSequence
@@ -527,12 +606,23 @@ export class CoreService {
           : {}),
         results: [],
         decisions: [],
-        inputDigest: digest(learningMaterials.map((m) => m.fingerprints)),
+        inputDigest: digest([
+          learningMaterials.map((m) => m.fingerprints),
+          data.verificationFor ?? null,
+        ]),
         nativeIsolation: "job",
         sourceRefs: [
           ...new Set(learningMaterials.flatMap((m) => m.fingerprints)),
         ],
         ...(data.caseFor ? { caseTarget: data.caseFor } : {}),
+        ...(verificationTarget
+          ? {
+              verificationTarget,
+              verificationControlRevision,
+              verificationByUser: p.channel === "user",
+              ...(verificationControl ? { verificationControl } : {}),
+            }
+          : {}),
       };
       await tx.put(entry("material", { ...material, revision: 1 }), null);
       await tx.put(entry("job", job), null);
@@ -543,7 +633,12 @@ export class CoreService {
           scopeId: data.scopeId,
           kind: "learning_job",
           jobId: job.id,
-          sourceRefs: job.sourceRefs!,
+          sourceRefs: [
+            ...new Set([
+              ...(job.sourceRefs ?? []),
+              ...(verificationTarget?.sourceFingerprints ?? []),
+            ]),
+          ],
           state: "reserved",
           createdAt: job.createdAt,
         }),
@@ -626,6 +721,8 @@ export class CoreService {
         assessmentQuery,
         retainedSupport,
         comparisonMethods,
+        verificationTarget,
+        verificationControl,
         modelSchema,
         assessmentSchema,
         ...visible
@@ -633,8 +730,7 @@ export class CoreService {
       return {
         ...visible,
         usage: {
-          status: "not_aggregated",
-          nativeOperationIds: j.engineOperations ?? [],
+          ...aggregateUsage(j.engineOperations ?? [], j.operationUsage),
           includesRepair: (j.methodRepairCount ?? 0) > 0,
         },
         results,
@@ -731,6 +827,16 @@ export class CoreService {
         results: [],
         decisions: [],
         ...(old.caseTarget ? { caseTarget: old.caseTarget } : {}),
+        ...(old.verificationTarget
+          ? {
+              verificationTarget: old.verificationTarget,
+              verificationControlRevision: old.verificationControlRevision ?? 0,
+              verificationByUser: old.verificationByUser ?? false,
+              ...(old.verificationControl
+                ? { verificationControl: old.verificationControl }
+                : {}),
+            }
+          : {}),
         ...(old.taskSequence ? { taskSequence: old.taskSequence } : {}),
         ...(old.synthesisTopicId
           ? { synthesisTopicId: old.synthesisTopicId }
@@ -988,6 +1094,10 @@ export class CoreService {
                   "learning_query_budget",
                   "cross_case_work_case_forbidden",
                   "synthesis_case_changed",
+                  "verification_target_changed",
+                  "verification_output_invalid",
+                  "verification_not_supported",
+                  "verification_cannot_extend_validity",
                   "method_predecessor_changed",
                   "method_change_kind_invalid",
                   "unbound_existing_support",
@@ -1252,8 +1362,31 @@ export class CoreService {
         ];
         if (sourceRefs.some((fp) => data.blockedSources.has(fp)))
           throw new ApiError("source_changed_before_compose", 409);
+        if (current.verificationTarget) {
+          const target = await tx.get<Experience>(
+            "experience",
+            current.verificationTarget.id,
+          );
+          const control = await tx.get<{ revision: number }>(
+            "control",
+            current.verificationTarget.id,
+          );
+          if (
+            target?.revision !== current.verificationTarget.revision ||
+            (control?.revision ?? 0) !==
+              (current.verificationControlRevision ?? 0)
+          )
+            throw new ApiError("verification_target_changed", 409);
+        }
         const query =
           learningQuery(materials, existing, retainedSupport) +
+          (current.verificationTarget
+            ? "\nTARGETED VERIFICATION: return workCase=null, method=null, splitMethods=null and at most one experience resolving the exact claim and open review question below. The target is a question, NOT additional supporting evidence. Use only SOURCE DATA for evidence; preserve authorized boundaries and original claim identity. Do not replace it with an unrelated claim. TARGET: " +
+              JSON.stringify({
+                claim: current.verificationTarget,
+                userControl: current.verificationControl ?? null,
+              })
+            : "") +
           (current.synthesisTopicId
             ? "\nThis is a cross-case synthesis. Keep workCase=null: distinct cases are not one task. Compare the supplied independent source families for supported L2-L5 relationships, mechanisms, conditions and transfer limits. Do not force unsupported levels."
             : "");
@@ -1261,7 +1394,18 @@ export class CoreService {
           throw new ApiError("learning_query_budget", 413);
         if (bank)
           await tx.put(
-            entry("engine_bank", mutate(bank, { sourceRefs, state: "active" })),
+            entry(
+              "engine_bank",
+              mutate(bank, {
+                sourceRefs: [
+                  ...new Set([
+                    ...sourceRefs,
+                    ...(current.verificationTarget?.sourceFingerprints ?? []),
+                  ]),
+                ],
+                state: "active",
+              }),
+            ),
             bank.revision,
           );
         const next = mutate(current, {
@@ -1269,7 +1413,9 @@ export class CoreService {
           status: "running",
           learningProfile: "methods-2",
           modelSchema: outputJsonSchema,
-          assessmentSchema: learningAssessmentJsonSchema,
+          assessmentSchema: current.verificationTarget
+            ? verificationAssessmentJsonSchema
+            : learningAssessmentJsonSchema,
           retainedSupport,
           comparisonMethods: existing,
           comparedMethodRefs: existing.map((m) => ref("method", m)),
@@ -1309,20 +1455,37 @@ export class CoreService {
         | Record<string, unknown>
         | undefined;
       const output = learningOutputSchema.parse(response?.structured_output);
+      const usage = modelUsage(model);
       j = await this.updateJob(
         j.id,
-        { stage: "assess", candidate: output, status: "running" },
+        {
+          stage: "assess",
+          candidate: output,
+          status: "running",
+          ...(usage
+            ? {
+                operationUsage: { ...j.operationUsage, [j.operationId]: usage },
+              }
+            : {}),
+        },
         true,
       );
     }
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = "assess-" + randomUUID();
       const assessmentQuery =
-        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Evaluate a task for EACH branch: assume that branch condition true and other branches false, and verify every global condition is compatible. Reject a global condition specific to another branch, or exceptions that are past observations rather than current task exclusion predicates. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
+        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. For verificationTarget, verifiedTarget must be true only if the single proposed experience resolves that exact claim using authorized source evidence and preserves its boundaries; the old target itself is not evidence. Otherwise verifiedTarget=false. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Evaluate a task for EACH branch: assume that branch condition true and other branches false, and verify every global condition is compatible. Reject a global condition specific to another branch, or exceptions that are past observations rather than current task exclusion predicates. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
+        " Before the overall verdict, fill pathChecks for EVERY indexed executable path. Describe in reason a concrete task taking this path and test ALL global conditions/exceptions against that task. globalConditionsCompatible=false if any global requirement belongs only to a different branch or is a historical outcome posing as an exclusion. stepsCompatible=false for contradictory steps or fallthrough. Fill preservedPaths for EVERY path of each replaced method: preserved=true only when a task that previously used that path still has a valid path in the proposal. New evidence invalidating an old path needs a separate correction; do not silently retire it during additive evolution. Return empty arrays when there is no proposed method." +
         JSON.stringify({
           materials,
           retainedSupport: j.retainedSupport ?? [],
           existingMethods: j.comparisonMethods ?? [],
+          previousPaths: (j.comparisonMethods ?? []).map((m) => ({
+            id: m.id,
+            ...methodPaths(m),
+          })),
+          verificationTarget: j.verificationTarget ?? null,
+          verificationControl: j.verificationControl ?? null,
           proposal: j.candidate,
           executablePaths: (
             j.candidate?.splitMethods ??
@@ -1378,8 +1541,34 @@ export class CoreService {
               j.assessmentSchema,
             )
           : assessmentSchema.parse(model.reflect_response?.structured_output);
+      const usage = modelUsage(model);
+      if (usage)
+        j = await this.updateJob(j.id, {
+          operationUsage: {
+            ...j.operationUsage,
+            [j.assessmentOperationId!]: usage,
+          },
+        });
       const hasMethod =
         !!j.candidate?.method || !!j.candidate?.splitMethods?.length;
+      if (
+        hasMethod &&
+        (j.assessmentSchema?.required as string[] | undefined)?.includes(
+          "pathChecks",
+        )
+      ) {
+        const findings = pathReviewErrors(
+          j.candidate!.splitMethods ?? [j.candidate!.method!],
+          j.comparisonMethods ?? [],
+          verdict as z.infer<typeof learningAssessmentSchema>,
+        );
+        if (findings.length) {
+          verdict.methodSupported = false;
+          verdict.reasons = [...findings, ...verdict.reasons].slice(0, 8);
+          if ("acceptedMethodIndexes" in verdict)
+            verdict.acceptedMethodIndexes = [];
+        }
+      }
       if (
         hasMethod &&
         !verdict.methodSupported &&
@@ -1445,12 +1634,22 @@ export class CoreService {
         !["running", "uncertain"].includes(j.status)
       )
         return;
-      const inputTask = materials[0]?.taskRef;
-      if (
-        inputTask &&
-        j.taskSequence &&
-        materials.every((m) => m.taskRef === inputTask)
-      ) {
+      const inputTask = materials.find((m) => m.taskRef)?.taskRef;
+      const linkedCases = inputTask
+        ? new Set(
+            (await tx.list<WorkCase>("work_case", [j.scopeId]))
+              .filter((c) => c.taskRef === inputTask)
+              .map((c) => c.id),
+          )
+        : new Set<string>();
+      const sameTask =
+        !!inputTask &&
+        materials.every(
+          (m) =>
+            m.taskRef === inputTask ||
+            !!(m.caseFor && linkedCases.has(m.caseFor.id)),
+        );
+      if (inputTask && j.taskSequence && sameTask) {
         const bindingId = digest([j.scopeId, "host-task", inputTask]);
         const binding = await tx.get<{ taskSequence?: number }>(
           "case_binding",
@@ -1529,16 +1728,9 @@ export class CoreService {
       if (output.workCase && j.synthesisTopicId)
         throw new ApiError("cross_case_work_case_forbidden", 409);
       if (output.workCase) {
-        const taskRef = materials[0]?.taskRef;
-        const sameTask =
-          typeof taskRef === "string" &&
-          materials.every(
-            (m) =>
-              m.sourceFamily &&
-              m.sourceFamily === materials[0]!.sourceFamily &&
-              m.taskRef === taskRef,
-          );
-        const task = sameTask ? await tx.get<Task>("task", taskRef) : undefined;
+        const taskRef = inputTask;
+        const task =
+          sameTask && taskRef ? await tx.get<Task>("task", taskRef) : undefined;
         const caseBindingId =
           task && task.scopeId === j.scopeId
             ? digest([j.scopeId, "host-task", task.id])
@@ -1652,7 +1844,11 @@ export class CoreService {
             oldCase?.sourceFamily ??
             materials[0]!.sourceFamily ??
             digest(materials[0]!.sourceIdentity),
-          ...(task ? { taskRef: task.id } : {}),
+          ...(task
+            ? { taskRef: task.id }
+            : oldCase?.taskRef
+              ? { taskRef: oldCase.taskRef }
+              : {}),
           methodUses: task
             ? (
                 await tx.list<WorkCase["methodUses"][number]>("method_use", [
@@ -1747,9 +1943,48 @@ export class CoreService {
             );
         }
       }
+      if (
+        j.verificationTarget &&
+        (output.workCase ||
+          output.method ||
+          output.splitMethods?.length ||
+          output.experiences.length > 1)
+      )
+        throw new ApiError("verification_output_invalid", 409);
+      const verified =
+        j.verificationTarget &&
+        "verifiedTarget" in verdict &&
+        verdict.verifiedTarget &&
+        verdict.acceptedExperienceIndexes.includes(0);
+      let verificationOld: Experience | undefined;
+      if (j.verificationTarget) {
+        verificationOld = await tx.get<Experience>(
+          "experience",
+          j.verificationTarget.id,
+        );
+        const control = await tx.get<{ revision: number }>(
+          "control",
+          j.verificationTarget.id,
+        );
+        if (
+          verificationOld?.revision !== j.verificationTarget.revision ||
+          verificationOld.state !== "held" ||
+          (control?.revision ?? 0) !== (j.verificationControlRevision ?? 0) ||
+          !verificationOld.review ||
+          Date.parse(verificationOld.review.reviewBy) <= Date.now() ||
+          !!(
+            verificationOld.validUntil &&
+            Date.parse(verificationOld.validUntil) <= Date.now()
+          )
+        )
+          throw new ApiError("verification_target_changed", 409);
+        if (control && !j.verificationByUser)
+          throw new ApiError("user_verification_required", 403);
+      }
       const created = new Map<number, Experience>();
       for (const [i, draft] of output.experiences.entries()) {
         if (
+          (j.verificationTarget && !verified) ||
           !verdict.acceptedExperienceIndexes.includes(i) ||
           draft.parentIndexes.some((n) => n >= i || !created.has(n))
         )
@@ -1766,11 +2001,68 @@ export class CoreService {
         const parsed = experienceSchema.safeParse({
           ...body,
           ...identity(j.scopeId),
+          ...(verificationOld
+            ? {
+                id: verificationOld.id,
+                revision: verificationOld.revision + 1,
+                createdAt: verificationOld.createdAt,
+              }
+            : {}),
           derivedFrom: parents.map((e) => ({ id: e.id, revision: e.revision })),
           sourceFingerprints: roots,
         });
-        if (!parsed.success) continue;
+        if (!parsed.success) {
+          if (j.verificationTarget)
+            throw new ApiError("verification_output_invalid", 409);
+          continue;
+        }
         const e = parsed.data;
+        if (verificationOld) {
+          if (
+            e.state !== "active" ||
+            e.assessment !== "supported" ||
+            e.id !== verificationOld.id
+          )
+            throw new ApiError("verification_not_supported", 409);
+          if (
+            verificationOld.validUntil &&
+            (!e.validUntil ||
+              Date.parse(e.validUntil) > Date.parse(verificationOld.validUntil))
+          )
+            throw new ApiError("verification_cannot_extend_validity", 409);
+          const bindingId = digest([
+            verificationOld.id,
+            verificationOld.revision,
+          ]);
+          if (!(await tx.get("experience_binding", bindingId)))
+            await tx.put(
+              entry("experience_binding", {
+                id: bindingId,
+                revision: 1,
+                scopeId: j.scopeId,
+                reference: ref("experience", verificationOld),
+                sourceRefs: verificationOld.sourceFingerprints,
+              }),
+              null,
+            );
+          await tx.put(entry("experience", e), verificationOld.revision);
+          await this.holdDependents(tx, j.scopeId, e.id);
+          const control = await tx.get<{ revision: number }>("control", e.id);
+          if (control) await tx.remove("control", e.id, control.revision);
+          await this.project(
+            tx,
+            "experience",
+            e,
+            e.conclusion +
+              " " +
+              e.topics.join(" ") +
+              " " +
+              e.entities.join(" "),
+          );
+          created.set(i, e);
+          results.push(ref("experience", e));
+          continue;
+        }
         const duplicates = (
           await tx.list<Experience>("experience", [j.scopeId])
         ).filter(
@@ -2058,6 +2350,47 @@ export class CoreService {
       await tx.put(entry("job", next), j.revision);
     });
   }
+  private async holdDependents(
+    tx: Transaction,
+    scopeId: string,
+    parentId: string,
+  ) {
+    const affected = new Set([parentId]);
+    const experiences = await tx.list<Experience>("experience", [scopeId]);
+    for (let count = -1; count !== affected.size; ) {
+      count = affected.size;
+      for (const e of experiences)
+        if (e.derivedFrom.some((r) => affected.has(r.id))) affected.add(e.id);
+    }
+    const review = {
+      reason: "source_changed" as const,
+      question: "Reassess against the new supporting experience revision",
+      reviewBy: new Date(Date.now() + 30 * 86400000).toISOString(),
+    };
+    for (const e of experiences)
+      if (e.id !== parentId && affected.has(e.id) && e.state !== "disabled")
+        await tx.put(
+          entry(
+            "experience",
+            mutate(e, { state: "held", review: e.review ?? review }),
+          ),
+          e.revision,
+        );
+    for (const method of await tx.list<Method>("method", [scopeId]))
+      if (
+        method.supportRefs.some((r) => affected.has(r.id)) &&
+        method.state !== "disabled"
+      ) {
+        await tx.snapshot(entry("method", method));
+        await tx.put(
+          entry(
+            "method",
+            mutate(method, { state: "held", review: method.review ?? review }),
+          ),
+          method.revision,
+        );
+      }
+  }
   private async project(
     tx: Transaction,
     kind: "method" | "experience",
@@ -2305,6 +2638,186 @@ export class CoreService {
   async listSources(p: Principal) {
     return this.store.transaction((tx) => tx.list<Source>("source", p.scopes));
   }
+  async browseMethods(p: Principal, input: unknown) {
+    const v = z
+      .object({
+        query: z.string().max(2048).optional(),
+        state: z.enum(["active", "held", "disabled"]).optional(),
+        scopeIds: z.array(z.string()).max(32).optional(),
+        topic: z.string().max(256).optional(),
+        pinnedOnly: z.boolean().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        cursor: z.string().max(2048).optional(),
+      })
+      .strict()
+      .parse(input);
+    const scopes = p.scopes
+      .filter((s) => !v.scopeIds || v.scopeIds.includes(s))
+      .sort();
+    const filter = digest([
+      p.id,
+      scopes,
+      v.query ?? "",
+      v.state,
+      v.topic,
+      !!v.pinnedOnly,
+    ]);
+    let after = "";
+    if (v.cursor) {
+      try {
+        const cursor = JSON.parse(
+          Buffer.from(v.cursor, "base64url").toString("utf8"),
+        );
+        if (cursor.filter !== filter || typeof cursor.after !== "string")
+          throw new Error();
+        after = cursor.after;
+      } catch {
+        throw new ApiError("invalid_cursor");
+      }
+    }
+    return this.store.transaction(async (tx) => {
+      const pins = new Set(
+        (
+          await tx.list<{
+            methodId: string;
+            callerId: string;
+            pinned: boolean;
+          }>("method_pin", scopes)
+        )
+          .filter((pin) => pin.callerId === p.id && pin.pinned)
+          .map((pin) => pin.methodId),
+      );
+      const rows = (await tx.list<Method>("method", scopes))
+        .filter(
+          (m) =>
+            (!v.state || m.state === v.state) &&
+            (!v.topic || m.topics.includes(v.topic)) &&
+            (!v.query ||
+              JSON.stringify(m)
+                .toLowerCase()
+                .includes(v.query.toLowerCase())) &&
+            (!v.pinnedOnly || pins.has(m.id)),
+        )
+        .map((m) => ({ ...m, pinned: pins.has(m.id) }))
+        .sort(
+          (a, b) =>
+            Number(b.pinned) - Number(a.pinned) || a.id.localeCompare(b.id),
+        );
+      if (!v.limit && !v.cursor) return rows;
+      const key = (m: { id: string; pinned: boolean }) =>
+        `${m.pinned ? 0 : 1}:${m.id}`;
+      const remaining = rows.filter(
+        (m) => !after || key(m).localeCompare(after) > 0,
+      );
+      const items = remaining.slice(0, v.limit ?? 25);
+      return {
+        items,
+        total: rows.length,
+        ...(remaining.length > items.length
+          ? {
+              nextCursor: Buffer.from(
+                JSON.stringify({ filter, after: key(items.at(-1)!) }),
+              ).toString("base64url"),
+            }
+          : {}),
+      };
+    });
+  }
+  async pinMethod(p: Principal, input: unknown) {
+    this.user(p);
+    const v = z
+      .object({ id: z.string(), pinned: z.boolean() })
+      .strict()
+      .parse(input);
+    return this.store.transaction(async (tx) => {
+      const method = await this.owned<Method>(tx, p, "method", v.id);
+      const id = digest([p.id, method.id]);
+      const old = await tx.get<{ revision: number }>("method_pin", id);
+      await tx.put(
+        entry("method_pin", {
+          id,
+          scopeId: method.scopeId,
+          revision: (old?.revision ?? 0) + 1,
+          callerId: p.id,
+          methodId: method.id,
+          pinned: v.pinned,
+        }),
+        old?.revision ?? null,
+      );
+      return { pinned: v.pinned };
+    });
+  }
+  async listTasks(p: Principal, scopeId?: string) {
+    this.user(p);
+    const scopes = p.scopes.filter((s) => !scopeId || s === scopeId);
+    return this.store.transaction(async (tx) =>
+      (await tx.list<Task>("task", scopes))
+        .filter(
+          (t) => !t.ended && Date.now() - Date.parse(t.createdAt) < 86400000,
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 100)
+        .map((t) => ({
+          taskRef: t.id,
+          scopeId: t.scopeId,
+          callerId: t.callerId,
+          ended: t.ended,
+          createdAt: t.createdAt,
+        })),
+    );
+  }
+  async rateMethodUse(p: Principal, input: unknown, key: string) {
+    this.user(p);
+    const v = z
+      .object({
+        taskRef: z.string(),
+        methodUseRef: z.string(),
+        rating: z.enum(["helpful", "incorrect", "irrelevant"]),
+        text: z.string().max(512).optional(),
+      })
+      .strict()
+      .parse(input);
+    const event = await this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
+      const use = (
+        await tx.list<{
+          taskRef: string;
+          methodUseRef: string;
+          method: ObjectRef;
+        }>("method_use", [task.scopeId])
+      ).find((u) => u.taskRef === task.id && u.methodUseRef === v.methodUseRef);
+      if (!use) throw new ApiError("method_use_mismatch", 409);
+      const receiptId = digest([p.id, "rating", key]);
+      const old = await tx.get<{ hash: string; occurredAt: string }>(
+        "rating_receipt",
+        receiptId,
+      );
+      if (old && old.hash !== digest(v)) throw new Conflict("event_conflict");
+      const event = {
+        eventId: receiptId,
+        taskRef: task.id,
+        scopeId: task.scopeId,
+        kind: "user_rating",
+        occurredAt: old?.occurredAt ?? new Date().toISOString(),
+        method: use.method,
+        methodUseRef: v.methodUseRef,
+        rating: v.rating,
+        text: v.text?.trim() || v.rating,
+      };
+      if (!old)
+        await tx.put(
+          entry("rating_receipt", {
+            ...identity(task.scopeId),
+            id: receiptId,
+            hash: digest(v),
+            occurredAt: event.occurredAt,
+          }),
+          null,
+        );
+      return event;
+    });
+    return new Effects(this.store).record(p, [event]);
+  }
   async controlSource(p: Principal, input: unknown, transaction?: Transaction) {
     this.user(p);
     const v = z
@@ -2326,6 +2839,12 @@ export class CoreService {
       const blocked = new Set<string>();
       const affectedMethods: Method[] = [];
       const removedMethods: ObjectRef[] = [];
+      for (const binding of await tx.list<{
+        reference: ObjectRef;
+        sourceRefs: string[];
+      }>("experience_binding", [source.scopeId]))
+        if (binding.sourceRefs.includes(source.id))
+          blocked.add(binding.reference.id);
       for (const control of await tx.list<{
         id: string;
         objectKind?: string;
@@ -2784,6 +3303,8 @@ export class CoreService {
             delete next.assessmentQuery;
             delete next.retainedSupport;
             delete next.comparisonMethods;
+            delete next.verificationTarget;
+            delete next.verificationControl;
             await tx.put(entry("job", next), job.revision);
           }
         for (const review of await tx.list<RevisionReview>("revision_review", [
@@ -3236,6 +3757,7 @@ export class CoreService {
         task.ended ||
         Date.now() - Date.parse(task.createdAt) >= 86400000 ||
         (task.callerId !== p.id &&
+          p.channel !== "user" &&
           !(p.channel === "agent" && p.taskOwnerId === task.callerId))
       )
         throw new ApiError("task_unavailable", 409);
@@ -3335,7 +3857,9 @@ export class CoreService {
     for (const check of evaluated.result.conditions)
       if (
         conditions.some((c) => digest(c) === check.key) &&
-        check.result !== "unknown"
+        check.result !== "unknown" &&
+        check.excerpt.trim() &&
+        evidence.some((e) => e.text.includes(check.excerpt))
       )
         conditionResults[check.key] = check.result === "true";
     const completed = evaluated.result.completed_steps
@@ -3419,6 +3943,7 @@ export class CoreService {
       const t = await this.owned<Task>(tx, p, "task", v.taskRef);
       if (
         (t.callerId !== p.id &&
+          p.channel !== "user" &&
           !(p.channel === "agent" && p.taskOwnerId === t.callerId)) ||
         t.ended ||
         Date.now() - Date.parse(t.createdAt) >= 86400000
@@ -3486,10 +4011,219 @@ export class CoreService {
       return prepared;
     });
   }
+  async recallRequest(p: Principal, input: unknown) {
+    const v = z
+      .object({
+        query: z.string().min(1).max(2048),
+        scopeIds: z.array(z.string()).max(32).optional(),
+        context: contextSchema.optional(),
+        includeLeads: z.boolean().optional(),
+        target: z
+          .object({ id: z.string(), revision: z.number().int().positive() })
+          .strict()
+          .optional(),
+        contextEvidence: z
+          .object({
+            taskRef: z.string(),
+            observationIds: z.array(z.string()).min(1).max(16).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .parse(input);
+    const caller = {
+      ...p,
+      scopes: p.scopes.filter((s) => !v.scopeIds || v.scopeIds.includes(s)),
+    };
+    if (!v.contextEvidence)
+      return this.recall(caller, v.query, v.context, {
+        ...(v.target ? { target: v.target } : {}),
+        ...(v.includeLeads !== undefined
+          ? { includeLeads: v.includeLeads }
+          : {}),
+      });
+    if (!v.target) throw new ApiError("target_required_for_verification");
+    const snapshot = await this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(
+        tx,
+        caller,
+        "task",
+        v.contextEvidence!.taskRef,
+      );
+      if (
+        task.ended ||
+        Date.now() - Date.parse(task.createdAt) >= 86400000 ||
+        (p.channel !== "user" &&
+          task.callerId !== p.id &&
+          !(p.channel === "agent" && p.taskOwnerId === task.callerId))
+      )
+        throw new ApiError("task_unavailable", 409);
+      const experience = await this.owned<Experience>(
+        tx,
+        caller,
+        "experience",
+        v.target!.id,
+      );
+      if (
+        experience.scopeId !== task.scopeId ||
+        experience.revision !== v.target!.revision
+      )
+        throw new ApiError("target_changed", 409);
+      const evidence = (task.rawObservations ?? []).filter(
+        (e) =>
+          !v.contextEvidence!.observationIds ||
+          v.contextEvidence!.observationIds.includes(e.eventId),
+      );
+      if (
+        !evidence.length ||
+        (v.contextEvidence!.observationIds &&
+          evidence.length !== new Set(v.contextEvidence!.observationIds).size)
+      )
+        throw new ApiError("trusted_observation_missing", 409);
+      const data = await this.eligibility(tx, caller);
+      const decision = decide(
+        experience,
+        {
+          scopes: data.scopes,
+          context: {},
+          includeLeads: true,
+          relevant: true,
+          trustedContextKeys: new Set(),
+          trustedUserConstraint: true,
+          blockedIds: data.blockedObjects,
+          blockedSources: data.blockedSources,
+          published: data.published,
+        },
+        data.experiences,
+      );
+      if (!("usage" in decision)) throw new ApiError("target_unavailable", 409);
+      const key = digest([
+        "experience-check",
+        task.id,
+        task.values,
+        task.observations,
+        task.rawObservations ?? [],
+        experience.id,
+        experience.revision,
+        evidence,
+      ]);
+      const cached = await tx.get<{ result: Record<string, boolean> }>(
+        "task_assessment",
+        key,
+      );
+      if (!cached) {
+        if ((task.reassessmentCount ?? 0) >= 8)
+          throw new ApiError("observation_assessment_budget", 409);
+        await tx.put(
+          entry(
+            "task",
+            mutate(task, {
+              reassessmentCount: (task.reassessmentCount ?? 0) + 1,
+            }),
+          ),
+          task.revision,
+        );
+      }
+      return { task, experience, evidence, key, cached };
+    });
+    const conditions = [
+      ...snapshot.experience.conditions,
+      ...snapshot.experience.exceptions,
+    ];
+    let result = snapshot.cached?.result;
+    if (!result) {
+      const evaluated = await this.engine.checkObservations({
+        observations: snapshot.evidence.map((e) => e.text),
+        conditions: conditions.map((c) => ({ key: digest(c), text: c.text })),
+        steps: [],
+      });
+      result = {};
+      for (const check of evaluated.result.conditions)
+        if (
+          check.result !== "unknown" &&
+          check.excerpt.trim() &&
+          conditions.some((c) => digest(c) === check.key) &&
+          snapshot.evidence.some((e) => e.text.includes(check.excerpt))
+        )
+          result[check.key] = check.result === "true";
+    }
+    const verified = result;
+    return this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, caller, "task", snapshot.task.id);
+      const e = await this.owned<Experience>(
+        tx,
+        caller,
+        "experience",
+        snapshot.experience.id,
+      );
+      if (
+        task.ended ||
+        digest([task.values, task.observations, task.rawObservations ?? []]) !==
+          digest([
+            snapshot.task.values,
+            snapshot.task.observations,
+            snapshot.task.rawObservations ?? [],
+          ]) ||
+        e.revision !== v.target!.revision
+      )
+        throw new Conflict("context_changed_during_assessment");
+      const data = await this.eligibility(tx, caller);
+      const decision = decide(
+        e,
+        {
+          scopes: data.scopes,
+          context: {},
+          includeLeads: v.includeLeads ?? true,
+          relevant: true,
+          trustedContextKeys: new Set(),
+          trustedUserConstraint: true,
+          conditionEvidence: new Map(Object.entries(verified)),
+          blockedIds: data.blockedObjects,
+          blockedSources: data.blockedSources,
+          published: data.published,
+        },
+        data.experiences,
+      );
+      if (!(await tx.get("task_assessment", snapshot.key)))
+        await tx.put(
+          entry("task_assessment", {
+            ...identity(task.scopeId),
+            id: snapshot.key,
+            taskRef: task.id,
+            result: verified,
+          }),
+          null,
+        );
+      return {
+        results:
+          "usage" in decision
+            ? [
+                {
+                  experience: ref("experience", e),
+                  conclusion: e.conclusion,
+                  conditions: e.conditions,
+                  exceptions: e.exceptions,
+                  ...decision,
+                },
+              ]
+            : [],
+        ...("reason" in decision ? { reason: decision.reason } : {}),
+        retrieval: "targeted_trusted_observations",
+        semanticAvailable: true,
+      };
+    });
+  }
   async recall(
     p: Principal,
     query: string,
     context: Record<string, string | string[]> = {},
+    options: {
+      target?: { id: string; revision: number };
+      includeLeads?: boolean;
+      trustedKeys?: Set<string>;
+      conditions?: Map<string, boolean>;
+    } = {},
   ) {
     const decideWith = (
       e: Experience,
@@ -3501,9 +4235,15 @@ export class CoreService {
         {
           scopes: data.scopes,
           context,
-          includeLeads: true,
+          includeLeads: options.includeLeads ?? true,
           relevant,
-          trustedContextKeys: new Set(),
+          trustedContextKeys: options.trustedKeys ?? new Set(),
+          ...(options.conditions
+            ? { conditionEvidence: options.conditions }
+            : {}),
+          ...(options.target
+            ? { targetRevision: options.target.revision }
+            : {}),
           trustedUserConstraint: true,
           blockedIds: data.blockedObjects,
           blockedSources: data.blockedSources,
@@ -3514,13 +4254,21 @@ export class CoreService {
     const allowed = await this.store.transaction(async (tx) => {
       const data = await this.eligibility(tx, p);
       return [...data.experiences.values()]
-        .filter((e) => "usage" in decideWith(e, data, true))
+        .filter(
+          (e) =>
+            (!options.target || e.id === options.target.id) &&
+            "usage" in decideWith(e, data, true),
+        )
         .map((e) => ({ ...ref("experience", e), scopeId: e.scopeId }));
     });
     const scores = new Map<string, number>();
     for (const scope of p.scopes) {
       const refs = allowed.filter((e) => e.scopeId === scope);
       if (!refs.length) continue;
+      if (options.target) {
+        refs.forEach((r) => scores.set(r.id + ":" + r.revision, 1));
+        continue;
+      }
       const hits = await this.engine.searchPublished(
         scope,
         query,
@@ -3537,6 +4285,7 @@ export class CoreService {
     return this.store.transaction(async (tx) => {
       const data = await this.eligibility(tx, p);
       const ranked = [...data.experiences.values()]
+        .filter((e) => !options.target || e.id === options.target.id)
         .map((e) => {
           const entity = e.entities.some((value) =>
             query.toLowerCase().includes(value.toLowerCase()),
@@ -3550,9 +4299,11 @@ export class CoreService {
         .filter((v) => v.score > 0)
         .sort((a, b) => b.score - a.score);
       const results = [];
+      let leadIncluded = false;
       for (const { e } of ranked) {
         const d = decideWith(e, data, true);
         if (!("usage" in d)) continue;
+        if (d.usage === "lead" && leadIncluded) continue;
         const row = {
           experience: ref("experience", e),
           conclusion: e.conclusion,
@@ -3561,10 +4312,23 @@ export class CoreService {
           ...d,
         };
         if (results.length >= 3) break;
-        if (tokenCount([...results, row]) <= 800) results.push(row);
+        if (tokenCount([...results, row]) <= 800) {
+          results.push(row);
+          leadIncluded ||= d.usage === "lead";
+        }
       }
       return {
         results,
+        ...(options.target && !results.length
+          ? {
+              reason: (() => {
+                const target = data.experiences.get(options.target!.id);
+                if (!target) return "target_unavailable";
+                const decision = decideWith(target, data, true);
+                return "reason" in decision ? decision.reason : "too_large";
+              })(),
+            }
+          : {}),
         retrieval: "native_multilingual_and_exact",
         semanticAvailable: true,
       };

@@ -1,6 +1,6 @@
 # 开发材料与评测工具
 
-本目录保存方法产品的开发输入及局部判定工具。当前没有WorkCase组装、真实L1–L5提炼、Method步骤/分支、发布投影或官方方案三组对照的实现；材料和字段校验通过不表示产品能力已完成。
+本目录保存方法产品的开发输入及局部判定工具。本目录已有开发三组执行器（无记忆、官方Hindsight SDK、LessonLoop），复用官方Copilot provider与真实文件任务判定。正式Agent hooks基线及完整质量规模仍未验收；产品学习、方法准备及发布投影在src实现。材料和字段校验通过不表示产品质量已完成，进度见[实现计划](../docs/13-implementation-plan.md)。
 
 ## 现有代码
 
@@ -30,6 +30,8 @@
 生命周期、来源撤回、投影同步、方法推进、回顾和发行需要真实状态与执行场景，不能只用文本描述通过。场景和数据划分按[评估方法](../docs/09-quality-evaluation.md)，验收ID由[05](../docs/05-delivery-and-validation.md)与[08](../docs/08-connectors.md)维护。
 
 ## 检查与同步
+
+开发对照使用`npm run validate:product-profile`检查配置，再用`npm run evaluate:product -- --core-config <本机配置路径>`运行。profile在`evals/profiles/development.json`；私有Python调用官方Copilot provider，三组隔离工作目录与存储范围。SDK官方组保留提取、归纳、知识模型和reflect，未冒充完整官方Agent插件基线。完整上下文超预算会报错，所有失败和未知成本保留在报告，发布门槛单独报告为未评估。
 
 ```powershell
 npm run validate:evals

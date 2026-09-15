@@ -22,6 +22,7 @@
       <section id="workspace" hidden>
         <nav>
           <button data-view="methods">方法库</button
+          ><button data-view="records">案例与经验</button
           ><button data-view="materials">提交材料</button
           ><button data-view="settings">设置</button>
           <button data-view="effects">效果回顾</button>
@@ -32,15 +33,69 @@
         <div id="review-notifications" role="status"></div>
         <div id="methods">
           <h1>方法库</h1>
-          <form id="search">
-            <input id="query" placeholder="按名称、主题或内容查找" /><button>
-              查找
-            </button>
+          <form id="search" class="filters">
+            <label
+              >关键词<input id="query" placeholder="名称、目标或内容"
+            /></label>
+            <label
+              >范围<select id="method-scope">
+                <option value="">全部范围</option>
+              </select></label
+            >
+            <label>主题<input id="method-topic" /></label>
+            <label
+              >状态<select id="method-state">
+                <option value="">全部状态</option>
+                <option value="active">可用</option>
+                <option value="held">待核实</option>
+                <option value="disabled">已停用</option>
+              </select></label
+            >
+            <label class="checkbox"
+              ><input id="method-pinned" type="checkbox" />只看常用</label
+            >
+            <button>查找</button>
           </form>
           <div class="columns">
-            <div id="cards"></div>
+            <div>
+              <div id="cards"></div>
+              <div id="method-pages" class="pagination"></div>
+            </div>
             <article id="detail">
               <p>选择一个方法查看步骤、依据和变化。</p>
+            </article>
+          </div>
+        </div>
+        <div id="records" hidden>
+          <h1>案例与经验</h1>
+          <button id="new-case">记录工作案例</button>
+          <form id="record-search" class="filters">
+            <label
+              >内容<select id="record-kind">
+                <option value="work_case">工作案例</option>
+                <option value="experience">经验</option>
+              </select></label
+            >
+            <label>关键词<input id="record-query" /></label>
+            <label
+              >范围<select id="record-scope">
+                <option value="">全部范围</option>
+              </select></label
+            >
+            <label
+              >状态<select id="record-state">
+                <option value="">全部状态</option>
+              </select></label
+            >
+            <button>查找</button>
+          </form>
+          <div class="columns">
+            <div>
+              <div id="record-cards"></div>
+              <div id="record-pages" class="pagination"></div>
+            </div>
+            <article id="record-detail">
+              <p>选择案例查看尝试与结果，或选择经验查看依据。</p>
             </article>
           </div>
         </div>

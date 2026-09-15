@@ -15,6 +15,7 @@ import {
   learningOutputSchema,
   learningAssessmentSchema,
   outputJsonSchema,
+  learningAssessmentJsonSchema,
 } from "../src/core/learning.js";
 import { methodPlanKey } from "../src/domain/method-evolution.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
@@ -567,6 +568,7 @@ test("Rejected methods get one bounded revision while retaining every native ope
           assessmentOperationId: "op-review-1",
           modelQuery: "Original authorized evidence",
           engineOperations: ["op-compose-1", "op-review-1"],
+          assessmentSchema: learningAssessmentJsonSchema,
         }),
         j.revision,
       );
@@ -574,12 +576,29 @@ test("Rejected methods get one bounded revision while retaining every native ope
     let calls = 0;
     const verdict = {
       acceptedExperienceIndexes: [],
-      methodSupported: false,
+      methodSupported: true,
       substantiveChange: false,
       supportedEvidenceChange: false,
       acceptedMethodIndexes: [],
       splitCoherent: false,
-      reasons: ["Unsupported comparison tool"],
+      pathChecks: [
+        {
+          methodIndex: 0,
+          pathIndex: 0,
+          globalConditionsCompatible: false,
+          stepsCompatible: true,
+          reason: "Global extension condition excludes field task",
+        },
+      ],
+      preservedPaths: [
+        {
+          methodId: f.method.id,
+          pathIndex: 0,
+          preserved: false,
+          reason: "Original field task excluded",
+        },
+      ],
+      reasons: ["Blanket approval contradicted by path checks"],
     };
     const engine = f.engine as any;
     engine.forJob = () => engine;
@@ -649,7 +668,7 @@ test("A failing published projection cannot starve later valid objects", async (
     };
     await store.transaction(async (tx) => {
       for (let i = 0; i < 10; i++) {
-        const id = (i < 8 ? "a" : "z") + i,
+        const id = (i < 8 ? "a" : "z") + i + "-" + f.scope,
           method = { ...f.method, id };
         await tx.put(entry("method", method), null);
         await tx.put(
@@ -668,8 +687,8 @@ test("A failing published projection cannot starve later valid objects", async (
     });
     await f.core.syncProjections([f.scope]);
     await f.core.syncProjections([f.scope]);
-    assert.ok(indexed.includes("z8"));
-    assert.ok(indexed.includes("z9"));
+    assert.ok(indexed.includes("z8-" + f.scope));
+    assert.ok(indexed.includes("z9-" + f.scope));
   } finally {
     await store.close();
   }

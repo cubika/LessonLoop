@@ -64,7 +64,8 @@ export class Effects {
     caller: { id: string; channel: string; scopes: string[] },
     input: unknown,
   ) {
-    if (caller.channel !== "host") throw new Error("trusted_host_required");
+    if (!["host", "user"].includes(caller.channel))
+      throw new Error("trusted_host_required");
     const events = z.array(z.unknown()).max(8).parse(input);
     const results = [];
     for (const raw of events) {
@@ -81,6 +82,14 @@ export class Effects {
         continue;
       }
       const event = parsed.data;
+      if (caller.channel === "user" && event.kind !== "user_rating") {
+        results.push({
+          eventId: event.eventId,
+          status: "rejected",
+          reason: "trusted_host_required",
+        });
+        continue;
+      }
       try {
         if (!caller.scopes.includes(event.scopeId))
           throw new Error("scope_denied");
@@ -113,7 +122,6 @@ export class Effects {
             Date.parse(event.occurredAt) > Date.now() + 60000
           )
             throw new Error("event_outside_window");
-          const id = digest([caller.id, event.scopeId, event.taskRef]);
           const eventKey = digest([caller.id, event.scopeId, event.eventId]);
           const seen = await tx.get<{ hash: string; cleared: boolean }>(
             "effect_event",
@@ -130,20 +138,27 @@ export class Effects {
           const actual = await tx.get<{
             callerId: string;
             scopeId: string;
+            createdAt?: string;
             erasedObservationHashes?: string[];
             endedAt?: string;
           }>("task", event.taskRef);
           if (
             !actual ||
-            actual.callerId !== caller.id ||
+            (caller.channel !== "user" && actual.callerId !== caller.id) ||
             actual.scopeId !== event.scopeId
           )
             throw new Error("task_identity_mismatch");
+          const id = digest([actual.callerId, event.scopeId, event.taskRef]);
           if (
             actual.endedAt &&
             (Date.now() > Date.parse(actual.endedAt) + 86400000 ||
               Date.parse(event.occurredAt) >
                 Date.parse(actual.endedAt) + 86400000)
+          )
+            throw new Error("event_outside_window");
+          if (
+            actual.createdAt &&
+            Date.parse(actual.createdAt) < Date.now() - 31 * 86400000
           )
             throw new Error("event_outside_window");
           if (event.method || event.methodUseRef || event.stepId) {
@@ -195,7 +210,7 @@ export class Effects {
             : {
                 ...identity(event.scopeId),
                 id,
-                callerId: caller.id,
+                callerId: actual.callerId,
                 taskRef: event.taskRef,
                 createdAt: event.occurredAt,
                 events: [event],
@@ -374,6 +389,13 @@ export class Effects {
   async maintain(scopes: string[]) {
     return this.store.transaction(async (tx) => {
       const cutoff = Date.now() - 30 * 86400000;
+      for (const receipt of await tx.list<{
+        id: string;
+        revision: number;
+        occurredAt: string;
+      }>("rating_receipt", scopes))
+        if (Date.parse(receipt.occurredAt) < cutoff - 86400000)
+          await tx.remove("rating_receipt", receipt.id, receipt.revision);
       for (const task of await tx.list<EffectTask>("effect_task", scopes)) {
         const events = task.events.filter(
           (e) => Date.parse(e.occurredAt) > cutoff,

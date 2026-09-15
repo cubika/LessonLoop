@@ -21,6 +21,8 @@ const result = spawnSync(
     "tests/method-evolution.integration.ts",
     "tests/cross-case.integration.ts",
     "tests/recall.integration.ts",
+    "tests/verification.integration.ts",
+    "tests/library.integration.ts",
   ],
   {
     stdio: "inherit",

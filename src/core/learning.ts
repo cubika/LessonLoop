@@ -126,12 +126,44 @@ export const learningAssessmentSchema = assessmentSchema
   .extend({
     substantiveChange: z.boolean(),
     supportedEvidenceChange: z.boolean(),
+    verifiedTarget: z.boolean().optional(),
+    pathChecks: z
+      .array(
+        z
+          .object({
+            methodIndex: z.number().int().nonnegative(),
+            pathIndex: z.number().int().nonnegative(),
+            globalConditionsCompatible: z.boolean(),
+            stepsCompatible: z.boolean(),
+            reason: z.string().min(1).max(512),
+          })
+          .strict(),
+      )
+      .max(192)
+      .optional(),
+    preservedPaths: z
+      .array(
+        z
+          .object({
+            methodId: z.string(),
+            pathIndex: z.number().int().nonnegative(),
+            preserved: z.boolean(),
+            reason: z.string().min(1).max(512),
+          })
+          .strict(),
+      )
+      .max(192)
+      .optional(),
     acceptedMethodIndexes: z
       .array(z.number().int().nonnegative().max(2))
       .max(3),
     splitCoherent: z.boolean(),
   })
   .strict();
+export const verificationAssessmentJsonSchema = zodToJsonSchema(
+  learningAssessmentSchema.extend({ verifiedTarget: z.boolean() }),
+  { $refStrategy: "none" },
+) as Record<string, unknown>;
 export function parseLearningAssessment(
   value: unknown,
   schema?: Record<string, unknown>,
@@ -150,7 +182,7 @@ export function parseLearningAssessment(
   return learningAssessmentSchema.parse(value);
 }
 export const learningAssessmentJsonSchema = zodToJsonSchema(
-  learningAssessmentSchema,
+  learningAssessmentSchema.required({ pathChecks: true, preservedPaths: true }),
   { $refStrategy: "none" },
 ) as Record<string, unknown>;
 export const outputJsonSchema = zodToJsonSchema(learningOutputSchema, {
