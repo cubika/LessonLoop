@@ -6,7 +6,7 @@
 
 ## 数据所有权
 
-核心只有 Source、Experience、Playbook，类型、API 字段与存储 kind 使用同一套名称。Source 一行保存一个片段及其控制状态；批量输入不产生另一个领域实体。WorkView 放在 core 中，是可选工作聚合缓存；使用视图直接读取任务事件。
+核心只有 Source、Experience、Playbook，类型、API 字段与存储 kind 使用同一套名称。Source 一行保存一个片段及其控制状态；批量输入不产生另一个领域实体。WorkView 放在 core 中，是可选工作聚合缓存；使用视图直接读取当前任务反馈。
 
 | 数据 | 权威位置 | 用途 |
 |---|---|---|
@@ -16,7 +16,7 @@
 | PublishedProjection | 可重建索引 | 查询当前可投递对象，不决定产品状态 |
 | 原文、chunks、原生 facts/observations、图与向量 | Hindsight 原生存储 | 提取、归纳、候选与依据读取 |
 | LearningJob、WriteOperation | ProductStore | 有限作业、原生操作确认和失败恢复 |
-| 工作缓存、任务事件、周期回顾 | ProductStore，单独授权 | 效果观察、案例与周期回顾 |
+| 工作缓存、任务反馈、结果判断材料与周期回顾 | ProductStore，单独授权 | 效果观察、当前结果与周期回顾；判断材料不进入学习bank |
 
 产品和引擎可以使用同一 PostgreSQL 的独立 schema。不能修改厂商内部表或依赖跨服务数据库事务。现有评测 schema 只覆盖 Experience 的部分规则，不是本页模型的实现。
 
@@ -45,7 +45,7 @@ WorkView 缓存按 scopeId/workKey 定位，包含目标、尝试、结果、短
 
 新输入重建工作快照，保留仍有来源的真实观察。source_sequence 同时记录接收顺序与已处理水位；较新作业零产出也推进水位，较旧结果不能覆盖新结果。跨工作复盘只能提炼经验和方法。
 
-使用视图从已保存的任务事件与真实用户评价生成。视图标签和摘要不成为独立学习证据；学习、效果记录和通知仍分别控制。
+使用视图从当前任务反馈与真实用户评价生成。视图标签和摘要不成为独立学习证据；学习、效果记录和通知仍分别控制。
 ## Experience
 
 | 字段 | 内容 |
@@ -122,9 +122,13 @@ SourceBinding 以 connectionId+sourceKey 唯一定位资源，保存 parentSourc
 
 task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOutcome/outcomeText，feedback数组按playbookId/revision保存delivered、userRating和ratingText；最多8个方法版本。投递和评价未知为null，结果未知为unknown。方法正文中的步骤和检查仍完整保留。
 
-写入使用整条记录的revision检查，同值重试不产生新版本。清空擦除字段并保留递增版本的空标记，到期按整条记录删除。读取无需事件归并，问题复核引用记录修订。更新宿主与核心时，启动迁移一次性保留旧记录的最终事实并删除事件、使用关联和评价收据；旧确认问题需重新复核。WorkView不再包含方法使用关联。
+结果附outcomeSource=ai/host/user、可选outcomeEvidence=[{role,excerpt}]及outcomeAssessment=pending/completed/unavailable；旧记录可无来源字段。实际Copilot会话附outcomeScope=session。AI引用绑定原始观察，人工或宿主填写结果时清除旧AI引用；outcomeAssessment表示判断服务的状态，不替代taskOutcome。汇总按outcomeSources分别统计ai/user/host/unspecified。
 
-反馈按回顾开关独立保存，关闭后停止新写入，已有记录仍可查看。学习材料和可信观察独立保留，清空反馈不会删除学习来源。未知结果不按成功计。
+task_outcome是每会话一条的持久处理状态，保存检查点、有界观察、事件时间、缺口、唯一token、状态、尝试次数和重试时间。它不创建学习来源或Hindsight bank。新材料令旧AI判断失效；模型返回后重查token、反馈是否仍可写、回顾开关和来源清理状态，过期结果不能覆盖新材料或人工结论。失败最多尝试3次，耗尽后为unavailable；判断服务失败不记为任务failed。已知材料缺口或缺少用户目标时直接保留unknown，不调用模型。
+
+写入使用整条记录的revision检查，同值重试不产生新版本。清空擦除字段并保留递增版本的空标记，到期按整条记录删除。outcomeGeneration在清空、关闭回顾或关联来源清理时递增；宿主提交须匹配当前generation，旧检查点和在途判断不得恢复已清理材料。读取无需事件归并，问题复核引用记录修订。更新宿主与核心时，启动迁移一次性保留旧记录的最终事实并删除事件、使用关联和评价收据；旧确认问题需重新复核。WorkView不再包含方法使用关联。
+
+反馈按回顾开关独立保存，关闭后停止新写入并清理待判断材料，已完成反馈仍可查看。重新开启不补收关闭期间的材料；缺口保留为unknown。关联来源擦除会清理该会话的判断材料及受影响的AI结果和引用，迟到输入仍受generation及擦除标记约束。清空反馈不会删除独立保留的学习来源。未知结果不按成功计。
 
 ## 保留与删除
 
@@ -137,7 +141,7 @@ task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOut
 | WorkView | 原始观察后 30 天；追加不重置旧证据期限 |
 | 当前 Experience、Playbook | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
 | Playbook 旧版 | 不保留；产品历史恢复入口与原生 mental model 历史均关闭 |
-| task_feedback、使用视图 | 任务创建后30天，评价、更正和重新准备不延期 |
+| task_feedback、task_outcome及使用视图 | 任务创建后30天，评价、更正和重新准备不延期；清空回顾同时清理判断材料 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
 | 方法获取所关联的Task | 普通任务创建后最长24小时；Copilot会话按最后宿主回调后的24小时空闲时间检查，恢复会话沿用原引用 |
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
@@ -167,6 +171,9 @@ Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系
 | 方法准备 | 请求16 KiB；一个方法自动视图2400 token，显式expanded最多8192 token且不超正文容量 |
 | 直接经验召回 | 请求16 KiB；最多3项、约800 token，最多1个lead；不与方法视图默认叠加 |
 | 观察与回顾 | 单任务64 KiB、关联对象64；使用视图8 KiB；每日1000任务/100新效果案例 |
+| Copilot结果判断材料 | 每会话最多192条观察、120 KiB；提交整体128 KiB；单条观察28000字符，宿主同时检查28000 B；最多32项缺口，结果说明512字符、引用最多8条且每条512字符 |
 | Connector批次 | 256 KiB、最多8个Source片段；超长对象使用稳定子资源 |
+
+结果判断材料超出预算时保留早期目标和较新观察，并记录不可恢复缺口；该会话只能自动得到unknown。中途开始采集、材料替换或擦除也保留缺口。暂时无法读取或身份尚未匹配的transcript可在后续完整读取后恢复，不永久沿用已消除的读取缺口。
 
 字节按 UTF-8 计算，token 单独计量。完整限制放不下则少返回、分片或报错，不截断后声称完整。引擎内部提取/归纳的次数、总 token、期限、取消和费用上限在 P0 冻结；无法精确限制的项标为可计量，并提供总体调度/取消控制。产品预算不等于数据库物理大小。

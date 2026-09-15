@@ -20,7 +20,11 @@ import {
   stripInjectedMemory,
   type HookEvent,
 } from "./protocol.js";
-import { readTranscript, type TranscriptCursor } from "./transcript.js";
+import {
+  readTranscript,
+  type TranscriptCursor,
+  type TranscriptRecord,
+} from "./transcript.js";
 
 export type Config = {
   baseUrl: string;
@@ -31,10 +35,23 @@ export type Config = {
 };
 type Call = (operation: string, input: any, key: string) => Promise<any>;
 type Playbook = { kind: "playbook"; id: string; revision: number };
+type OutcomeObservation = {
+  id: string;
+  role: "user" | "agent" | "tool" | "host";
+  text: string;
+  occurredAt?: string;
+};
 type State = {
   taskRef?: string;
   collectionGap?: string;
   cursor?: TranscriptCursor;
+  outcomeCursor?: TranscriptCursor;
+  outcomeGeneration?: number;
+  outcomeResetPending?: boolean;
+  outcomeTools?: Record<string, string>;
+  outcomeGaps?: string[];
+  outcomePending?: OutcomeObservation[];
+  outcomePendingPrompts?: Array<{ hash: string; occurredAt?: string }>;
   tools: Record<string, string>;
   prompts: Array<{
     key: string;
@@ -43,6 +60,72 @@ type State = {
     feedbackRevision?: number | undefined;
   }>;
 };
+
+function outcomeObservations(
+  records: TranscriptRecord[],
+  names: Record<string, string>,
+  gaps: Set<string>,
+) {
+  const observations: OutcomeObservation[] = [];
+  for (const record of records) {
+    if (record.agentId || record.data.parentToolCallId) continue;
+    const data = record.data;
+    if (
+      record.type === "tool.execution_start" &&
+      typeof data.toolCallId === "string" &&
+      typeof data.toolName === "string"
+    ) {
+      names[data.toolCallId] = data.toolName;
+      if (Object.keys(names).length > 128) delete names[Object.keys(names)[0]!];
+    }
+    let segment = transcriptEvent(record);
+    if (record.type === "tool.execution_complete") {
+      const name = names[data.toolCallId];
+      if (!name) {
+        gaps.add("tool_identity_unavailable");
+        continue;
+      }
+      if (isProductTool(name)) continue;
+      const result =
+        data.result && typeof data.result === "object"
+          ? { ...data.result, success: data.success }
+          : { content: data.result ?? data.error, success: data.success };
+      segment = {
+        role: "tool",
+        text: toolText(name, undefined, result),
+        eventId: record.id,
+      };
+    }
+    if (segment?.text.trim())
+      observations.push({
+        id: digest(["transcript", record.id ?? record]),
+        role: segment.role,
+        text: segment.text,
+        ...(eventTime(record.timestamp)
+          ? { occurredAt: eventTime(record.timestamp)! }
+          : {}),
+      });
+  }
+  return observations;
+}
+
+function boundOutcomes(observations: OutcomeObservation[], gaps: Set<string>) {
+  const bounded = observations.filter((observation) => {
+    if (Buffer.byteLength(observation.text) <= 28000) return true;
+    gaps.add("outcome_input_budget");
+    return false;
+  });
+  // Preserve early goals and recent results; any omission forbids a conclusive
+  // whole-session assessment in the core. This is not a rolling task window.
+  while (
+    bounded.length > 192 ||
+    Buffer.byteLength(JSON.stringify(bounded)) > 120 * 1024
+  ) {
+    gaps.add("outcome_input_budget");
+    bounded.splice(bounded.length > 16 ? 16 : 1, 1);
+  }
+  return bounded;
+}
 const api =
   (config: Config): Call =>
   async (operation, input, key) => {
@@ -153,23 +236,47 @@ export async function handleHook(
       feedbackRevision: number;
     }) => {
       if (!setting.review) return;
-      try {
-        await call(
+      const deliver = (expectedRevision: number) =>
+        call(
           "updateTaskFeedback",
           {
             taskRef,
             field: "delivered",
             playbookId: receipt.playbook.id,
             revision: receipt.playbook.revision,
-            expectedRevision: receipt.feedbackRevision,
+            expectedRevision,
           },
-          digest([
-            sessionKey,
-            "delivery",
-            receipt.playbook,
-            receipt.feedbackRevision,
-          ]),
+          digest([sessionKey, "delivery", receipt.playbook, expectedRevision]),
         );
+      try {
+        try {
+          await deliver(receipt.feedbackRevision);
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== "revision_conflict"
+          )
+            throw error;
+          const current = await call(
+            "getTaskFeedback",
+            { taskRef },
+            digest([sessionKey, "delivery-current", receipt.playbook]),
+          );
+          if (
+            receipt.feedbackRevision > (current.minimumRevision ?? 0) &&
+            current.feedback?.some(
+              (f: {
+                playbookId: string;
+                revision: number;
+                delivered: unknown;
+              }) =>
+                f.playbookId === receipt.playbook.id &&
+                f.revision === receipt.playbook.revision &&
+                f.delivered !== true,
+            )
+          )
+            await deliver(current.revision);
+        }
       } catch (error) {
         if (
           !(error instanceof Error) ||
@@ -183,6 +290,212 @@ export async function handleHook(
       }
     };
     const transcript = await readTranscript(event, cwd, state.cursor);
+    let outcomeAvailable = setting.review;
+    if (setting.review) {
+      try {
+        const feedback = await call(
+          "getTaskFeedback",
+          { taskRef },
+          digest([sessionKey, "outcome-generation"]),
+        );
+        const generation = feedback.outcomeGeneration ?? 0;
+        if (
+          state.outcomeGeneration !== undefined &&
+          state.outcomeGeneration !== generation
+        ) {
+          delete state.outcomePending;
+          delete state.outcomePendingPrompts;
+          delete state.outcomeTools;
+          state.outcomeResetPending = true;
+          state.outcomeGaps = ["outcome_generation_changed"];
+        }
+        state.outcomeGeneration = generation;
+      } catch {
+        outcomeAvailable = false;
+      }
+    }
+    if (state.outcomeResetPending && transcript.cursor) {
+      state.outcomeCursor = transcript.cursor;
+      delete state.outcomeResetPending;
+    }
+    if (!state.outcomeCursor && state.cursor && !state.outcomeGaps) {
+      state.outcomeCursor = state.cursor;
+      state.outcomeTools = { ...state.tools };
+      state.outcomeGaps = [
+        ...(state.outcomeGaps ?? []),
+        "outcome_capture_started_late",
+      ];
+    }
+    const outcomeTranscript =
+      JSON.stringify(state.outcomeCursor) === JSON.stringify(state.cursor)
+        ? transcript
+        : await readTranscript(event, cwd, state.outcomeCursor);
+    const transientGaps = [
+      "transcript_unavailable",
+      "transcript_identity_mismatch",
+    ];
+    const outcomeGaps = new Set([
+      ...(state.outcomeGaps ?? []).filter(
+        (gap) => !outcomeTranscript.cursor || !transientGaps.includes(gap),
+      ),
+      ...outcomeTranscript.gaps,
+    ]);
+    if (
+      state.outcomeCursor &&
+      outcomeTranscript.cursor &&
+      state.outcomeCursor.path !== outcomeTranscript.cursor.path
+    )
+      outcomeGaps.add("outcome_transcript_changed");
+    const outcomeTools = { ...state.outcomeTools };
+    const collected = outcomeObservations(
+      outcomeTranscript.records,
+      outcomeTools,
+      outcomeGaps,
+    );
+    if (setting.review) {
+      const callback: OutcomeObservation[] = [];
+      const occurredAt = eventTime(event.timestamp);
+      const currentPrompt =
+        type === "userPromptTransformed"
+          ? stripInjectedMemory(
+              event.prompt ?? event.transformedPrompt ?? "",
+            ).trim()
+          : "";
+      if (currentPrompt)
+        callback.push({
+          id: digest(["prompt", event.timestamp ?? null, currentPrompt]),
+          role: "user",
+          text: currentPrompt,
+          ...(occurredAt ? { occurredAt } : {}),
+        });
+      if (
+        type !== "userPromptTransformed" &&
+        (event.reason || event.stopReason)
+      ) {
+        const text = JSON.stringify({
+          event: type,
+          ...(event.reason ? { reason: event.reason } : {}),
+          ...(event.stopReason ? { stopReason: event.stopReason } : {}),
+        });
+        callback.push({
+          id: digest(["host", event.timestamp ?? null, text]),
+          role: "host",
+          text,
+          ...(occurredAt ? { occurredAt } : {}),
+        });
+      }
+      const pending = [
+        ...new Map(
+          [
+            ...(state.outcomePending ?? []).filter((o) => o.role === "host"),
+            ...callback,
+          ].map((o) => [o.id, o]),
+        ).values(),
+      ].filter(
+        (o) => !collected.some((c) => c.role === o.role && c.text === o.text),
+      );
+      const observations = boundOutcomes(
+        [
+          ...pending.filter((o) => !callback.some((c) => c.id === o.id)),
+          ...collected,
+          ...pending.filter((o) => callback.some((c) => c.id === o.id)),
+        ].sort((a, b) =>
+          a.occurredAt && b.occurredAt
+            ? a.occurredAt.localeCompare(b.occurredAt)
+            : 0,
+        ),
+        outcomeGaps,
+      );
+      const pendingPrompts = [
+        ...new Map(
+          [
+            ...(state.outcomePendingPrompts ?? []),
+            ...(state.outcomePending ?? [])
+              .filter((o) => o.role === "user")
+              .map((o) => ({
+                hash: digest(o.text),
+                ...(o.occurredAt ? { occurredAt: o.occurredAt } : {}),
+              })),
+          ].map((p) => [p.hash, p]),
+        ).values(),
+      ];
+      const recoveredPrompts = new Set(
+        observations
+          .filter((o) => o.role === "user")
+          .map((o) => digest(o.text)),
+      );
+      const unresolvedPrompts = pendingPrompts.filter(
+        (p) => !recoveredPrompts.has(p.hash),
+      );
+      outcomeGaps.delete("outcome_prompt_unavailable");
+      if (unresolvedPrompts.length)
+        outcomeGaps.add("outcome_prompt_unavailable");
+      const checkpoint = outcomeTranscript.cursor ??
+        state.outcomeCursor ?? {
+          path: "unavailable",
+          offset: 0,
+        };
+      try {
+        if (!outcomeAvailable) throw new Error("feedback_unavailable");
+        const input = {
+          taskRef,
+          generation: state.outcomeGeneration ?? 0,
+          checkpoint,
+          observations,
+          gaps: [...outcomeGaps],
+          trigger: type,
+        };
+        await call(
+          "submitTaskOutcome",
+          input,
+          digest([sessionKey, "outcome", input]),
+        );
+        if (outcomeTranscript.cursor)
+          state.outcomeCursor = outcomeTranscript.cursor;
+        state.outcomeTools = outcomeTools;
+        delete state.outcomePending;
+        if (unresolvedPrompts.length)
+          state.outcomePendingPrompts = unresolvedPrompts;
+        else delete state.outcomePendingPrompts;
+      } catch {
+        state.outcomePending = boundOutcomes(
+          pending.filter((o) => o.role === "host"),
+          outcomeGaps,
+        );
+        const missingPrompts = [
+          ...new Map(
+            [
+              ...pendingPrompts,
+              ...callback
+                .filter((o) => o.role === "user")
+                .map((o) => ({
+                  hash: digest(o.text),
+                  ...(o.occurredAt ? { occurredAt: o.occurredAt } : {}),
+                })),
+            ].map((p) => [p.hash, p]),
+          ).values(),
+        ];
+        if (missingPrompts.length > 192)
+          outcomeGaps.add("outcome_input_budget");
+        if (missingPrompts.length)
+          state.outcomePendingPrompts = missingPrompts.slice(-192);
+        else delete state.outcomePendingPrompts;
+        process.stderr.write(
+          "LessonLoop task outcome capture unavailable; retrying on the next callback.\n",
+        );
+      }
+    } else {
+      if (transcript.cursor) state.outcomeCursor = transcript.cursor;
+      else state.outcomeResetPending = true;
+      state.outcomeTools = outcomeTools;
+      delete state.outcomePending;
+      delete state.outcomePendingPrompts;
+      outcomeGaps.add("outcome_review_disabled");
+    }
+    state.outcomeGaps = [...outcomeGaps];
+    // Outcome delivery has its own checkpoint. A failed review request must
+    // neither block learning/guidance nor lose prompt/cancellation callbacks.
+    await save();
     const gaps = new Set(transcript.gaps);
     for (const record of transcript.records) {
       if (record.agentId || record.data.parentToolCallId) continue;

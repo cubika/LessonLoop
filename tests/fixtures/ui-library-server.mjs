@@ -1,6 +1,54 @@
 import { createServer } from "node:http";
 export async function startUiFixture() {
   const createdAt = new Date().toISOString();
+  const taskFeedback = new Map([
+    [
+      "task-ui",
+      {
+        id: "task-ui",
+        taskRef: "task-ui",
+        revision: 2,
+        scopeId: "ui-check",
+        createdAt,
+        classification: "user_confirmed_helpful",
+        taskOutcome: "unknown",
+        outcomeText: "",
+        feedback: [
+          {
+            playbookId: "method-ui",
+            revision: 2,
+            delivered: null,
+            userRating: "helpful",
+          },
+        ],
+      },
+    ],
+  ]);
+  const effectSummary = () => {
+    const rows = [...taskFeedback.values()],
+      count = (status) => rows.filter((r) => r.taskOutcome === status).length,
+      sourceCount = (source) =>
+        rows.filter((r) => (r.outcomeSource ?? "unspecified") === source)
+          .length;
+    return {
+      tasks: rows.length,
+      delivered: rows.filter((r) => r.feedback.some((f) => f.delivered)).length,
+      succeeded: count("succeeded"),
+      failed: count("failed"),
+      abandoned: count("abandoned"),
+      unknownOutcome: count("unknown"),
+      ...(rows.some((r) => r.outcomeSource)
+        ? {
+            outcomeSources: {
+              ai: sourceCount("ai"),
+              user: sourceCount("user"),
+              host: sourceCount("host"),
+              unspecified: sourceCount("unspecified"),
+            },
+          }
+        : {}),
+    };
+  };
   const experience = {
     id: "experience-ui",
     revision: 2,
@@ -191,45 +239,49 @@ export async function startUiFixture() {
           result = { status: "completed" };
           break;
         case "feedback":
-        case "updateTaskFeedback":
           result = { accepted: true, results: [{ status: "accepted" }] };
           break;
+        case "updateTaskFeedback": {
+          const current = taskFeedback.get(input.taskRef);
+          if (!current) throw new Error("feedback_unavailable");
+          if (current.revision !== input.expectedRevision)
+            throw new Error("revision_conflict");
+          if (input.field === "taskOutcome") {
+            current.taskOutcome = input.taskOutcome;
+            current.outcomeText = input.text ?? "";
+            current.outcomeSource = "user";
+            delete current.outcomeEvidence;
+            delete current.outcomeAssessment;
+          }
+          current.revision++;
+          result = { accepted: true, revision: current.revision };
+          break;
+        }
         case "getTaskFeedback":
-          result = { revision: 2 };
+          result = taskFeedback.get(input.taskRef);
           break;
         case "reviews.notifications":
-        case "reviews.list":
         case "reviews.issues":
           result = [];
           break;
-        case "getEffectSummary":
-          result = {
-            tasks: 1,
-            delivered: 0,
-            succeeded: 0,
-            failed: 0,
-            unknownOutcome: 1,
-          };
-          break;
-        case "getUsageView":
+        case "reviews.list":
           result = [
             {
-              id: "feedback-ui",
-              taskRef: "task-ui",
-              classification: "user_confirmed_helpful",
-              taskOutcome: "unknown",
-              feedback: [
-                {
-                  playbookId: "method-ui",
-                  revision: 2,
-                  delivered: null,
-                  taskOutcome: "unknown",
-                  userRating: "helpful",
-                },
-              ],
-              outcomeText: "",
+              start: createdAt,
+              end: createdAt,
+              scopeId: "ui-check",
+              mergedPeriods: 1,
+              summary: { ...effectSummary(), helpfulCount: 1, problemCount: 0 },
+              playbooks: [],
+              needsVerification: [],
             },
           ];
+          break;
+        case "getEffectSummary":
+          result = effectSummary();
+          break;
+        case "getUsageView":
+          result = [...taskFeedback.values()];
           break;
         default:
           throw new Error("Unexpected UI RPC: " + operation);
@@ -237,7 +289,7 @@ export async function startUiFixture() {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ result }));
     } catch (e) {
-      res.writeHead(500);
+      res.writeHead(e.message === "revision_conflict" ? 409 : 500);
       res.end(JSON.stringify({ error: e.message }));
     }
   });
@@ -246,6 +298,7 @@ export async function startUiFixture() {
     server.listen(0, "127.0.0.1", resolve);
   });
   return {
+    taskFeedback,
     baseUrl: "http://127.0.0.1:" + server.address().port,
     close: () =>
       new Promise((resolve, reject) => {

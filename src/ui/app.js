@@ -370,58 +370,181 @@ document.querySelectorAll("[data-view]").forEach(
       if (button.dataset.view === "records") await renderRecords();
       if (button.dataset.view === "sources") await renderSources();
       if (button.dataset.view === "connections") await renderConnections();
-      if (button.dataset.view === "effects") {
-        await renderPeriodicReviews();
-        await renderIssues();
-        const summary = await rpc("getEffectSummary");
-        $("effect-summary").replaceChildren(
-          node(
-            "p",
-            `任务 ${summary.tasks} · 已投递 ${summary.delivered} · 成功 ${summary.succeeded} · 失败 ${summary.failed} · 结果未知 ${summary.unknownOutcome}`,
-          ),
-        );
-        const cases = await rpc("getUsageView");
-        $("effect-cases").replaceChildren(
-          ...cases.map((c) => {
-            const section = node("section", "");
-            section.className = "card";
-            section.append(node("h2", c.classification), node("p", c.taskRef));
-            const outcomes = {
-              succeeded: "成功",
-              failed: "失败",
-              abandoned: "放弃",
-              unknown: "未知",
-            };
-            const ratings = {
-              helpful: "有帮助",
-              incorrect: "有问题",
-              irrelevant: "不相关",
-            };
-            section.append(node("p", "任务结果：" + outcomes[c.taskOutcome]));
-            c.feedback.forEach((f) =>
-              section.append(
-                node(
-                  "p",
-                  `${f.playbookId} · 修订 ${f.revision} · 投递${f.delivered ? "已确认" : "未知"} · 评价：${ratings[f.userRating] ?? "暂无"}`,
-                ),
-              ),
-            );
-            if (c.outcomeText) section.append(node("p", c.outcomeText));
-            c.feedback.forEach((f) => {
-              if (f.ratingText) section.append(node("p", f.ratingText));
-            });
-            const report = node("button", "标记方法问题");
-            report.onclick = handle(() => issueForm(section, c));
-            section.append(report);
-            const exportCase = node("button", "导出开发样本");
-            exportCase.onclick = handle(() => exportCaseForm(section, c));
-            section.append(exportCase);
-            return section;
-          }),
-        );
-      }
+      if (button.dataset.view === "effects") await renderEffects();
     })),
 );
+const taskOutcomeLabels = {
+  succeeded: "成功",
+  failed: "失败",
+  abandoned: "已取消或放弃",
+  unknown: "未知",
+};
+function renderOutcomeSources(parent, summary) {
+  const sources = summary.outcomeSources;
+  if (!sources) return;
+  parent.append(
+    node(
+      "p",
+      `结果来源：AI 判断 ${sources.ai} · 人工确认或纠正 ${sources.user} · 宿主报告 ${sources.host} · 来源未记录 ${sources.unspecified}`,
+    ),
+  );
+}
+function renderTaskOutcome(parent, feedback) {
+  const scope = feedback.outcomeScope === "session" ? "Copilot 会话" : "任务";
+  const sources = {
+    ai: "AI 判断（待人工确认）",
+    host: "宿主报告",
+    user: "人工确认或纠正",
+  };
+  parent.append(
+    node(
+      "p",
+      `${scope}结果：${taskOutcomeLabels[feedback.taskOutcome] ?? "未知"}`,
+    ),
+    node("p", `结果来源：${sources[feedback.outcomeSource] ?? "来源未记录"}`),
+  );
+  if (feedback.outcomeScope === "session")
+    parent.append(node("p", "此结果针对整个 Copilot 会话。"));
+  if (feedback.outcomeAssessment === "pending")
+    parent.append(node("p", "AI 正在判断结果，也可以现在填写。"));
+  if (feedback.outcomeAssessment === "unavailable")
+    parent.append(node("p", "自动判断暂不可用，可手动填写结果。"));
+  if (feedback.outcomeText) parent.append(node("p", feedback.outcomeText));
+  const roles = { user: "用户", agent: "Copilot", tool: "工具", host: "宿主" };
+  for (const evidence of feedback.outcomeEvidence ?? [])
+    parent.append(
+      node(
+        "blockquote",
+        `${roles[evidence.role] ?? "记录"}：${evidence.excerpt}`,
+      ),
+    );
+}
+async function renderEffects() {
+  await renderPeriodicReviews();
+  await renderIssues();
+  const summary = await rpc("getEffectSummary");
+  $("effect-summary").replaceChildren(
+    node(
+      "p",
+      `任务 ${summary.tasks} · 已投递 ${summary.delivered} · 成功 ${summary.succeeded} · 失败 ${summary.failed} · 已取消或放弃 ${summary.abandoned ?? 0} · 结果未知 ${summary.unknownOutcome}`,
+    ),
+  );
+  renderOutcomeSources($("effect-summary"), summary);
+  const cases = await rpc("getUsageView");
+  $("effect-cases").replaceChildren(
+    ...cases.map((c) => {
+      const section = node("section", "");
+      section.className = "card";
+      section.append(node("h2", c.classification), node("p", c.taskRef));
+      renderTaskOutcome(section, c);
+      const ratings = {
+        helpful: "有帮助",
+        incorrect: "有问题",
+        irrelevant: "不相关",
+      };
+      c.feedback.forEach((f) => {
+        section.append(
+          node(
+            "p",
+            `${f.playbookId} · 修订 ${f.revision} · 投递${f.delivered ? "已确认" : "未知"} · 评价：${ratings[f.userRating] ?? "暂无"}`,
+          ),
+        );
+        if (f.ratingText) section.append(node("p", f.ratingText));
+      });
+      if (
+        c.outcomeSource !== "user" &&
+        (c.taskOutcome !== "unknown" || c.outcomeSource)
+      ) {
+        const confirmOutcome = node("button", "确认当前结果");
+        confirmOutcome.onclick = handle(async () => {
+          const latest = await rpc("getTaskFeedback", { taskRef: c.taskRef });
+          if (latest.revision !== c.revision) {
+            await renderEffects();
+            throw new Error("结果已更新，请核对最新记录后再确认。");
+          }
+          try {
+            await rpc("updateTaskFeedback", {
+              taskRef: c.taskRef,
+              field: "taskOutcome",
+              expectedRevision: c.revision,
+              taskOutcome: c.taskOutcome,
+              text: c.outcomeText ?? "",
+            });
+          } catch (error) {
+            if (error.message !== "revision_conflict") throw error;
+            await renderEffects();
+            throw new Error("结果已更新，请核对最新记录后再确认。");
+          }
+          await renderEffects();
+        });
+        section.append(confirmOutcome);
+      }
+      const edit = node("button", "填写或纠正结果"),
+        editor = node("section", "");
+      edit.onclick = handle(() => taskOutcomeForm(editor, c.taskRef));
+      section.append(edit, editor);
+      const report = node("button", "标记方法问题");
+      report.onclick = handle(() => issueForm(section, c));
+      section.append(report);
+      const exportCase = node("button", "导出开发样本");
+      exportCase.onclick = handle(() => exportCaseForm(section, c));
+      section.append(exportCase);
+      return section;
+    }),
+  );
+}
+async function taskOutcomeForm(panel, taskRef) {
+  let current = await rpc("getTaskFeedback", { taskRef });
+  panel.replaceChildren(node("h3", "填写或纠正结果"));
+  const latest = node("section", "");
+  renderTaskOutcome(latest, current);
+  panel.append(latest);
+  const outcome = selectField(
+      panel,
+      "结果",
+      Object.entries(taskOutcomeLabels),
+      current.taskOutcome ?? "unknown",
+    ),
+    text = field(panel, "结果说明（可选）", current.outcomeText ?? "", true),
+    status = node("p", "保存后标记为人工确认或纠正。"),
+    save = node("button", "保存结果"),
+    reload = node("button", "加载最新结果");
+  text.maxLength = 512;
+  status.setAttribute("role", "status");
+  reload.hidden = true;
+  reload.onclick = handle(async () => {
+    current = await rpc("getTaskFeedback", { taskRef });
+    latest.replaceChildren();
+    renderTaskOutcome(latest, current);
+    status.textContent = "已加载最新结果。草稿已保留，请核对后再次保存。";
+    reload.hidden = true;
+    save.disabled = false;
+  });
+  save.onclick = handle(async () => {
+    save.disabled = true;
+    try {
+      await rpc("updateTaskFeedback", {
+        taskRef,
+        field: "taskOutcome",
+        expectedRevision: current.revision,
+        taskOutcome: outcome.value,
+        text: text.value.trim(),
+      });
+    } catch (error) {
+      if (error.message === "revision_conflict") {
+        status.textContent =
+          "结果已被更新，草稿尚未保存。请加载最新结果并核对。";
+        reload.hidden = false;
+        return;
+      }
+      save.disabled = false;
+      throw error;
+    }
+    panel.replaceChildren(node("p", "结果已保存。"));
+    await renderEffects();
+  });
+  panel.append(status, save, reload);
+}
 async function renderSettings() {
   settings = await rpc("settings.get");
   const form = $("settings-form");
@@ -1421,6 +1544,7 @@ async function renderPeriodicReviews() {
           stats.unknownOutcome,
       ),
     );
+    renderOutcomeSources(card, stats);
     review.playbooks.forEach((m) =>
       card.append(node("p", "方法变化：" + m.title + " · 修订 " + m.revision)),
     );

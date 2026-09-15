@@ -52,6 +52,7 @@ async function fixture(
   let fail: string | undefined, lose: string | undefined;
   let failMessage = "temporary_failure";
   let expansion = false;
+  let feedbackSnapshot: object | undefined;
   const rpc = async (operation: string, input: any, key: string) => {
     calls.push({ operation, input, key });
     if (fail === operation) {
@@ -59,13 +60,21 @@ async function fixture(
       throw new Error(failMessage);
     }
     if (operation === "settings.get") return [settings];
+    if (operation === "getTaskFeedback")
+      return (
+        feedbackSnapshot ?? { revision: 1, outcomeGeneration: 0, feedback: [] }
+      );
     if (operation === "startTask") {
       if (!bindings.has(input.eventId))
         bindings.set(input.eventId, "task-" + bindings.size);
       return { taskRef: bindings.get(input.eventId) };
     }
     if (operation === "getGuidance") {
-      const playbook = { kind: "playbook", id: input.query, revision: 1 };
+      const playbook = {
+        kind: "playbook",
+        id: "playbook-" + digest(input.query),
+        revision: 1,
+      };
       return {
         taskRef: input.taskRef,
         scopeId: "scope",
@@ -152,6 +161,9 @@ async function fixture(
     expand: () => {
       expansion = true;
     },
+    feedback: (value: object) => {
+      feedbackSnapshot = value;
+    },
   };
 }
 
@@ -192,7 +204,16 @@ test("one session retains its binding across stops, resumes and topic changes", 
     Object.keys(
       JSON.parse(await readFile(join(f.config.stateRoot, file), "utf8")),
     ).sort(),
-    ["cursor", "prompts", "taskRef", "tools"],
+    [
+      "cursor",
+      "outcomeCursor",
+      "outcomeGaps",
+      "outcomeGeneration",
+      "outcomeTools",
+      "prompts",
+      "taskRef",
+      "tools",
+    ],
   );
 });
 
@@ -703,5 +724,409 @@ test("long sessions have no adapter event-count cutoff and old task state is rej
   await assert.rejects(
     f.hook("agentStop", 203),
     /host_session_restart_required/,
+  );
+});
+
+const outcomeCalls = (f: Awaited<ReturnType<typeof fixture>>) =>
+  f.calls.filter((c) => c.operation === "submitTaskOutcome");
+const savedOutcomeState = async (f: Awaited<ReturnType<typeof fixture>>) => {
+  const file = (await readdir(f.config.stateRoot)).find((n) =>
+    n.endsWith(".json"),
+  )!;
+  const raw = await readFile(join(f.config.stateRoot, file), "utf8");
+  return { raw, state: JSON.parse(raw) };
+};
+
+test("review captures session evidence independently of learning and queues only hook triggers", async (t) => {
+  const f = await fixture(t);
+  f.settings.learning = false;
+  await f.hook("userPromptTransformed", 1, {
+    prompt: "Implement and test the change",
+  });
+  await f.append(
+    f.record(2, "user.message", { content: "Implement and test the change" }),
+    f.record(3, "assistant.message", { content: "Implemented it; tests pass" }),
+  );
+  await f.hook("agentStop", 4, { stopReason: "end_turn" });
+  const requests = outcomeCalls(f);
+  assert.deepEqual(
+    requests.map((c) => c.input.trigger),
+    ["userPromptTransformed", "agentStop"],
+  );
+  assert.equal(requests[0]!.input.observations[0].role, "user");
+  assert.equal(
+    requests[0]!.input.observations[0].text,
+    "Implement and test the change",
+  );
+  assert.equal(requests[0]!.input.observations[0].occurredAt, f.time(1));
+  assert.deepEqual(
+    requests[1]!.input.observations.map((o: any) => o.role),
+    ["user", "agent", "host"],
+  );
+  assert.deepEqual(JSON.parse(requests[1]!.input.observations.at(-1).text), {
+    event: "agentStop",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(
+    requests[1]!.input.observations.map((o: any) => o.occurredAt),
+    [f.time(2), f.time(3), f.time(4)],
+  );
+  assert.ok(requests.every((c) => !("taskOutcome" in c.input)));
+  assert.equal(f.sources().length, 0);
+  assert.ok(
+    requests[1]!.input.checkpoint.offset > requests[0]!.input.checkpoint.offset,
+  );
+});
+
+test("outcome capture retries missed deltas and callback evidence without blocking learning or guidance", async (t) => {
+  const f = await fixture(t);
+  f.fail("submitTaskOutcome");
+  const prompt = await f.hook("userPromptTransformed", 1, {
+    prompt: "Original full goal",
+  });
+  assert.ok(prompt.modifiedTransformedPrompt);
+  const afterFailure = await savedOutcomeState(f);
+  assert.ok(!afterFailure.raw.includes("Original full goal"));
+  assert.deepEqual(afterFailure.state.outcomePendingPrompts, [
+    { hash: digest("Original full goal"), occurredAt: f.time(1) },
+  ]);
+  assert.ok(
+    afterFailure.state.outcomePending.every((o: any) => o.role === "host"),
+  );
+  await f.append(
+    f.record(2, "assistant.message", { content: "Partial implementation" }),
+  );
+  f.lose("submitTaskOutcome");
+  await f.hook("sessionEnd", 3, { reason: "abort" });
+  assert.deepEqual(
+    f.sources().map((s) => s.text),
+    ["Partial implementation"],
+  );
+  await f.append(f.record(4, "user.message", { content: "Resume and finish" }));
+  await f.hook("userPromptTransformed", 5, { prompt: "Resume and finish" });
+  const retry = outcomeCalls(f).at(-1)!.input;
+  assert.equal(retry.trigger, "userPromptTransformed");
+  assert.ok(
+    retry.observations.every((o: any) => o.text !== "Original full goal"),
+  );
+  assert.ok(retry.gaps.includes("outcome_prompt_unavailable"));
+  assert.ok(
+    retry.observations.some((o: any) => o.text === "Partial implementation"),
+  );
+  assert.equal(
+    retry.observations.find((o: any) => o.role === "host").occurredAt,
+    f.time(3),
+  );
+  assert.ok(
+    retry.observations.some(
+      (o: any) => o.role === "host" && JSON.parse(o.text).reason === "abort",
+    ),
+  );
+  assert.ok(
+    retry.observations.findIndex(
+      (o: any) => o.text === "Partial implementation",
+    ) < retry.observations.findIndex((o: any) => o.role === "host"),
+    "terminal callback stays after earlier transcript evidence when replayed",
+  );
+  assert.equal(
+    retry.observations.filter((o: any) => o.text === "Resume and finish")
+      .length,
+    1,
+  );
+  assert.deepEqual(
+    f.sources().map((s) => s.text),
+    ["Partial implementation", "Resume and finish"],
+  );
+  const saved = JSON.parse(
+    await readFile(
+      join(
+        f.config.stateRoot,
+        (await readdir(f.config.stateRoot)).find((n) => n.endsWith(".json"))!,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(saved.outcomeCursor, saved.cursor);
+  assert.equal(saved.outcomePending, undefined);
+  assert.deepEqual(saved.outcomePendingPrompts, [
+    { hash: digest("Original full goal"), occurredAt: f.time(1) },
+  ]);
+});
+
+test("missed prompt hashes recover from transcript or a repeated callback without local plaintext", async (t) => {
+  for (const recovery of ["transcript", "callback"]) {
+    const f = await fixture(t);
+    const original = `Private original goal for ${recovery}`;
+    f.settings.learning = false;
+    f.fail("submitTaskOutcome");
+    await f.hook("userPromptTransformed", 1, { prompt: original });
+    assert.ok(!(await savedOutcomeState(f)).raw.includes(original));
+    await f.hook("agentStop", 2, { stopReason: "end_turn" });
+    assert.ok(
+      outcomeCalls(f).at(-1)!.input.gaps.includes("outcome_prompt_unavailable"),
+    );
+    if (recovery === "transcript") {
+      await f.append(
+        f.record(1, "user.message", { content: original }),
+        f.record(3, "assistant.message", {
+          content: "Result waiting for verification",
+        }),
+      );
+      await f.hook("agentStop", 4);
+    } else {
+      await f.hook("userPromptTransformed", 4, { prompt: original });
+    }
+    const recovered = outcomeCalls(f).at(-1)!.input;
+    assert.deepEqual(recovered.gaps, []);
+    assert.ok(
+      recovered.observations.some(
+        (o: any) => o.role === "user" && o.text === original,
+      ),
+    );
+    const saved = await savedOutcomeState(f);
+    assert.equal(saved.state.outcomePendingPrompts, undefined);
+    assert.ok(!saved.raw.includes(original));
+    assert.equal(f.sources().length, 0);
+  }
+});
+
+test("a second failed capture retains recovered prompt hashes until delivery succeeds", async (t) => {
+  const f = await fixture(t);
+  f.fail("submitTaskOutcome");
+  await f.hook("userPromptTransformed", 1, { prompt: "Private retry goal" });
+  await f.append(
+    f.record(1, "user.message", { content: "Private retry goal" }),
+  );
+  f.fail("submitTaskOutcome");
+  await f.hook("agentStop", 2);
+  const failed = await savedOutcomeState(f);
+  assert.ok(!failed.raw.includes("Private retry goal"));
+  assert.equal(
+    failed.state.outcomePendingPrompts[0].hash,
+    digest("Private retry goal"),
+  );
+  await f.hook("agentStop", 3);
+  assert.deepEqual(outcomeCalls(f).at(-1)!.input.gaps, []);
+  assert.equal(
+    (await savedOutcomeState(f)).state.outcomePendingPrompts,
+    undefined,
+  );
+});
+
+test("outcome captures terminal host reasons as evidence and keeps intermediate errors distinct", async (t) => {
+  const f = await fixture(t);
+  await f.append(
+    f.record(1, "tool.execution_start", {
+      toolCallId: "check",
+      toolName: "shell",
+    }),
+    f.record(2, "tool.execution_complete", {
+      toolCallId: "check",
+      success: false,
+      error: "temporary test failure",
+    }),
+    f.record(3, "hook.end", {
+      hookType: "agentStop",
+      success: false,
+      error: "hook failed",
+    }),
+    f.record(4, "assistant.message", {
+      content: "Retried and all checks pass",
+    }),
+    f.record(5, "tool.execution_start", {
+      toolCallId: "product",
+      toolName: "lessonloop-submitSource",
+    }),
+    f.record(6, "tool.execution_complete", {
+      toolCallId: "product",
+      success: false,
+      error: "product failed",
+    }),
+  );
+  await f.hook("agentStop", 7);
+  const initial = outcomeCalls(f).at(-1)!.input.observations;
+  assert.deepEqual(
+    initial.map((o: any) => o.role),
+    ["tool", "agent"],
+  );
+  assert.equal(JSON.parse(initial[0].text).result.success, false);
+  assert.ok(
+    initial.every(
+      (o: any) =>
+        !o.text.includes("hook failed") && !o.text.includes("product failed"),
+    ),
+  );
+  for (const [index, reason] of [
+    "error",
+    "abort",
+    "timeout",
+    "user_exit",
+    "complete",
+  ].entries()) {
+    await f.hook("sessionEnd", index + 8, { reason });
+    const input = outcomeCalls(f).at(-1)!.input;
+    assert.deepEqual(
+      input.observations.map((o: any) => ({
+        role: o.role,
+        ...JSON.parse(o.text),
+      })),
+      [{ role: "host", event: "sessionEnd", reason }],
+    );
+    assert.equal(input.taskOutcome, undefined);
+  }
+});
+
+test("disabled or truncated review capture reports missing coverage instead of backfilling", async (t) => {
+  const f = await fixture(t);
+  f.settings.review = false;
+  await f.append(
+    f.record(1, "user.message", { content: "Private disabled goal" }),
+  );
+  await f.hook("userPromptTransformed", 2, { prompt: "Private disabled goal" });
+  assert.equal(outcomeCalls(f).length, 0);
+  f.settings.review = true;
+  await f.append(
+    ...Array.from({ length: 220 }, (_, n) =>
+      f.record(n + 3, "assistant.message", { content: "Observation " + n }),
+    ),
+  );
+  await f.hook("agentStop", 225);
+  const input = outcomeCalls(f).at(-1)!.input;
+  assert.equal(input.observations.length, 192);
+  assert.ok(input.gaps.includes("outcome_review_disabled"));
+  assert.ok(input.gaps.includes("outcome_input_budget"));
+  assert.equal(input.observations[0].text, "Observation 0");
+  assert.equal(input.observations.at(-1).text, "Observation 219");
+  assert.ok(
+    input.observations.every(
+      (o: any) => !o.text.includes("Private disabled goal"),
+    ),
+  );
+});
+
+test("delivery refreshes its revision after independent outcome or user feedback updates", async (t) => {
+  const f = await fixture(t);
+  f.feedback({
+    revision: 9,
+    feedback: [{ playbookId: "Large guidance", revision: 3, delivered: null }],
+  });
+  await f.append(
+    f.record(1, "tool.execution_start", {
+      toolCallId: "guidance",
+      toolName: "lessonloop-getGuidance",
+    }),
+    f.record(2, "tool.execution_complete", {
+      toolCallId: "guidance",
+      success: true,
+      result: { content: JSON.stringify(expandedGuidance()) },
+    }),
+  );
+  f.fail("updateTaskFeedback", "revision_conflict");
+  await f.hook("agentStop", 3);
+  assert.deepEqual(
+    deliveries(f).map((c) => c.input.expectedRevision),
+    [2, 9],
+  );
+  assert.ok(deliveries(f).every((c) => c.input.field === "delivered"));
+});
+
+test("temporary transcript absence clears after a complete retry", async (t) => {
+  const f = await fixture(t);
+  const head = await readFile(f.path);
+  await rm(f.path);
+  await f.hook("userPromptTransformed", 1, {
+    prompt: "Inspect the full session",
+  });
+  const missing = outcomeCalls(f).at(-1)!.input;
+  assert.equal(missing.checkpoint.path, "unavailable");
+  assert.ok(missing.gaps.includes("transcript_unavailable"));
+  await writeFile(f.path, head);
+  await f.append(
+    f.record(2, "user.message", { content: "Inspect the full session" }),
+    f.record(3, "assistant.message", { content: "Inspection completed" }),
+  );
+  await f.hook("agentStop", 4);
+  const recovered = outcomeCalls(f).at(-1)!.input;
+  assert.notEqual(recovered.checkpoint.path, "unavailable");
+  assert.deepEqual(recovered.gaps, []);
+  assert.deepEqual(
+    recovered.observations.map((o: any) => o.role),
+    ["user", "agent"],
+  );
+});
+
+test("new feedback generation skips cleared transcript and pending callback evidence", async (t) => {
+  const f = await fixture(t);
+  f.fail("submitTaskOutcome");
+  await f.hook("userPromptTransformed", 1, { prompt: "Cleared original goal" });
+  assert.ok(
+    !(await savedOutcomeState(f)).raw.includes("Cleared original goal"),
+  );
+  await f.append(
+    f.record(2, "user.message", { content: "Cleared original goal" }),
+    f.record(3, "assistant.message", { content: "Cleared result" }),
+  );
+  f.feedback({ revision: 8, outcomeGeneration: 1, feedback: [] });
+  await f.hook("userPromptTransformed", 4, {
+    prompt: "Fresh goal after clear",
+  });
+  const fresh = outcomeCalls(f).at(-1)!.input;
+  assert.equal(fresh.generation, 1);
+  assert.deepEqual(
+    fresh.observations.map((o: any) => o.text),
+    ["Fresh goal after clear"],
+  );
+  assert.ok(fresh.gaps.includes("outcome_generation_changed"));
+  assert.ok(!fresh.gaps.includes("outcome_prompt_unavailable"));
+  assert.equal(
+    (await savedOutcomeState(f)).state.outcomePendingPrompts,
+    undefined,
+  );
+  assert.deepEqual(
+    f.sources().map((s) => s.text),
+    ["Cleared original goal", "Cleared result"],
+  );
+});
+
+test("generation read failure preserves learning and retries outcome capture later", async (t) => {
+  const f = await fixture(t);
+  await f.append(f.record(1, "user.message", { content: "Review goal" }));
+  f.fail("getTaskFeedback");
+  const output = await f.hook("userPromptTransformed", 2, {
+    prompt: "Review goal",
+  });
+  assert.ok(output.modifiedTransformedPrompt);
+  assert.equal(outcomeCalls(f).length, 0);
+  assert.equal(f.sources().length, 1);
+  await f.hook("agentStop", 3);
+  const recovered = outcomeCalls(f).at(-1)!.input;
+  assert.equal(recovered.generation, 0);
+  assert.ok(recovered.observations.some((o: any) => o.text === "Review goal"));
+});
+
+test("delivery cannot replay into re-registered feedback after a clear", async (t) => {
+  const f = await fixture(t);
+  f.feedback({
+    revision: 9,
+    minimumRevision: 8,
+    outcomeGeneration: 1,
+    feedback: [{ playbookId: "Large guidance", revision: 3, delivered: null }],
+  });
+  await f.append(
+    f.record(1, "tool.execution_start", {
+      toolCallId: "old-guidance",
+      toolName: "lessonloop-getGuidance",
+    }),
+    f.record(2, "tool.execution_complete", {
+      toolCallId: "old-guidance",
+      success: true,
+      result: { content: JSON.stringify(expandedGuidance()) },
+    }),
+  );
+  f.fail("updateTaskFeedback", "revision_conflict");
+  await f.hook("agentStop", 3);
+  assert.deepEqual(
+    deliveries(f).map((c) => c.input.expectedRevision),
+    [2],
   );
 });
