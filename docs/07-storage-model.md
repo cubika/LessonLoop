@@ -2,7 +2,7 @@
 
 日期：2026-09-15。状态：当前数据合同，主要对象和存储已有实现，进度见[13](13-implementation-plan.md)。本页是字段、预算和保留期的唯一维护位置；领域规则见[02](02-experience-model.md)，操作语义见[04](04-contracts-and-extensions.md)。
 
-当前产品 schema 为 2，仅初始化并读取新格式。旧开发库明确拒绝，不自动迁移、不清空已有数据。备份与版本激活检查使用相同 schema 版本。
+本开发版本采用产品格式 3，按当前格式初始化。格式 1、2 数据库会明确拒绝启动；本分支没有迁移旧数据，合并前需确认采用新库或另做迁移。当前格式的数据、控制和备份仍按本页保留与恢复。
 
 ## 数据所有权
 
@@ -10,7 +10,8 @@
 
 | 数据 | 权威位置 | 用途 |
 |---|---|---|
-| Source、Experience、Playbook | ProductStore | 工作输入、分层主张、方法正文与用户可管理状态 |
+| Source、WorkView 缓存、Experience、Playbook 元数据 | ProductStore | 工作输入、分层主张、身份、依据、发布状态和用户控制 |
+| Playbook 当前正文 | Hindsight 独立方法 bank | 标题、目标、主题、条件、步骤、分支和检查项；不保存旧版正文 |
 | 用户控制、版本和 SourceBinding | ProductStore | 纠正、停用、忘记、范围、来源变化和恢复 |
 | PublishedProjection | 可重建索引 | 查询当前可投递对象，不决定产品状态 |
 | 原文、chunks、原生 facts/observations、图与向量 | Hindsight 原生存储 | 提取、归纳、候选与依据读取 |
@@ -80,7 +81,7 @@ predecessors 保存被本次方法修订或拆分替代的 Playbook ObjectRef，
 
 检查引用的stepIds须存在。prepare返回全部完成检查和停止条件，保留stepIds以说明路径归属。Agent执行全局及所选路径的检查；未选分支不作为本次完成要求。返回指导或完成某一步不代表任务成功。无需执行DSL或服务端逐步推进。
 
-Playbook 维护当前正文与有限旧版快照。旧版只用于查看变化或作为新修订的输入，不取得当前使用资格。删除来源时清理所有受控快照中的相关复制内容；缺失旧依据明确显示，不能拿当前正文冒充旧内容。
+Playbook 只维护当前正文。ProductStore 保存 contentHash、planHash、当前 revision、supportRefs 和用户控制；revision 用于冲突检测和真实使用关联，不表示可恢复的历史版本。playbook_write 暂存通过审查的候选与唯一 token，保留所有可能仍存在于原生正文中的旧依据，直到写入读回确认后删除。原生正文读取还要重新校验哈希。
 
 ## Condition 与任务准备
 
@@ -94,7 +95,7 @@ Condition={text,match?}；match={key,values} 表示已规范化上下文值属�
 
 PublishedProjection 保存 ObjectRef、scope、eligibilityVersion、有效期和检索文本。查询在候选限额前过滤当前可投递集合，随后由核心重查状态、来源与支持。原生未发布事实不能占满产品 top-k。
 
-EngineBinding 保存 objectRef、backendInstanceId、engineType、processingConfigVersion、nativeRefs、sourceRefs、dependencyCoverage、checkState、checkedAt。Experience 绑定其实际原生依据，Playbook 可只绑定产品检索投影，不要求对应一个原生 mental model。
+EngineBinding 保存 objectRef、backendInstanceId、engineType、processingConfigVersion、nativeRefs、sourceRefs、dependencyCoverage、checkState、checkedAt。Experience 绑定其实际原生依据，每个 Playbook 绑定独立方法 bank 的 current mental model；检索投影仍单独确认。
 
 来源重处理或原生 ID 改变后，依据来源和主张重新绑定；无法确认则暂停，不只依赖文字相似。索引写入读回和产品修订一致后才解除发布屏障。
 
@@ -120,7 +121,7 @@ SourceBinding 以 connectionId+sourceKey 唯一定位资源，保存 parentSourc
 
 EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除传播。回顾按taskRef、playbookId、revision汇总delivered、taskOutcome和userRating，缺少投递或评价时为null，结果未知为unknown；不持久化另一套派生状态。任务/方法版本关联只保存一次，playbookUseRef保留为接口关联键。运行时不记录步骤完成集合或自动采用事件，方法正文中的步骤和检查仍完整保留。
 
-当前存储版本内的旧回执可继续读取，usage不参与反馈汇总；旧方法关联中的步骤快照在重新生成WorkView时移除。宿主与核心、Hindsight扩展需一起更新，旧的步骤观察字段不再接受。使用视图保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
+格式 3 只接受当前关联结构，playbook_use 直接以 playbookUseRef 定位；不扫描旧关联键或转换旧步骤快照。宿主与核心、Hindsight 扩展需一起更新。使用视图保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
 
 这些记录按独立回顾授权保存，不自动成为学习输入。相同真实事件可分别路由到学习与回顾，但保持相同来源身份。正文过期或清空后不能靠迟到批次恢复，统计需能撤销贡献；零分母为 N/A，未知不按成功计。
 
@@ -134,15 +135,15 @@ EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除
 | 未完成或 uncertain 所需材料 | 保留至操作确认或修复，不按完成期限误删 |
 | WorkView | 原始观察后 30 天；追加不重置旧证据期限 |
 | 当前 Experience、Playbook | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
-| Playbook 旧版 | 最近 10 个旧修订且不超过 90 天，两项限制同时生效 |
-| EffectTask、使用视图 | 原始观察后 30 天，复核和复制不延期 |
+| Playbook 旧版 | 不保留；产品历史恢复入口与原生 mental model 历史均关闭 |
+| EffectTask、EffectCase | 原始观察后 30 天，复核和复制不延期 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
 | 方法获取所关联的Task | 普通任务创建后最长24小时；Copilot会话按最后宿主回调后的24小时空闲时间检查，恢复会话沿用原引用 |
 | 迟到结果 | 可信任务结束后24小时内等待结果；无结束信号保持结束未知，已保存历史关联仍按对应记录期限清理 |
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 
-发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkView、Experience、Playbook、历史和原生副本。
+发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkView、Experience、Playbook、临时候选和原生副本。
 
 Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系。默认发行 profile 必须明确实际副本策略；无法同时满足材料清理和方法依据保留时，按[决策记录](06-review-and-decisions.md)处理，不能只清作业就报告原文已删除。
 

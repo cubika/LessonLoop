@@ -126,9 +126,6 @@ export async function startUiFixture() {
         case "inspectPlaybook":
           result = playbooks.find((m) => m.id === input.id);
           break;
-        case "playbookHistory":
-          result = [{ ...base, revision: 1, title: "旧版生成文件检查" }];
-          break;
         case "inspectExperience":
           result = experience;
           break;

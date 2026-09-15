@@ -181,8 +181,6 @@ export async function dispatch(
     }
     case "inspectPlaybook":
       return core.inspect(p, "playbook", identifier.parse(input).id);
-    case "playbookHistory":
-      return core.history(p, identifier.parse(input).id);
     case "getRevisionReview":
       return core.inspect(p, "revision_review", identifier.parse(input).id);
     case "exportPlaybook": {

@@ -120,6 +120,7 @@ test("session binding survives idle expiry; long capture retains all sources wit
       "supplement",
     );
     assert.ok((await job(supplement.jobId)).sourceIds.length <= 192);
+    assert.ok((await job(supplement.jobId)).sourceIds.includes(firstSource.id));
     for (let i = 0; i < 8; i++)
       latest = await submit("Large " + i + "x".repeat(20000), "large-" + i);
     const all = await sources();

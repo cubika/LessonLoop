@@ -343,6 +343,12 @@ test("long sessions have no adapter event-count cutoff and old task state is rej
     /host_session_restart_required/,
   );
   await rm(join(f.config.stateRoot, file));
-  await writeFile(join(f.config.stateRoot, digest([f.root, "session"]) + ".json"), JSON.stringify({tasks: []}));
-  await assert.rejects(f.hook("agentStop", 203), /host_session_restart_required/);
+  await writeFile(
+    join(f.config.stateRoot, digest([f.root, "session"]) + ".json"),
+    JSON.stringify({ tasks: [] }),
+  );
+  await assert.rejects(
+    f.hook("agentStop", 203),
+    /host_session_restart_required/,
+  );
 });
