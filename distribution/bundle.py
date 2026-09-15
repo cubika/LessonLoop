@@ -28,7 +28,8 @@ def verify(root, allow_development=False):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     if manifest.get("platform") != "win32-x64":
         raise ValueError("Unsupported bundle platform")
-    if not manifest.get("releaseReady") and not allow_development:
+    accepted_alpha = manifest.get("channel") == "alpha" and manifest.get("alphaReady") is True and "-alpha." in str(manifest.get("version", ""))
+    if not manifest.get("releaseReady") and not accepted_alpha and not allow_development:
         raise ValueError("Bundle has not passed release acceptance")
     files = manifest.get("files")
     if not isinstance(files, list) or not files:

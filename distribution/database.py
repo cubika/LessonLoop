@@ -28,12 +28,12 @@ def windows_path(path):
 owner = root / "database-owner.json"
 def run(name, options):
     with (root / "database-manager.log").open("ab") as log:
-        result = subprocess.run([str(runtime / "bin" / (name + ".exe")), *options], stdout=log, stderr=log, creationflags=flags, timeout=60)
+        result = subprocess.run([windows_path(runtime / "bin" / (name + ".exe")), *options], stdout=log, stderr=log, creationflags=flags, timeout=60)
     if result.returncode:
         raise RuntimeError(f"{name} failed with exit {result.returncode}; inspect the database log")
 if args.action == "init":
-    if owner.exists() or db.exists():
-        raise SystemExit("Database already exists; initialization refused.")
+    if owner.exists() or (db.exists() and any(db.iterdir())):
+        raise SystemExit("Database already exists; initialization refused. Empty interrupted directories may be retried.")
     password = json.load(sys.stdin)["password"]
     if len(password) < 32:
         raise SystemExit("A generated database password is required.")

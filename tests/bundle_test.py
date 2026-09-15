@@ -19,6 +19,9 @@ with tempfile.TemporaryDirectory(prefix="lessonloop-bundle-") as directory:
   try:action();raise AssertionError("unsafe bundle accepted")
   except ValueError:pass
  save(manifest);reject(lambda:bundle.verify(root));bundle.verify(root,True)
+ save({**manifest,"version":"0.1.0-alpha.1","channel":"alpha","alphaReady":True});bundle.verify(root)
+ save({**manifest,"version":"0.1.0","channel":"alpha","alphaReady":True});reject(lambda:bundle.verify(root))
+ save(manifest)
  original_copy=bundle.shutil.copyfile
  def fail_copy(*args,**kwargs):raise OSError("simulated copy interruption")
  bundle.shutil.copyfile=fail_copy

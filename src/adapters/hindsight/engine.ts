@@ -47,7 +47,11 @@ export class HindsightEngine {
   supportBank(scopeId: string, fingerprint: string) {
     return `lessonloop-support-${digest([scopeId, fingerprint]).slice(0, 32)}`;
   }
-  private async productCall<T>(path: string, body: unknown): Promise<T> {
+  private async productCall<T>(
+    path: string,
+    body: unknown,
+    timeout = 65000,
+  ): Promise<T> {
     const response = await fetch(
       new URL(`/ext/lessonloop/${path}`, this.baseUrl),
       {
@@ -57,7 +61,7 @@ export class HindsightEngine {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(65000),
+        signal: AbortSignal.timeout(timeout),
       },
     );
     if (!response.ok) throw new Error(`${path}_${response.status}`);
@@ -95,20 +99,7 @@ export class HindsightEngine {
     conditions: Array<{ key: string; text: string }>;
     steps: Array<{ key: string; text: string }>;
   }) {
-    const response = await fetch(
-      new URL("/ext/lessonloop/check-observations", this.baseUrl),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-        signal: AbortSignal.timeout(65000),
-      },
-    );
-    if (!response.ok) throw new Error("observation_check_unavailable");
-    return (await response.json()) as {
+    return this.productCall<{
       result: {
         conditions: Array<{
           key: string;
@@ -122,7 +113,7 @@ export class HindsightEngine {
         }>;
       };
       usage: { input_tokens: number; output_tokens: number };
-    };
+    }>("check-observations", input);
   }
   async configure(scopeId: string) {
     if (this.nativeNamespace) {
@@ -292,26 +283,14 @@ export class HindsightEngine {
     return r.data;
   }
   async cancelModelSubmission(scopeId: string, modelId: string) {
-    const response = await fetch(
-      new URL("/ext/lessonloop/cancel-model-submission", this.baseUrl),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          bank_id: this.bank(scopeId),
-          model_id: modelId,
-        }),
-        signal: AbortSignal.timeout(30000),
-      },
-    );
-    if (!response.ok) throw new Error("submission_cancel_unconfirmed");
-    return (await response.json()) as {
+    return this.productCall<{
       submission_canceled: boolean;
       operation_id: string | null;
-    };
+    }>(
+      "cancel-model-submission",
+      { bank_id: this.bank(scopeId), model_id: modelId },
+      30000,
+    );
   }
   async createModel(
     scopeId: string,
@@ -320,37 +299,29 @@ export class HindsightEngine {
     sourceFingerprints: string[],
     responseSchema: Record<string, unknown>,
   ) {
-    // The high-level SDK does not expose response_schema/refresh_mode on triggers.
     if (this.nativeNamespace) {
-      const response = await fetch(
-        new URL("/ext/lessonloop/model-submissions", this.baseUrl),
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            bank_id: this.bank(scopeId),
-            model_id: modelId,
-            query,
-            tags: sourceFingerprints.map((f) => `source:${f}`),
-            response_schema: responseSchema,
-          }),
-          signal: AbortSignal.timeout(30000),
-        },
-      );
-      if (!response.ok) throw new Error(`model_submission_${response.status}`);
-      return (await response.json()) as {
+      return this.productCall<{
         operation_id: string;
         mental_model_id: string;
-      };
+      }>(
+        "model-submissions",
+        {
+          bank_id: this.bank(scopeId),
+          model_id: modelId,
+          query,
+          tags: sourceFingerprints.map((f) => `source:${f}`),
+          response_schema: responseSchema,
+        },
+        30000,
+      );
     }
+    // Use the generated official SDK for schema/trace options missing from the
+    // high-level client. These are bounded job reviews: changing source_query
+    // makes native delta refresh fall back to full regeneration.
     const trigger: MentalModelTriggerInput = {
       refresh_after_consolidation: false,
-      min_refresh_interval_seconds: 3600,
       response_schema: responseSchema,
-      keep_trace: true,
+      keep_trace: false,
       exclude_mental_models: true,
       tags_match: "any_strict",
     };
@@ -375,40 +346,6 @@ export class HindsightEngine {
       signal: AbortSignal.timeout(10000),
     });
   }
-  async refresh(scopeId: string, modelId: string) {
-    return this.client.refreshMentalModel(this.bank(scopeId), modelId, {
-      signal: AbortSignal.timeout(15000),
-    });
-  }
-  async deleteMaterial(material: Material) {
-    for (const [i] of material.segments.entries())
-      await this.client.deleteDocument(
-        this.bank(material.scopeId),
-        `${material.id}-${i}`,
-        { signal: AbortSignal.timeout(10000) },
-      );
-  }
-  async deleteModel(scopeId: string, modelId: string) {
-    await this.client.deleteMentalModel(this.bank(scopeId), modelId, {
-      signal: AbortSignal.timeout(10000),
-    });
-  }
-  async deleteLearningBank(scopeId: string) {
-    const result = await sdk.deleteBank({
-      client: this.raw,
-      path: { bank_id: this.bank(scopeId) },
-      signal: AbortSignal.timeout(30000),
-      throwOnError: true,
-    });
-    return result.data;
-  }
-  async deleteProjection(scopeId: string, reference: ObjectRef) {
-    await this.client.deleteDocument(
-      this.projectionBank(scopeId),
-      `${reference.kind}-${reference.id}-${reference.revision}`,
-      { signal: AbortSignal.timeout(10000) },
-    );
-  }
   async deleteAllProjectionRevisions(
     scopeId: string,
     kind: "method" | "experience",
@@ -418,30 +355,6 @@ export class HindsightEngine {
       "erase-projections",
       { scope_id: scopeId, object_kind: kind, object_id: id },
     );
-  }
-  async deleteNativeDocument(scopeId: string, documentId: string) {
-    const existing = await this.client.getDocument(
-      this.bank(scopeId),
-      documentId,
-      { signal: AbortSignal.timeout(10000) },
-    );
-    if (existing)
-      await this.client.deleteDocument(this.bank(scopeId), documentId, {
-        signal: AbortSignal.timeout(10000),
-      });
-    const read = await this.client.getDocument(this.bank(scopeId), documentId, {
-      signal: AbortSignal.timeout(10000),
-    });
-    const memories = await this.client.listMemories(this.bank(scopeId), {
-      documentId,
-      limit: 1,
-      signal: AbortSignal.timeout(10000),
-    });
-    return {
-      documentAbsent: read === null,
-      memoriesAbsent: memories.items.length === 0,
-      remainingHistoryCoverage: "unconfirmed",
-    };
   }
   async hasPendingOperations(scopeId: string) {
     for (const status of ["pending", "processing"]) {

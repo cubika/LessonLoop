@@ -48,6 +48,7 @@ const handle = (fn) => async (event) => {
 $("connect").onclick = handle(async () => {
   token = $("token").value;
   settings = await rpc("settings.get");
+  $("token").value = "";
   for (const id of ["method-scope", "record-scope"])
     for (const setting of settings) {
       const option = node("option", setting.scopeId);
@@ -59,6 +60,20 @@ $("connect").onclick = handle(async () => {
   await list();
   await renderReviewNotifications();
 });
+// The launcher supplies the local credential in a URL fragment, never in an HTTP request.
+if (
+  typeof window !== "undefined" &&
+  window.location.hash.startsWith("#token=")
+) {
+  const credential = new URLSearchParams(window.location.hash.slice(1)).get(
+    "token",
+  );
+  window.history.replaceState(null, "", window.location.pathname);
+  if (credential) {
+    $("token").value = credential;
+    void $("connect").onclick();
+  }
+}
 async function list() {
   const filter = {
     query: $("query").value,
@@ -354,6 +369,11 @@ async function show(id) {
 document.querySelectorAll("[data-view]").forEach(
   (button) =>
     (button.onclick = handle(async () => {
+      document
+        .querySelectorAll("[data-view]")
+        .forEach((item) =>
+          item.setAttribute("aria-current", item === button ? "page" : "false"),
+        );
       [
         "methods",
         "records",

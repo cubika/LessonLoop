@@ -1,0 +1,16 @@
+LessonLoop alpha component notices
+
+The package includes separate third-party components. Their own licenses apply:
+- Node.js 22.18.0: node-LICENSE.txt (including bundled notices).
+- CPython 3.12.11: python/LICENSE.txt in the runtime.
+- Hindsight 0.9.2: hindsight-LICENSE; package metadata includes dependencies.
+- PostgreSQL 18.1: postgresql-COPYRIGHT.txt; binary distribution retains its LICENSE.
+- pgvector 0.8.5: pgvector-LICENSE.txt.
+- multilingual-e5-small, revision 614241f622f53c4eeff9890bdc4f31cfecc418b3: e5-MODEL-CARD.txt declares MIT; e5-upstream-LICENSE.txt contains the Microsoft upstream MIT terms.
+- tokenizers 0.22.2: tokenizers-LICENSE.txt.
+- FlashRank 0.2.9: third-party/flashrank/LICENSE.
+- FlashRank MultiBERT model: third-party/flashrank/MODEL-NOTICE.txt and third-party/flashrank-model-LICENSE.txt. The tokenizer is regenerated from the distributed vocabulary; the weights are unchanged. See config/reranker.json for fixed hashes.
+
+Python distributions retain their .dist-info license files. Production Node dependencies retain their package LICENSE/NOTICE files. Copilot CLI is not included; install and authenticate the official CLI separately.
+
+Sources: https://github.com/nodejs/node/tree/v22.18.0 , https://github.com/vectorize-io/hindsight/tree/v0.9.2 , https://github.com/postgres/postgres/tree/REL_18_1 , https://github.com/pgvector/pgvector/tree/v0.8.5 , https://huggingface.co/intfloat/multilingual-e5-small , https://github.com/microsoft/unilm .

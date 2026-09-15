@@ -2,7 +2,7 @@
 
 LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、执行L1–L5提炼、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
 
-**当前正在实现 P0–P3，尚无通过发行验收的安装包。** 核心学习、方法检索与准备、编辑/历史/导出、来源控制、样例 Connector、效果回顾及兼容升级/回滚已有实现。已补有界宿主会话采集与续用、方法库完整管理、案例补结果、定向经验召回、Connector分片和逐路径演进审查；本地重排与开发三组评估入口可运行。完整质量与发行验收仍未通过。最新待办见[实现计划](docs/13-implementation-plan.md)，实际证据见[运行记录](docs/research/2026-09-14-implementation/README.md)。
+**首个 Windows alpha：0.1.0-alpha.1。** 预览版包含方法学习与管理、Copilot接入、样例Connector和本地运行管理；安装与试用见[alpha说明](docs/14-alpha-release.md)。正式P0–P3质量与发行矩阵尚未全部通过，当前结果和限制见[实现计划](docs/13-implementation-plan.md)及[运行记录](docs/research/2026-09-14-implementation/README.md)。
 
 产品仍在开发，没有需要迁移的旧用户数据，首版从当前数据格式初始化。Copilot 接入优先复用官方采集、回填和诊断模块；方法库负责查看、管理和关联任务，实际多轮工作由 Copilot 执行。
 
@@ -51,7 +51,7 @@ npm run build
 
 开发 CLI 使用 `node dist/cli/main.js help`。真实数据库测试通过 `npm run test:postgres` 执行，要求已按隔离配置启动私有 PostgreSQL。`npm run validate:p0` 会调用现有 Copilot 订阅，经官方 Hindsight 运行实际方法路径；测试需要已配置的隔离引擎，不是安装命令。
 
-报告写入.local-validation/results。真实CLI探针的准备和范围见[说明](probes/copilot/README.md)。计划中的统一Windows安装入口尚无下载地址，设计见[本地发行](docs/10-distribution-and-installation.md)。
+报告写入.local-validation/results。真实CLI探针的准备和范围见[说明](probes/copilot/README.md)。Windows alpha下载入口见[Releases](https://github.com/cubika/LessonLoop/releases)，安装说明与限制见[alpha说明](docs/14-alpha-release.md)。
 
 方法演进开发验证：npm run validate:evolution 与 npm run validate:evolution-resume 仅使用已确认的合成案例，保留失败记录，不代表完整阶段验收。
 

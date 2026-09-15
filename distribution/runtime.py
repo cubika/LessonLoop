@@ -28,8 +28,14 @@ def protect(value, decrypt=False):
     try:return ctypes.string_at(outgoing.data,outgoing.size)
     finally:ctypes.windll.kernel32.LocalFree(outgoing.data)
 
+def windows_path(path):
+    value=str(path)
+    buffer=ctypes.create_unicode_buffer(32768)
+    length=ctypes.windll.kernel32.GetShortPathNameW(value,buffer,len(buffer))
+    return buffer.value if length else value
+
 parser=argparse.ArgumentParser()
-parser.add_argument("action",choices=["setup","start","stop","status","doctor","update","rollback","cli","agent-hook","mcp"])
+parser.add_argument("action",choices=["setup","start","stop","status","doctor","update","rollback","cli","agent-hook","mcp","autostart","uninstall","data","configure","agent","ui"])
 parser.add_argument("--data-root",required=True)
 parser.add_argument("--runtime-root",default=str(Path(__file__).resolve().parents[1]))
 parser.add_argument("--scope",default="personal")
@@ -38,21 +44,35 @@ parser.add_argument("--allow-root",action="append",default=[])
 parser.add_argument("--wait-seconds",type=int,default=120)
 parser.add_argument("--bundle")
 parser.add_argument("--allow-development-build",action="store_true")
+parser.add_argument("--confirm")
+parser.add_argument("--copilot-home")
+learning=parser.add_mutually_exclusive_group()
+learning.add_argument("--enable-learning",action="store_true")
+learning.add_argument("--disable-learning",action="store_true")
 parser.add_argument("arguments",nargs="*")
-args=parser.parse_args()
+def parse_arguments(argv):
+    if "--" in argv:
+        boundary=argv.index("--")
+        parsed=parser.parse_intermixed_args(argv[:boundary])
+        if parsed.action=="cli":
+            parsed.arguments.extend(argv[boundary+1:])
+            return parsed
+    return parser.parse_intermixed_args(argv)
+
+args=parse_arguments(sys.argv[1:])
 from bundle import unlinked
 root=unlinked(args.data_root);runtime=unlinked(args.runtime_root)
 root.mkdir(parents=True,exist_ok=True)
 program_hint=runtime
-if (root/"installation.json").exists():program_hint=unlinked(json.loads((root/"installation.json").read_text(encoding="utf-8")).get("programRoot",runtime))
+if (root/"installation.json").exists():program_hint=unlinked(json.loads((root/"installation.json").read_text(encoding="utf-8-sig")).get("programRoot",runtime))
 program_lock=(program_hint/"installation.lock").open("a+b")
 program_lock.seek(0);program_lock.write(b"0");program_lock.flush();program_lock.seek(0)
-if args.action in ["setup","start","stop","update","rollback"]:
+if args.action in ["setup","start","stop","update","rollback","autostart","uninstall","data","configure","agent","ui"]:
     try:msvcrt.locking(program_lock.fileno(),msvcrt.LK_NBLCK,1)
     except OSError:raise SystemExit("Another manager owns this InstallRoot")
 lock_file=(root/"manager.lock").open("a+b")
 lock_file.seek(0);lock_file.write(b"0");lock_file.flush();lock_file.seek(0)
-if args.action in ["setup","start","stop","update","rollback"]:
+if args.action in ["setup","start","stop","update","rollback","autostart","uninstall","data","configure","agent","ui"]:
     try:msvcrt.locking(lock_file.fileno(),msvcrt.LK_NBLCK,1)
     except OSError:raise SystemExit("Another runtime manager owns this DataRoot")
 flags=subprocess.CREATE_NO_WINDOW
@@ -75,17 +95,31 @@ def owned_process(saved,expected):
     except Exception:return None
 def health(secret):
     request=urllib.request.Request(f"http://127.0.0.1:{record['corePort']}/v1/status",headers={"Authorization":"Bearer "+secret["userToken"]})
-    with urllib.request.urlopen(request,timeout=5) as response:return json.load(response)
+    with urllib.request.urlopen(request,timeout=5) as response:state=json.load(response)
+    if state.get("engine",{}).get("status")=="ready":
+        import psycopg2
+        with psycopg2.connect(config(secret)["databaseUrl"],options="-c default_transaction_read_only=on",connect_timeout=5) as db:
+            with db.cursor() as cur:
+                cur.execute("SELECT to_regclass('hindsight.banks'),to_regclass('hindsight.async_operations'),to_regclass('lessonloop.objects')")
+                if any(value is None for value in cur.fetchone()):state["engine"]={"status":"initializing","reason":"database_schema_not_ready"}
+    return state
 
 if args.action=="setup":
     if record_path.exists():
-        record=json.loads(record_path.read_text(encoding="utf-8"))
+        record=json.loads(record_path.read_text(encoding="utf-8-sig"))
         if record.get("setupState")=="ready":raise SystemExit("Installation already configured; use start or status.")
         if record["dataRoot"]!=str(root) or record["runtimeRoot"]!=str(runtime):raise SystemExit("Installation ownership mismatch")
-        secret=read_secrets()
+        if record.get("setupState")=="purged":
+            record["setupState"]="initializing"
+            record["scopeId"]=args.scope;record["allowedRoots"]=[str(Path(path).resolve()) for path in args.allow_root]
+            secret={key:secrets.token_hex(32) for key in ["password","engineToken","userToken","hostToken","agentToken"]}
+            secret_path.write_bytes(protect(json.dumps(secret).encode()))
+            record_path.write_text(json.dumps(record,indent=2),encoding="utf-8")
+        elif record.get("setupState")=="removal_pending":raise SystemExit("Removal is incomplete; retry the saved cleanup command")
+        else:secret=read_secrets()
     else:
         if secret_path.exists() or (root/"storage").exists():raise SystemExit("Unowned existing data requires recovery")
-        record={"installationId":str(uuid.uuid4()),"runtimeRoot":str(runtime),"dataRoot":str(root),"scopeId":args.scope,"allowedRoots":[str(Path(p).resolve()) for p in args.allow_root],"databasePort":args.base_port+1,"corePort":args.base_port,"enginePort":args.base_port+2,"autostart":False,"setupState":"initializing"}
+        record={"installationId":str(uuid.uuid4()),"programRoot":str(runtime),"runtimeRoot":str(runtime),"dataRoot":str(root),"scopeId":args.scope,"allowedRoots":[str(Path(p).resolve()) for p in args.allow_root],"databasePort":args.base_port+1,"corePort":args.base_port,"enginePort":args.base_port+2,"autostart":False,"setupState":"initializing"}
         secret={key:secrets.token_hex(32) for key in ["password","engineToken","userToken","hostToken","agentToken"]}
         secret_path.write_bytes(protect(json.dumps(secret).encode()))
         record_path.write_text(json.dumps(record,indent=2),encoding="utf-8")
@@ -102,9 +136,10 @@ if args.action=="setup":
     record["setupState"]="ready";record_path.write_text(json.dumps(record,indent=2),encoding="utf-8")
     print(json.dumps({"status":"installed_needs_setup","reason":"Start the runtime, then configure learning and host scope. Copilot login is required for model calls."}))
     sys.exit(2)
-record=json.loads(record_path.read_text(encoding="utf-8"))
+record=json.loads(record_path.read_text(encoding="utf-8-sig"))
 recovery_runtime=runtime
 if record["dataRoot"]!=str(root):raise SystemExit("Installation ownership mismatch")
+if record.get("setupState")=="removal_pending":raise SystemExit("Removal is incomplete; retry the saved cleanup command")
 if record["runtimeRoot"]!=str(runtime):
     recovery_journal=json.loads((root/"update-state.json").read_text(encoding="utf-8"))
     if args.action!="rollback" or recovery_journal.get("installationId")!=record["installationId"] or recovery_journal.get("from")!=str(runtime) or recovery_journal.get("phase") not in ["prepared","backed_up","switching","checking"]:raise SystemExit("Installation ownership mismatch")
@@ -116,7 +151,17 @@ if update_record.exists():
     if prior_update.get("phase") in ["prepared","backed_up","switching","checking"] and args.action not in ["rollback","status","doctor","stop"]:raise SystemExit("Interrupted update requires rollback before normal use")
 
 
-secret=read_secrets();cfg=config(secret)
+if args.action=="autostart":
+    from lifecycle import autostart,save_json
+    action=args.arguments[0] if len(args.arguments)==1 else "status"
+    if action not in ["enable","disable","status"] or len(args.arguments)>1:raise SystemExit("Use autostart enable, disable, or status")
+    state=autostart(action,record,runtime,root)
+    if action!="status":record["autostart"]=action=="enable";save_json(record_path,record)
+    print(json.dumps(state));sys.exit(0 if state["autostart"]!="conflict" else 2)
+
+secret=read_secrets() if secret_path.exists() and args.action not in ["uninstall","data","stop"] else None
+if secret is None and args.action not in ["uninstall","data","stop"]:raise SystemExit("Data has been purged; run setup before starting")
+cfg=config(secret) if secret else None
 def start_components():
     global record,runtime,python,node,cfg
     processes_path=root/"processes.json"
@@ -152,7 +197,7 @@ def start_components():
     env.update(reranker_environment(reranker))
     if reranker["status"]=="ready":env["PYTHONPATH"]=os.pathsep.join(filter(None,[reranker["pythonDirectory"],env.get("PYTHONPATH")]))
     copilot=shutil.which("copilot.exe")
-    env.update(LITELLM_LOCAL_MODEL_COST_MAP="true",HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
+    env.update(HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP="true",LITELLM_LOCAL_MODEL_COST_MAP="true",HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
     env.update(HINDSIGHT_API_HTTP_EXTENSION="hindsight_product:LessonLoopProduct",HINDSIGHT_API_HTTP_PRODUCT_KEY=secret["engineToken"])
     if copilot:env["COPILOT_CLI_PATH"]=str(Path(copilot).resolve())
     import psutil
@@ -185,6 +230,7 @@ def start_components():
     return 2
 
 def stop_components():
+    from lifecycle import owned_database
     processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {"installationId":record["installationId"]}
     if processes["installationId"]!=record["installationId"]:raise SystemExit("Process ownership mismatch")
     for name,exe in [("core",node),("engine",python)]:
@@ -194,12 +240,56 @@ def stop_components():
         elif saved.get("pid"):
             import psutil
             if psutil.pid_exists(saved["pid"]):raise RuntimeError("Recorded process is no longer owned; manual reconciliation required")
-    try:call_db("status")
-    except RuntimeError:pass
-    else:call_db("stop")
+    database=owned_database(record,runtime,root)
+    if database:
+        call_db("stop")
+        if owned_database(record,runtime,root):raise RuntimeError("Owned database did not stop")
     return 0
-if args.action=="start":
+if args.action in ["uninstall","data"]:
+    from lifecycle import removal_plan,autostart,ensure_adapters_closed,save_json
+    if args.action=="data" and args.arguments!=["purge"]:raise SystemExit("Use data purge --confirm <installationId>")
+    action="purge" if args.action=="data" else "uninstall"
+    plan=removal_plan(action,record,runtime,root,args.confirm)
+    plan["previousSetupState"]=record.get("setupState","ready")
+    save_json(root/"removal-plan.json",plan)
+    record.update(setupState="removal_pending",removalAction=action)
+    save_json(record_path,record)
+    try:
+        ensure_adapters_closed(plan["programRoot"])
+        autostart("disable",record,runtime,root)
+        record["autostart"]=False
+        stop_components()
+        from integration import agent_action
+        agent_action("remove",record,runtime,root,copilot_home=args.copilot_home)
+        save_json(record_path,record)
+    except Exception:
+        record["setupState"]=plan["previousSetupState"];record.pop("removalAction",None)
+        save_json(record_path,record)
+        (root/"removal-plan.json").unlink(missing_ok=True)
+        raise
+    print(json.dumps({"status":"cleanup_required","plan":str(root/"removal-plan.json"),"dataRoot":str(root)}));sys.exit(0)
+elif args.action=="start":
     code=start_components();print(json.dumps(health(secret) if code==0 else {"status":"starting"}));sys.exit(code)
+elif args.action=="agent":
+    from integration import agent_action,configure
+    action=args.arguments[0] if len(args.arguments)==1 else "status"
+    if action not in ["install","remove","status"] or len(args.arguments)>1:raise SystemExit("Use agent install, remove, or status")
+    if args.allow_root:
+        if action!="install":raise SystemExit("--allow-root is only valid for agent install")
+        configure(record,runtime,root,cfg,args.allow_root)
+    state=agent_action(action,record,runtime,root,copilot_home=args.copilot_home)
+    print(json.dumps(state));sys.exit(2 if state.get("status") in ["needs_configuration","conflict"] else 0)
+elif args.action=="configure":
+    from integration import configure
+    code=start_components()
+    if code:print(json.dumps({"status":"starting"}));sys.exit(code)
+    enabled=True if args.enable_learning else False if args.disable_learning else None
+    print(json.dumps(configure(record,runtime,root,cfg,args.allow_root,enabled=enabled)))
+elif args.action=="ui":
+    from integration import open_ui
+    code=start_components()
+    if code:print(json.dumps({"status":"starting"}));sys.exit(code)
+    print(json.dumps(open_ui(cfg)))
 elif args.action=="doctor":
     processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {}
     state={"installation":"owned","runtimeFiles":all(path.exists() for path in [python,node,runtime/"postgres/bin/postgres.exe",runtime/"models/e5/onnx/model.onnx"]),"copilotCli":"available" if shutil.which("copilot.exe") else "missing","modelAuthentication":"not_verified","hostIntegration":"needs_configuration"}
@@ -209,7 +299,14 @@ elif args.action=="doctor":
     for name,exe in [("core",node),("engine",python)]:state[name+"Process"]="owned_running" if owned_process(processes.get(name,{}),exe) else "not_running"
     try:state["health"]=health(secret)
     except Exception:state["health"]={"core":"unavailable"}
-    print(json.dumps(state));sys.exit(0 if state["runtimeFiles"] and state.get("health",{}).get("engine",{}).get("status")=="ready" else 2)
+    from integration import diagnostics
+    state.update(diagnostics(record,runtime,root,cfg))
+    from lifecycle import autostart
+    state.update(autostart("status",record,runtime,root))
+    state["installationId"]=record["installationId"];state["dataRoot"]=str(root)
+    ready=state["runtimeFiles"] and state.get("health",{}).get("engine",{}).get("status")=="ready" and state["modelAuthentication"].get("status")=="authenticated" and state["hostIntegration"].get("status")=="registered" and state["autostart"]!="conflict"
+    state["status"]="ready" if ready else "installed_needs_setup"
+    print(json.dumps(state));sys.exit(0 if ready else 2)
 elif args.action=="status":
     try:
         state=health(secret);print(json.dumps(state));sys.exit(0 if state["engine"]["status"]=="ready" else 2)
@@ -300,10 +397,8 @@ elif args.action in ["update","rollback"]:
                 print(json.dumps({"phase":"database_backup"}),flush=True)
                 backup=unlinked(root/"backups"/(str(uuid.uuid4())+".dump"));backup.parent.mkdir(parents=True,exist_ok=True)
                 pg_runtime=Path(record.get("databaseRuntimeRoot",runtime/"postgres"))
-                path_buffer=ctypes.create_unicode_buffer(32768)
-                short_length=ctypes.windll.kernel32.GetShortPathNameW(str(backup.parent),path_buffer,len(path_buffer))
-                backup_argument=str(Path(path_buffer.value)/backup.name) if short_length else str(backup)
-                command=[str(pg_runtime/"bin/pg_dump.exe"),"-h","127.0.0.1","-p",str(record["databasePort"]),"-U","lessonloop","-d","postgres","-Fc","-f",backup_argument]
+                backup_argument=str(Path(windows_path(backup.parent))/backup.name)
+                command=[windows_path(pg_runtime/"bin/pg_dump.exe"),"-h","127.0.0.1","-p",str(record["databasePort"]),"-U","lessonloop","-d","postgres","-Fc","-f",backup_argument]
                 dumped=subprocess.run(command,env={**os.environ,"PGPASSWORD":secret["password"]},capture_output=True,creationflags=flags,timeout=300)
                 if dumped.returncode:
                     (root/"update-backup-error.log").write_bytes(dumped.stderr)
@@ -352,5 +447,7 @@ else:
     if args.action=="cli":env["LESSONLOOP_CONFIG_STDIN"]="1";command+=[str(runtime/"dist/cli/main.js"),*args.arguments];payload=json.dumps(cfg).encode()
     elif args.action=="mcp":env["LESSONLOOP_AGENT_CONFIG_JSON"]=json.dumps({"baseUrl":f"http://127.0.0.1:{record['corePort']}","token":secret["agentToken"]});command+=[str(runtime/"dist/adapters/copilot/mcp.js")];payload=None
     else:env["LESSONLOOP_HOST_CONFIG_JSON"]=json.dumps({"baseUrl":f"http://127.0.0.1:{record['corePort']}","token":secret["hostToken"],"scopeId":record["scopeId"],"allowedRoots":record["allowedRoots"],"stateRoot":str(root/"host-state")});command+=[str(runtime/"dist/adapters/copilot/hook.js"),*args.arguments];payload=sys.stdin.buffer.read()
-    result=subprocess.run(command,input=payload,env=env,creationflags=flags)
+    # Hidden Windows MCP children need explicit standard handles for bidirectional JSON-RPC.
+    stdio={"stdin":sys.stdin,"stdout":sys.stdout,"stderr":sys.stderr} if args.action=="mcp" else {}
+    result=subprocess.run(command,input=payload,env=env,creationflags=flags,**stdio)
     sys.exit(result.returncode)

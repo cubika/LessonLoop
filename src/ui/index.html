@@ -9,6 +9,7 @@
   <body>
     <header><b>LessonLoop</b><span>从工作中积累方法</span></header>
     <main>
+      <p id="notice" role="status"></p>
       <section id="login">
         <h1>打开方法库</h1>
         <p>使用本机设置中的访问令牌连接服务。</p>
@@ -21,7 +22,7 @@
       </section>
       <section id="workspace" hidden>
         <nav>
-          <button data-view="methods">方法库</button
+          <button data-view="methods" aria-current="page">方法库</button
           ><button data-view="records">案例与经验</button
           ><button data-view="materials">提交材料</button
           ><button data-view="settings">设置</button>
@@ -29,7 +30,6 @@
           <button data-view="sources">来源</button>
           <button data-view="connections">连接器</button>
         </nav>
-        <p id="notice" role="status"></p>
         <div id="review-notifications" role="status"></div>
         <div id="methods">
           <h1>方法库</h1>
