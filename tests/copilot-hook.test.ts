@@ -15,7 +15,10 @@ import { handleHook, type Config } from "../src/adapters/copilot/hook.js";
 import { readTranscript } from "../src/adapters/copilot/transcript.js";
 import { digest } from "../src/domain/schema.js";
 
-async function fixture(t: test.TestContext) {
+async function fixture(
+  t: test.TestContext,
+  guidance?: { playbooks: object[]; experiences: object[] },
+) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "lessonloop-session-")),
   );
@@ -79,6 +82,7 @@ async function fixture(t: test.TestContext) {
           },
         ],
         experiences: [],
+        ...guidance,
       };
     }
     const id = operation + key;
@@ -192,6 +196,93 @@ test("one session retains its binding across stops, resumes and topic changes", 
   );
 });
 
+test("empty guidance leaves the prompt unchanged, preserves capture and deduplicates only the same callback", async (t) => {
+  const guidance = { playbooks: [] as object[], experiences: [] as object[] };
+  const f = await fixture(t, guidance);
+  await f.append(f.record(1, "user.message", { content: "Inspect" }));
+  const event = {
+    prompt: "Inspect",
+    transformedPrompt: "Host context: Inspect",
+  };
+  const output = await f.hook("userPromptTransformed", 2, event);
+  assert.deepEqual(output, {});
+  assert.deepEqual(await f.hook("userPromptTransformed", 2, event), {});
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 1);
+  assert.equal(f.sources().length, 1);
+  await f.append(
+    f.record(3, "hook.end", {
+      hookType: "userPromptTransformed",
+      success: true,
+      output,
+    }),
+    f.record(4, "assistant.message", { content: "Observed the project" }),
+  );
+  await f.hook("agentStop", 5);
+  assert.deepEqual(
+    f.sources().map((s) => s.text),
+    ["Inspect", "Observed the project"],
+  );
+  assert.equal(
+    f.calls.some((c) => c.operation === "updateTaskFeedback"),
+    false,
+  );
+  assert.deepEqual(await f.hook("userPromptTransformed", 6, event), {});
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 2);
+  guidance.playbooks.push({
+    playbook: { kind: "playbook", id: "available", revision: 1 },
+    status: "guidance",
+    feedbackRevision: 1,
+    steps: [{ instruction: "Read the source and verify" }],
+  });
+  const next = await f.hook("userPromptTransformed", 7, event);
+  assert.match(
+    String(next.modifiedTransformedPrompt),
+    /Read the source and verify/,
+  );
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 3);
+  assert.equal(f.bindings.size, 1);
+  assert.ok(
+    f.calls
+      .filter((c) => c.operation === "getGuidance")
+      .every((c) => c.input.taskRef === "task-0"),
+  );
+});
+
+test("experience-only guidance is still injected without playbook delivery feedback", async (t) => {
+  const experience = {
+    experience: { kind: "experience", id: "observed", revision: 1 },
+    level: "lead",
+    summary: "Verify the generated client against its source",
+  };
+  const f = await fixture(t, { playbooks: [], experiences: [experience] });
+  const output = await f.hook("userPromptTransformed", 1, {
+    prompt: "Inspect",
+    transformedPrompt: "Host context: Inspect",
+  });
+  assert.ok(
+    String(output.modifiedTransformedPrompt).startsWith(
+      "Host context: Inspect",
+    ),
+  );
+  assert.ok(
+    String(output.modifiedTransformedPrompt).includes(
+      JSON.stringify(experience),
+    ),
+  );
+  await f.append(
+    f.record(2, "hook.end", {
+      hookType: "userPromptTransformed",
+      success: true,
+      output,
+    }),
+  );
+  await f.hook("agentStop", 3);
+  assert.equal(
+    f.calls.some((c) => c.operation === "updateTaskFeedback"),
+    false,
+  );
+});
+
 test("transcript is the sole material source, preserving roles and excluding injected and product output", async (t) => {
   const f = await fixture(t);
   const output = await f.hook("userPromptTransformed", 1, {
@@ -294,6 +385,7 @@ test("authorization and learning switches precede capture; expanded guidance use
   });
   assert.equal(f.sources().length, 0);
   assert.match(String(output.modifiedTransformedPrompt), /getGuidance/);
+  assert.match(String(output.modifiedTransformedPrompt), /requires_expansion/);
   f.settings.learning = true;
   await f.hook("agentStop", 4);
   assert.equal(f.sources().length, 0, "disabled content is not backfilled");

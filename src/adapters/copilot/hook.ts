@@ -310,6 +310,11 @@ export async function handleHook(
     );
     const prepared = guidance.playbooks?.[0];
     const receipt: State["prompts"][number] = { key };
+    state.prompts = [...state.prompts, receipt].slice(-32);
+    if (!guidance.playbooks?.length && !guidance.experiences?.length) {
+      await save();
+      return {};
+    }
     const output = promptEnvelope(
       event,
       `<lessonloop-playbook>\n${JSON.stringify(guidance)}\nUse applicable guidance and choose branches from current observations. Reuse taskRef for getGuidance. For requires_expansion, call getGuidance with the same taskRef, target: playbook and viewMode: expanded.\n</lessonloop-playbook>`,
@@ -320,7 +325,6 @@ export async function handleHook(
         feedbackRevision: prepared.feedbackRevision,
         responseDigest: digest(output.modifiedTransformedPrompt),
       });
-    state.prompts = [...state.prompts, receipt].slice(-32);
     await save();
     return output;
   } finally {
