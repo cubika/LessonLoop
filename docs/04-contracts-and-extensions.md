@@ -94,6 +94,8 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
+采集优先复用官方实现，薄适配负责授权范围、排除 LessonLoop 派生内容、方法注入和产品接口转换。当前固定 coding-agents 0.4.2 的流式读取与消息规范化，源码来源和局部差异见[采集复用](../third-party/copilot-collection.md)。任务边界统一保存在核心任务对象，结束状态与结束事件在一次事务内提交，不从宿主停止推断任务成败；hook 仅保存采集检查点、事件关联与注入回执。任务切分仍沿用 new/continue 规则，升级后重新打开工作会话。
+
 Agent MCP 只公开 getGuidance、submitSource、feedback，三个工具都提供明确的参数结构。工具参数为 input 和可选 eventId；重试同一次请求时复用 eventId。可信事件使用专用宿主入口；对象详情、主题复盘、作业查询、删除、范围、导出和安装管理由 UI/CLI 提供。
 
 getGuidance 接受 query，或 target={kind:playbook/experience,id,revision}。已有 hook 或上次返回的 taskRef 时复用该任务；首次调用可省略，核心按唯一授权范围或显式 scopeId 创建任务，并按请求幂等键复用。多范围时必须指定 scopeId；已有任务只检索自身范围，校验任务身份、结束状态与24小时时限。直接 RPC 首次调用必须携带 Idempotency-Key，MCP 适配器会补齐。
