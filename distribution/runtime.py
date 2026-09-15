@@ -13,6 +13,8 @@ import urllib.request
 import uuid
 import msvcrt
 import shutil
+from integration import private_environment
+from lifecycle import runtime_executables
 
 class Blob(ctypes.Structure):
     _fields_=[("size",wintypes.DWORD),("data",ctypes.POINTER(ctypes.c_byte))]
@@ -38,6 +40,9 @@ parser=argparse.ArgumentParser()
 parser.add_argument("action",choices=["setup","start","stop","status","doctor","update","rollback","cli","agent-hook","mcp","autostart","uninstall","data","configure","agent","ui"])
 parser.add_argument("--data-root",required=True)
 parser.add_argument("--runtime-root",default=str(Path(__file__).resolve().parents[1]))
+parser.add_argument("--python-base")
+parser.add_argument("--node-executable")
+parser.add_argument("--postgres-root")
 parser.add_argument("--scope",default="personal")
 parser.add_argument("--base-port",type=int,default=19431)
 parser.add_argument("--allow-root",action="append",default=[])
@@ -64,7 +69,8 @@ from bundle import unlinked
 root=unlinked(args.data_root);runtime=unlinked(args.runtime_root)
 root.mkdir(parents=True,exist_ok=True)
 program_hint=runtime
-if (root/"installation.json").exists():program_hint=unlinked(json.loads((root/"installation.json").read_text(encoding="utf-8-sig")).get("programRoot",runtime))
+record=json.loads((root/"installation.json").read_text(encoding="utf-8-sig")) if (root/"installation.json").exists() else {}
+if record:program_hint=unlinked(record.get("programRoot",runtime))
 program_lock=(program_hint/"installation.lock").open("a+b")
 program_lock.seek(0);program_lock.write(b"0");program_lock.flush();program_lock.seek(0)
 if args.action in ["setup","start","stop","update","rollback","autostart","uninstall","data","configure","agent","ui"]:
@@ -76,12 +82,12 @@ if args.action in ["setup","start","stop","update","rollback","autostart","unins
     try:msvcrt.locking(lock_file.fileno(),msvcrt.LK_NBLCK,1)
     except OSError:raise SystemExit("Another runtime manager owns this DataRoot")
 flags=subprocess.CREATE_NO_WINDOW
-python=runtime/"python/python.exe";node=runtime/"node/node.exe"
+executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"]
 record_path=root/"installation.json";secret_path=root/"secrets.dpapi"
 def read_secrets():return json.loads(protect(secret_path.read_bytes(),True))
 def call_db(action,secret=None):
-    command=[str(python),str(runtime/"distribution/database.py"),action,"--runtime",str(Path(record.get("databaseRuntimeRoot",runtime/"postgres"))),"--data-root",str(root),"--port",str(record["databasePort"])]
-    result=subprocess.run(command,input=json.dumps(secret) if secret else None,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=flags,timeout=80)
+    command=[str(python),str(runtime/"distribution/database.py"),action,"--runtime",str(runtime_executables(record,runtime)["postgres"]),"--data-root",str(root),"--port",str(record["databasePort"])]
+    result=subprocess.run(command,input=json.dumps(secret) if secret else None,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=private_environment(),creationflags=flags,timeout=80)
     if result.returncode:raise RuntimeError("Private database operation failed; inspect database-manager.log")
 def start_database():
     try:call_db("status");return False
@@ -91,8 +97,26 @@ def owned_process(saved,expected):
     try:
         import psutil
         process=psutil.Process(saved["pid"])
-        return process if Path(process.exe()).resolve()==expected.resolve() and abs(process.create_time()-saved["startedAt"])<0.01 and process.cmdline()==saved["command"] else None
+        allowed={expected.resolve()}
+        if expected==python and record.get("pythonBase"):allowed.add(Path(record["pythonBase"]).resolve())
+        executable=Path(process.exe()).resolve()
+        return process if executable in allowed and executable==Path(saved.get("executable",expected)).resolve() and abs(process.create_time()-saved["startedAt"])<0.01 and process.cmdline()==saved["command"] else None
     except Exception:return None
+
+def process_record(child,python_base=None):
+    import psutil
+    process=psutil.Process(child.pid)
+    if python_base and Path(process.exe()).resolve()!=Path(python_base).resolve():
+        # Windows venv python.exe redirects to a child using the base interpreter.
+        command=process.cmdline()
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            matches=[item for item in process.children() if Path(item.exe()).resolve()==Path(python_base).resolve() and item.cmdline()[1:]==command[1:]]
+            if len(matches)==1:process=matches[0];break
+            if child.poll() is not None:raise RuntimeError("Python environment could not start the engine; inspect engine.log")
+            time.sleep(.05)
+        else:raise RuntimeError("Python environment process ownership could not be confirmed")
+    return {"pid":process.pid,"executable":process.exe(),"startedAt":process.create_time(),"command":process.cmdline()}
 def health(secret):
     request=urllib.request.Request(f"http://127.0.0.1:{record['corePort']}/v1/status",headers={"Authorization":"Bearer "+secret["userToken"]})
     with urllib.request.urlopen(request,timeout=5) as response:state=json.load(response)
@@ -120,9 +144,15 @@ if args.action=="setup":
     else:
         if secret_path.exists() or (root/"storage").exists():raise SystemExit("Unowned existing data requires recovery")
         record={"installationId":str(uuid.uuid4()),"programRoot":str(runtime),"runtimeRoot":str(runtime),"dataRoot":str(root),"scopeId":args.scope,"allowedRoots":[str(Path(p).resolve()) for p in args.allow_root],"databasePort":args.base_port+1,"corePort":args.base_port,"enginePort":args.base_port+2,"autostart":False,"setupState":"initializing"}
+        if any((args.python_base,args.node_executable,args.postgres_root)):
+            if not all((args.python_base,args.node_executable,args.postgres_root)):raise SystemExit("System runtime setup requires Python, Node.js, and PostgreSQL paths")
+            if not Path(args.python_base).is_absolute():raise SystemExit("Python base must be an absolute path")
+            record.update(pythonBase=args.python_base,runtimeExecutables={"python":str(runtime/".venv/Scripts/python.exe"),"node":args.node_executable,"postgres":args.postgres_root})
+            runtime_executables(record,runtime)
         secret={key:secrets.token_hex(32) for key in ["password","engineToken","userToken","hostToken","agentToken"]}
         secret_path.write_bytes(protect(json.dumps(secret).encode()))
         record_path.write_text(json.dumps(record,indent=2),encoding="utf-8")
+    executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"]
     if not (root/"database-owner.json").exists():call_db("init",secret)
     start_database()
     import psycopg2
@@ -130,7 +160,7 @@ if args.action=="setup":
         with db.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
-    initialize=subprocess.run([str(node),str(runtime/"dist/cli/main.js"),"initialize"],input=json.dumps(config(secret)).encode(),env={**os.environ,"LESSONLOOP_CONFIG_STDIN":"1"},creationflags=flags,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+    initialize=subprocess.run([str(node),str(runtime/"dist/cli/main.js"),"initialize"],input=json.dumps(config(secret)).encode(),env={**private_environment(),"LESSONLOOP_CONFIG_STDIN":"1"},creationflags=flags,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
     if initialize.returncode:raise SystemExit("Product schema initialization failed")
     call_db("stop")
     record["setupState"]="ready";record_path.write_text(json.dumps(record,indent=2),encoding="utf-8")
@@ -143,7 +173,8 @@ if record.get("setupState")=="removal_pending":raise SystemExit("Removal is inco
 if record["runtimeRoot"]!=str(runtime):
     recovery_journal=json.loads((root/"update-state.json").read_text(encoding="utf-8"))
     if args.action!="rollback" or recovery_journal.get("installationId")!=record["installationId"] or recovery_journal.get("from")!=str(runtime) or recovery_journal.get("phase") not in ["prepared","backed_up","switching","checking"]:raise SystemExit("Installation ownership mismatch")
-    runtime=unlinked(record["runtimeRoot"]);python=runtime/"python/python.exe";node=runtime/"node/node.exe"
+    runtime=unlinked(record["runtimeRoot"])
+executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"]
 update_record=root/"update-state.json"
 if update_record.exists():
     prior_update=json.loads(update_record.read_text(encoding="utf-8"))
@@ -164,6 +195,8 @@ if secret is None and args.action not in ["uninstall","data","stop"]:raise Syste
 cfg=config(secret) if secret else None
 def start_components():
     global record,runtime,python,node,cfg
+    from model_assets import verify_models
+    verify_models(runtime)
     processes_path=root/"processes.json"
     saved={"installationId":record["installationId"]}
     if processes_path.exists():
@@ -195,15 +228,12 @@ def start_components():
     reranker=reranker_configuration(runtime)
     env={key:value for key,value in env.items() if not key.startswith("HINDSIGHT_API_RERANKER_")}
     env.update(reranker_environment(reranker))
-    if reranker["status"]=="ready":env["PYTHONPATH"]=os.pathsep.join(filter(None,[reranker["pythonDirectory"],env.get("PYTHONPATH")]))
+    env=private_environment(env)
+    if reranker["status"]=="ready":env["PYTHONPATH"]=reranker["pythonDirectory"]
     copilot=shutil.which("copilot.exe")
     env.update(HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP="true",LITELLM_LOCAL_MODEL_COST_MAP="true",HINDSIGHT_API_LLM_TRACE_ENABLED="false",HINDSIGHT_API_AUDIT_LOG_ENABLED="false",HINDSIGHT_API_OPERATION_RETENTION_DAYS="30")
     env.update(HINDSIGHT_API_HTTP_EXTENSION="hindsight_product:LessonLoopProduct",HINDSIGHT_API_HTTP_PRODUCT_KEY=secret["engineToken"])
     if copilot:env["COPILOT_CLI_PATH"]=str(Path(copilot).resolve())
-    import psutil
-    def process_record(child):
-        process=psutil.Process(child.pid)
-        return {"pid":child.pid,"startedAt":process.create_time(),"command":process.cmdline()}
     def save_processes():
         temporary=processes_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(saved),encoding="utf-8")
@@ -212,11 +242,11 @@ def start_components():
         with (root/"engine.log").open("ab") as log:
             log.write((json.dumps({"reranker":reranker})+"\n").encode());log.flush()
             engine=subprocess.Popen([str(python),str(runtime/"distribution/hindsight_server.py")],env=env,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
-        saved["engine"]=process_record(engine);saved["reranker"]=reranker;save_processes()
+        saved["engine"]=process_record(engine,record.get("pythonBase"));saved["reranker"]=reranker;save_processes()
     if not existing["core"]:
         with (root/"core.log").open("ab") as log:
             core_args=[str(node),str(runtime/"dist/cli/main.js"),"serve"]
-            core=subprocess.Popen(core_args,env={**os.environ,"LESSONLOOP_CONFIG_STDIN":"1"},stdin=subprocess.PIPE,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
+            core=subprocess.Popen(core_args,env={**private_environment(),"LESSONLOOP_CONFIG_STDIN":"1"},stdin=subprocess.PIPE,stdout=log,stderr=log,creationflags=flags|subprocess.DETACHED_PROCESS,cwd=root)
             saved["core"]=process_record(core);save_processes()
             core.stdin.write(json.dumps(cfg).encode());core.stdin.close()
     deadline=time.monotonic()+max(0,min(args.wait_seconds,600))
@@ -255,7 +285,7 @@ if args.action in ["uninstall","data"]:
     record.update(setupState="removal_pending",removalAction=action)
     save_json(record_path,record)
     try:
-        ensure_adapters_closed(plan["programRoot"])
+        ensure_adapters_closed(plan["programRoot"],node=node)
         autostart("disable",record,runtime,root)
         record["autostart"]=False
         stop_components()
@@ -292,7 +322,7 @@ elif args.action=="ui":
     print(json.dumps(open_ui(cfg)))
 elif args.action=="doctor":
     processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {}
-    state={"installation":"owned","runtimeFiles":all(path.exists() for path in [python,node,runtime/"postgres/bin/postgres.exe",runtime/"models/e5/onnx/model.onnx"]),"copilotCli":"available" if shutil.which("copilot.exe") else "missing","modelAuthentication":"not_verified","hostIntegration":"needs_configuration"}
+    state={"installation":"owned","runtimeFiles":all(path.exists() for path in [python,node,executables["postgres"]/"bin/postgres.exe",runtime/"models/e5/onnx/model.onnx"]),"copilotCli":"available" if shutil.which("copilot.exe") else "missing","modelAuthentication":"not_verified","hostIntegration":"needs_configuration"}
     from reranker import configuration as reranker_configuration
     state["rerankerPrepared"]=reranker_configuration(runtime)
     state["rerankerProcess"]=processes.get("reranker",{"provider":"unknown","status":"not_recorded"}) if owned_process(processes.get("engine",{}),python) else {"status":"not_running"}
@@ -335,14 +365,19 @@ elif args.action in ["update","rollback"]:
         processes=json.loads((root/"processes.json").read_text()) if (root/"processes.json").exists() else {"installationId":record["installationId"]}
         if processes["installationId"]!=record["installationId"]:raise SystemExit("Process ownership mismatch")
         for name,exe in [("core",node),("engine",python)]:
-            process=owned_process(processes.get(name,{}),exe)
+            saved=processes.get(name,{})
+            process=owned_process(saved,exe)
             if process:process.terminate();process.wait(timeout=30)
-        database_runtime=Path(record.get("databaseRuntimeRoot",target/"postgres"))
-        stopped=subprocess.run([str(recovery_runtime/"python/python.exe"),str(recovery_runtime/"distribution/database.py"),"stop","--runtime",str(database_runtime),"--data-root",str(root),"--port",str(record["databasePort"])],capture_output=True,creationflags=flags,timeout=80)
-        if stopped.returncode:
-            status=subprocess.run([str(recovery_runtime/"python/python.exe"),str(recovery_runtime/"distribution/database.py"),"status","--runtime",str(database_runtime),"--data-root",str(root)],capture_output=True,creationflags=flags,timeout=80)
-            if status.returncode==0:raise SystemExit("Recovery could not stop the owned database")
-        record=restored;runtime=target;python=runtime/"python/python.exe";node=runtime/"node/node.exe";cfg=config(secret)
+            elif saved.get("pid"):
+                import psutil
+                if psutil.pid_exists(saved["pid"]):raise RuntimeError("Recorded process is no longer owned; manual reconciliation required")
+        database_runtime=runtime_executables(record,runtime)["postgres"]
+        recovery_python=runtime_executables(restored,recovery_runtime)["python"]
+        from lifecycle import owned_database
+        if owned_database(record,runtime,root):
+            stopped=subprocess.run([str(recovery_python),str(recovery_runtime/"distribution/database.py"),"stop","--runtime",str(database_runtime),"--data-root",str(root),"--port",str(record["databasePort"])],capture_output=True,env=private_environment(),creationflags=flags,timeout=80)
+            if stopped.returncode or owned_database(record,runtime,root):raise SystemExit("Recovery could not stop the owned database")
+        record=restored;runtime=target;executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"];cfg=config(secret)
         temporary=record_path.with_suffix(".tmp");temporary.write_text(json.dumps(record),encoding="utf-8");temporary.replace(record_path)
         active=program/"active.json";temporary=active.with_suffix(".tmp");temporary.write_text(json.dumps({"installationId":record["installationId"],"runtimeRoot":str(runtime),"dataRoot":str(root)}),encoding="utf-8");temporary.replace(active)
         interrupted["phase"]="rolled_back_without_restoring_database"
@@ -366,6 +401,14 @@ elif args.action in ["update","rollback"]:
         shutil.copyfile(previous_runtime/"distribution/launcher.ps1",program/"lessonloop.ps1")
         (program/"active.json").write_text(json.dumps({"installationId":record["installationId"],"runtimeRoot":str(previous_runtime),"dataRoot":str(root),"manifestDigest":current_digest}),encoding="utf-8")
     if target==runtime:print(json.dumps({"status":"unchanged"}));sys.exit(0)
+    from model_assets import prepare_models
+    prepare_models(target, reuse=runtime)
+    target_executables=None
+    if record.get("runtimeExecutables"):
+        from python_environment import prepare_environment
+        # Prepare dependencies before stopping the working version.
+        target_python=prepare_environment(record["pythonBase"],target)
+        target_executables={**record["runtimeExecutables"],"python":str(target_python)}
     update_path=root/"update-state.json"
     state={"installationId":record["installationId"],"from":str(runtime),"to":str(target),"phase":"prepared","databaseRestored":False,"previousRecord":previous_record}
     def save_json(path,value):
@@ -396,7 +439,7 @@ elif args.action in ["update","rollback"]:
                 if cur.fetchall()!=[(incoming_manifest["compatibility"]["productSchema"],)]:raise RuntimeError("Product schema is incompatible")
                 print(json.dumps({"phase":"database_backup"}),flush=True)
                 backup=unlinked(root/"backups"/(str(uuid.uuid4())+".dump"));backup.parent.mkdir(parents=True,exist_ok=True)
-                pg_runtime=Path(record.get("databaseRuntimeRoot",runtime/"postgres"))
+                pg_runtime=runtime_executables(record,runtime)["postgres"]
                 backup_argument=str(Path(windows_path(backup.parent))/backup.name)
                 command=[windows_path(pg_runtime/"bin/pg_dump.exe"),"-h","127.0.0.1","-p",str(record["databasePort"]),"-U","lessonloop","-d","postgres","-Fc","-f",backup_argument]
                 dumped=subprocess.run(command,env={**os.environ,"PGPASSWORD":secret["password"]},capture_output=True,creationflags=flags,timeout=300)
@@ -409,15 +452,16 @@ elif args.action in ["update","rollback"]:
                 state.update(phase="backed_up",backup=str(backup),backupSha256=file_hash(backup));save_json(update_path,state)
         db.close()
         call_db("stop")
-        record={**record,"programRoot":str(program),"runtimeRoot":str(target),"previousRuntimeRoot":str(previous_runtime),"databaseRuntimeRoot":str(previous_record.get("databaseRuntimeRoot",previous_runtime/"postgres")),"manifestDigest":target_digest}
+        record={**record,"programRoot":str(program),"runtimeRoot":str(target),"previousRuntimeRoot":str(previous_runtime),"databaseRuntimeRoot":str(runtime_executables(previous_record,previous_runtime)["postgres"]),"manifestDigest":target_digest}
+        if target_executables:record["runtimeExecutables"]=target_executables
         state["previousRecord"]=previous_record;state["phase"]="switching";save_json(update_path,state)
-        save_json(record_path,record);runtime=target;python=runtime/"python/python.exe";node=runtime/"node/node.exe";cfg=config(secret);switched=True
+        save_json(record_path,record);runtime=target;executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"];cfg=config(secret);switched=True
         state["phase"]="checking";save_json(update_path,state)
         print(json.dumps({"phase":"read_only_compatibility_check"}),flush=True)
         start_database()
-        checked=subprocess.run([str(python),str(runtime/"distribution/check_runtime.py")],input=json.dumps(cfg).encode(),capture_output=True,creationflags=flags,timeout=120)
+        checked=subprocess.run([str(python),str(runtime/"distribution/check_runtime.py")],input=json.dumps(cfg).encode(),capture_output=True,env=private_environment(),creationflags=flags,timeout=120)
         if checked.returncode:raise RuntimeError("New version read-only compatibility check failed")
-        initialized=subprocess.run([str(node),str(runtime/"dist/cli/main.js"),"check"],input=json.dumps(cfg).encode(),env={**os.environ,"LESSONLOOP_CONFIG_STDIN":"1"},capture_output=True,creationflags=flags,timeout=30)
+        initialized=subprocess.run([str(node),str(runtime/"dist/cli/main.js"),"check"],input=json.dumps(cfg).encode(),env={**private_environment(),"LESSONLOOP_CONFIG_STDIN":"1"},capture_output=True,creationflags=flags,timeout=30)
         if initialized.returncode:raise RuntimeError("New core read-only compatibility check failed")
         call_db("stop")
         shutil.copyfile(runtime/"distribution/launcher.ps1",program/"lessonloop.ps1")
@@ -434,7 +478,7 @@ elif args.action in ["update","rollback"]:
         if switched:
             try:stop_components()
             except Exception:pass
-            record=previous_record;runtime=previous_runtime;python=runtime/"python/python.exe";node=runtime/"node/node.exe";cfg=config(secret);save_json(record_path,record)
+            record=previous_record;runtime=previous_runtime;executables=runtime_executables(record,runtime);python=executables["python"];node=executables["node"];cfg=config(secret);save_json(record_path,record)
         if switched:
             shutil.copyfile(runtime/"distribution/launcher.ps1",program/"lessonloop.ps1")
             save_json(active_path,previous_active or {"installationId":record["installationId"],"runtimeRoot":str(runtime),"dataRoot":str(root),"manifestDigest":current_digest})
@@ -443,7 +487,7 @@ elif args.action in ["update","rollback"]:
         raise
 
 else:
-    env={**os.environ};command=[str(node)]
+    env=private_environment();command=[str(node)]
     if args.action=="cli":env["LESSONLOOP_CONFIG_STDIN"]="1";command+=[str(runtime/"dist/cli/main.js"),*args.arguments];payload=json.dumps(cfg).encode()
     elif args.action=="mcp":env["LESSONLOOP_AGENT_CONFIG_JSON"]=json.dumps({"baseUrl":f"http://127.0.0.1:{record['corePort']}","token":secret["agentToken"]});command+=[str(runtime/"dist/adapters/copilot/mcp.js")];payload=None
     else:env["LESSONLOOP_HOST_CONFIG_JSON"]=json.dumps({"baseUrl":f"http://127.0.0.1:{record['corePort']}","token":secret["hostToken"],"scopeId":record["scopeId"],"allowedRoots":record["allowedRoots"],"stateRoot":str(root/"host-state")});command+=[str(runtime/"dist/adapters/copilot/hook.js"),*args.arguments];payload=sys.stdin.buffer.read()

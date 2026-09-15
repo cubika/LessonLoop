@@ -13,6 +13,8 @@ import hindsight_api
 import onnxruntime
 model=runtime/"models/e5/onnx/model.onnx"
 if not model.is_file():raise SystemExit("Embedding model missing")
+from model_assets import verify_models
+verify_models(runtime)
 db=psycopg2.connect(config["databaseUrl"],options="-c default_transaction_read_only=on")
 with db:
     with db.cursor() as cur:
@@ -23,6 +25,10 @@ with db:
         cur.execute("SELECT to_regclass('hindsight.banks'),to_regclass('hindsight.async_operations'),to_regclass('lessonloop.objects')")
         if any(v is None for v in cur.fetchone()):raise SystemExit("Native or product schema missing")
         cur.execute("SELECT current_setting('server_version_num')::int/10000")
-        if cur.fetchone()[0]!=int(components["postgresql"].split('.')[0]):raise SystemExit("PostgreSQL major mismatch")
+        actual_major=cur.fetchone()[0]
+        minimum=int(components.get("minimumVersions",{}).get("postgresql","15.0.0").split('.')[0])
+        if components.get("runtimePolicy")=="system_reuse":
+            if actual_major<minimum:raise SystemExit("PostgreSQL is below the supported minimum")
+        elif actual_major!=int(components["postgresql"].split('.')[0]):raise SystemExit("PostgreSQL major mismatch")
 db.close()
 print(json.dumps({"status":"passed","mode":"read_only","hindsight":version("hindsight-api-slim"),"onnxRuntime":onnxruntime.__version__}))

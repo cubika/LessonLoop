@@ -4,9 +4,11 @@
 
 ## 发行目标
 
-提供面向个人的方法学习服务：方法库UI、CLI、后台核心、官方接入适配和Hindsight。首个目标为Windows x64、普通用户、Windows PowerShell 5.1或PowerShell 7，不要求预装Node、Python、数据库或Docker。
+提供面向个人的方法学习服务：方法库UI、CLI、后台核心、官方接入适配和Hindsight。首个目标为Windows x64、普通用户、Windows PowerShell 5.1或PowerShell 7，不要求Docker；缺少Node、Python或数据库时，安装器先征求安装确认。
 
 用户已有Copilot CLI作为工作宿主，学习推理使用同用户的现有Copilot订阅。Hindsight与数据自托管，嵌入/重排使用独立本地组件；云端推理不能描述为完全离线。没有登录或宿主时可以安装，但需明确待配置，不能报告完整就绪。
+
+Python、Node与PostgreSQL优先复用达到最低版本的已有安装，过旧时确认升级，缺失时确认安装。外部宿主版本区分已测与未测，见[兼容说明](15-runtime-compatibility.md)。
 
 ## 组件与官方工具
 
@@ -16,7 +18,7 @@
 | LessonLoop核心、UI、CLI | 方法学习、使用、用户控制与回顾，调用同一产品API |
 | AgentAdapter | 固定官方模块与必要修改、宿主注册、产品MCP及能力诊断 |
 | Hindsight | 官方引擎与适配器，原生管理UI/CLI供维护诊断 |
-| 私有数据库 | 固定PostgreSQL及必要检索扩展，产品与原生独立schema |
+| 私有数据库 | 复用兼容PostgreSQL程序及检索扩展，DataRoot独立，产品与原生独立schema |
 | 模型组件 | 官方provider认证及独立本地多语言嵌入/重排 |
 
 复用官方组件不等于允许其自行扫描历史、下载运行时或自动升级。发行清单记录上游版本/提交、局部修改、许可和宿主兼容范围；关闭与产品固定版本及授权不符的默认行为。
@@ -25,7 +27,7 @@
 
 ## 安装与首次设置
 
-计划提供固定版本PowerShell安装入口。当前没有可执行下载地址，不在文档给出仿真的生产命令。安装过程为：获取锁与平台检查 → 下载清单和组件 → 校验并解包到staging → 基本自检 → 初始化当前格式数据 → 健康检查 → 激活稳定入口 → 注册用户选择的Agent。
+alpha已有固定版本PowerShell安装入口，见[安装说明](14-alpha-release.md)。安装过程为：获取锁与平台检查 → 下载清单和组件 → 校验并解包到staging → 基本自检 → 初始化当前格式数据 → 健康检查 → 激活稳定入口 → 注册用户选择的Agent。
 
 setup分别配置模型、scope和来源范围、工作学习、自动推荐、效果回顾与提醒。历史导入需要明确范围；不默认导入全部会话或git历史。长期证据保留与原生副本策略说明后保存配置，预算由实际profile决定。
 
@@ -54,13 +56,13 @@ InstallRoot默认在LOCALAPPDATA/LessonLoopRuntime，DataRoot在LOCALAPPDATA/Les
 
 所有路径从安装记录解析，支持中文和空格。拒绝绝对路径解压、上跳和链接逃逸；递归移动/清理前核对规范化路径、安装身份和归属。自定义安装目录保存稳定定位，不在默认位置悄悄建立第二实例。
 
-不覆盖用户Node/Python/PostgreSQL、不修改机器PATH、不接管未知同名命令。进程归属由安装ID、DataRoot、可执行路径、PID及启动时间共同确认，不按进程名批量终止。
+已有合格运行时直接复用；Python/Node升级需确认后交给官方安装器，其PATH和权限行为由该安装器决定。PostgreSQL不接管现有数据库服务。进程归属由安装ID、DataRoot、可执行路径、PID及启动时间共同确认，不按进程名批量终止。
 
 核心仅监听loopback且认证，原生引擎和数据库只提供必要本地访问。秘密保存在当前用户凭据设施，URL、命令行和日志不含凭据。Copilot/gh共享登录不属于安装器，不复制、清除或带入发行包。
 
 ## 组件构建
 
-发行包包含固定核心runtime、Hindsight私有Python环境、数据库扩展和模型资源，CI提前构建原生依赖，不在终端用户机器运行源码编译。清单列组件URL、大小、摘要、许可、schema和协议兼容范围，运行时不追踪main/latest。
+主发行包包含核心、Node应用依赖、脚本和模型清单，模型在安装时按需下载并校验，升级复用旧文件；PostgreSQL作为可选组件单独打包。Hindsight等Python应用依赖在安装时从PyPI下载wheel到产品.venv，不编译源码。清单列组件URL、大小、摘要、许可、schema和协议兼容范围，运行时不追踪main/latest。
 
 先构建组件与manifest，再生成引用清单摘要的bootstrap，避免清单自哈希循环。测试实际发布字节，验证干净Windows无管理员安装、登录缺失、断网启动、依赖兼容、中文检索及组件健康。发行支持以实际结果为准，官方源码可运行不等于本产品已有可分发包。
 

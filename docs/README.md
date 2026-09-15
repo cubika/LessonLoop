@@ -3,6 +3,7 @@
 当前设计以官方Hindsight工具和可复用Agent模块为起点，围绕“经历 → 分层提炼 → 方法 → 使用 → 改进”组织。以下文档定义产品合同；核心和主要入口已有实现，尚未通过完整验收，进度统一见[13](13-implementation-plan.md)。
 
 首个Windows预览版的安装、试用范围和限制见[alpha说明](14-alpha-release.md)。
+系统依赖复用、最低版本和PostgreSQL用途见[依赖与兼容](15-runtime-compatibility.md)。
 
 ## 阅读顺序
 

@@ -35,7 +35,7 @@ async function main() {
   if (help) {
     console.log(
       [
-        "Usage: node --import tsx scripts/run-product-evaluation.ts [--profile evals/profiles/development.json] [--validate] [--check-provider]",
+        "Usage: npm run evaluate:product -- [--profile evals/profiles/development.json] [--validate] [--check-provider]",
         "Run: add --core-config path/to/core-config.json [--python path/to/private/python.exe] [--out output-directory]",
         "--validate checks the profile and fixture paths without opening a database or calling a model.",
         "--check-provider imports the pinned Python provider; authentication is checked by the first real call.",

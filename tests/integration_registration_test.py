@@ -3,10 +3,25 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parents[1] / "distribution"))
 import integration
 
 class RegistrationTests(unittest.TestCase):
+    def test_doctor_reports_untested_host_without_blocking_authenticated_registration(self):
+        runtime = Path(__file__).parents[1]
+        version = type("Version", (), {"stdout": "GitHub Copilot CLI 1.0.99-1"})()
+        async def authenticated(cli):
+            return {"status": "authenticated"}
+        with patch.object(integration.shutil, "which", return_value="copilot.exe"), \
+             patch.object(integration.subprocess, "run", return_value=version), \
+             patch.object(integration, "auth_status", authenticated), \
+             patch.object(integration, "agent_action", return_value={"status": "registered"}):
+            result = integration.diagnostics({}, runtime, runtime, {})
+        self.assertEqual(result["compatibility"]["copilotCli"]["status"], "untested")
+        self.assertEqual(result["modelAuthentication"]["status"], "authenticated")
+        self.assertEqual(result["hostIntegration"]["status"], "registered")
+
     def test_registration_replay_preserves_other_entries_and_rejects_user_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); data = root / "data"; data.mkdir()

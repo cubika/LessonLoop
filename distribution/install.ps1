@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Bundle,[string]$InstallRoot=(Join-Path $env:LOCALAPPDATA "LessonLoopRuntime"),[string]$DataRoot=(Join-Path $env:LOCALAPPDATA "LessonLoop"),[switch]$AllowDevelopmentBuild,[string[]]$AllowRoot=@(),[int]$BasePort=19431)
+param([Parameter(Mandatory=$true)][string]$Bundle,[string]$InstallRoot=(Join-Path $env:LOCALAPPDATA "LessonLoopRuntime"),[string]$DataRoot=(Join-Path $env:LOCALAPPDATA "LessonLoop"),[switch]$AllowDevelopmentBuild,[string[]]$AllowRoot=@(),[int]$BasePort=19431,[string]$PythonPath,[string]$NodePath,[string]$PostgresPath,[string]$ModelCache,[switch]$NonInteractive)
 $ErrorActionPreference="Stop"
 $utf8=New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding=$utf8
@@ -45,6 +45,13 @@ function Save-Json([string]$Path,$Value){
   $Value|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $temporary -Encoding UTF8
   Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
+function Prepare-Models([string]$Python){
+  if($manifest.modelPolicy -ne 'download_on_install'){return}
+  $modelArgs=@('--runtime',$installTarget,'--reuse',$bundleRoot)
+  if($ModelCache){$modelArgs+=@('--cache',$ModelCache)}
+  & $Python -E -s -B -X utf8 (Join-Path $installTarget 'distribution/model_assets.py') @modelArgs
+  if($LASTEXITCODE -ne 0){throw 'Model preparation failed; rerun the installer to reuse completed downloads'}
+}
 try{
 $manifestPath=[IO.Path]::Combine($bundleRoot,"manifest.json")
 if([IO.File]::GetAttributes($manifestPath) -band [IO.FileAttributes]::ReparsePoint){throw "Manifest is linked"}
@@ -53,6 +60,8 @@ $manifestDigest=File-Digest $manifestPath
 if($manifest.platform -ne "win32-x64" -or -not [Environment]::Is64BitOperatingSystem){throw "Windows x64 is required"}
 $acceptedAlpha=$manifest.channel -eq "alpha" -and $manifest.alphaReady -eq $true -and $manifest.version -match "-alpha\."
 if(-not $manifest.releaseReady -and -not $acceptedAlpha -and -not $AllowDevelopmentBuild){throw "This bundle has not passed its declared release channel checks"}
+$systemReuse=$manifest.runtimePolicy -eq "system_reuse"
+Write-Output $(if($systemReuse){"Checking existing Python, Node.js and PostgreSQL. Missing or old dependencies require your confirmation."}else{"Legacy bundle: using its included runtimes."})
 $seenPaths=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 if(-not $manifest.files.Count){throw "Empty bundle manifest"}
 foreach($file in $manifest.files){
@@ -64,9 +73,23 @@ foreach($file in $manifest.files){
   if(-not $target.StartsWith($bundleRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "Bundle path escapes its root"}
   Check-File $target $file
 }
-  foreach($required in @("python/python.exe","node/node.exe","distribution/runtime.py","distribution/launcher.ps1","distribution/check_runtime.py","dist/cli/main.js","config/components.json")){
+  $requiredFiles=@("distribution/runtime.py","distribution/launcher.ps1","distribution/check_runtime.py","dist/cli/main.js","config/components.json")
+  if($systemReuse){$requiredFiles+=@("distribution/dependencies.ps1","distribution/python_environment.py","config/python-requirements.txt")}else{$requiredFiles+=@("python/python.exe","node/node.exe")}
+  if($manifest.modelPolicy -eq 'download_on_install'){$requiredFiles+='distribution/model_assets.py';if(-not $manifest.modelComponents.Count){throw 'Required model components missing'}}
+  foreach($required in $requiredFiles){
     if(-not $seenPaths.Contains($required)){throw "Required runtime component missing: $required"}
   }
+  $bundleBytes=[long]0
+  foreach($file in $manifest.files){$bundleBytes += [long]$file.size}
+  $programDrive=New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($installTarget))
+  $dataDrive=New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($dataTarget))
+  # The source bundle already occupies disk. Reserve a full installed copy and
+  # 512 MiB for initial private database files, not an estimate of future usage.
+  $reserve=[long](512MB)
+  $programRequired=$bundleBytes
+  if($programDrive.Name -eq $dataDrive.Name){$programRequired += $reserve}
+  if($programDrive.AvailableFreeSpace -lt $programRequired){throw "Insufficient free space on installation drive; need $programRequired bytes for installation and initial data"}
+  if($programDrive.Name -ne $dataDrive.Name -and $dataDrive.AvailableFreeSpace -lt $reserve){throw "Insufficient free space on data drive; need $reserve bytes for initial data"}
   $statePath=[IO.Path]::Combine($installTarget,"install-state.json")
   $activePath=[IO.Path]::Combine($installTarget,"active.json")
   $existingRecord=[IO.Path]::Combine($dataTarget,"installation.json")
@@ -92,11 +115,39 @@ foreach($file in $manifest.files){
     foreach($file in $manifest.files){Check-File ([IO.Path]::Combine($installTarget,$file.path)) $file}
     $launcherEntry=@($manifest.files|Where-Object {$_.path -eq "distribution/launcher.ps1"})[0]
     Check-File ([IO.Path]::Combine($installTarget,"lessonloop.ps1")) $launcherEntry
+    if($systemReuse){
+      . (Join-Path $bundleRoot "distribution/dependencies.ps1")
+      if(-not $PythonPath -and (Test-Path -LiteralPath $previous.pythonBase -PathType Leaf)){$PythonPath=$previous.pythonBase}
+      if(-not $NodePath -and (Test-Path -LiteralPath $previous.runtimeExecutables.node -PathType Leaf)){$NodePath=$previous.runtimeExecutables.node}
+      $dependencies=Resolve-LessonLoopDependencies -PythonPath $PythonPath -NodePath $NodePath -PostgresPath $previous.runtimeExecutables.postgres -NonInteractive:$NonInteractive
+      if($dependencies.PostgresNeedsComponent -or $dependencies.PostgresPath -ne $previous.runtimeExecutables.postgres){throw "The installed database runtime is unavailable. Restore its recorded PostgreSQL installation before retrying."}
+      Prepare-Models $dependencies.PythonExe
+      & $dependencies.PythonExe -E -s -B -X utf8 (Join-Path $installTarget "distribution/python_environment.py") --python $dependencies.PythonExe --runtime $installTarget
+      if($LASTEXITCODE -ne 0){throw "Python application packages could not be repaired; rerun this installer after resolving the reported error"}
+      $previous.pythonBase=$dependencies.PythonExe
+      $previous.runtimeExecutables.node=$dependencies.NodeExe
+      Save-Json $existingRecord $previous
+    }
     if($priorState){Remove-Item -LiteralPath $statePath -Force}
     Write-Output "LessonLoop $($manifest.version) is already installed at $installTarget."
     exit 2
   }
   if([IO.Directory]::Exists($installTarget) -and -not $priorState){throw "Existing unowned installation directory; choose an empty InstallRoot"}
+  $dependencies=$null
+  if($systemReuse){
+    . (Join-Path $bundleRoot "distribution/dependencies.ps1")
+    if($previous.runtimeExecutables){
+      if(-not $PythonPath -and (Test-Path -LiteralPath $previous.pythonBase -PathType Leaf)){$PythonPath=$previous.pythonBase}
+      if(-not $NodePath -and (Test-Path -LiteralPath $previous.runtimeExecutables.node -PathType Leaf)){$NodePath=$previous.runtimeExecutables.node}
+      $PostgresPath=$previous.runtimeExecutables.postgres
+    }
+    $dependencyArgs=@{NonInteractive=$NonInteractive}
+    if($PythonPath){$dependencyArgs.PythonPath=$PythonPath};if($NodePath){$dependencyArgs.NodePath=$NodePath};if($PostgresPath){$dependencyArgs.PostgresPath=$PostgresPath}
+    $dependencies=Resolve-LessonLoopDependencies @dependencyArgs
+    if($dependencies.PostgresNeedsComponent){
+      throw "PostgreSQL installation was approved but no compatible component is available locally. Use the online install.ps1 or provide -PostgresPath after installation."
+    }
+  }
   [IO.Directory]::CreateDirectory($installTarget)|Out-Null
   Save-Json $statePath @{programRoot=$installTarget;dataRoot=$dataTarget;manifestDigest=$manifestDigest;installationId=$previous.installationId}
   foreach($file in $manifest.files){
@@ -113,8 +164,16 @@ foreach($file in $manifest.files){
   foreach($file in $manifest.files){Check-File ([IO.Path]::Combine($installTarget,$file.path)) $file}
   $setupArguments=@("setup","--runtime-root",$installTarget,"--data-root",$dataTarget,"--base-port",$BasePort)
   foreach($allowed in $AllowRoot){$setupArguments+=@("--allow-root",$allowed)}
+  $runtimePython=Join-Path $installTarget "python/python.exe"
+  if($systemReuse){
+    Prepare-Models $dependencies.PythonExe
+    & $dependencies.PythonExe -E -s -B -X utf8 (Join-Path $installTarget "distribution/python_environment.py") --python $dependencies.PythonExe --runtime $installTarget
+    if($LASTEXITCODE -ne 0){throw "Python application packages could not be prepared; existing system Python and Node.js were not changed"}
+    $runtimePython=Join-Path $installTarget ".venv/Scripts/python.exe"
+    $setupArguments+=@("--python-base",$dependencies.PythonExe,"--node-executable",$dependencies.NodeExe,"--postgres-root",$dependencies.PostgresPath)
+  }
   if(-not $previous -or $previous.setupState -ne "ready"){
-    & (Join-Path $installTarget "python/python.exe") -B -X utf8 (Join-Path $installTarget "distribution/runtime.py") @setupArguments
+    & $runtimePython -E -s -B -X utf8 (Join-Path $installTarget "distribution/runtime.py") @setupArguments
     if($LASTEXITCODE -notin @(0,2)){throw "Runtime setup failed; rerun this installer with the same bundle and directories"}
   }
   $installation=Get-Content -LiteralPath (Join-Path $dataTarget "installation.json") -Raw -Encoding UTF8|ConvertFrom-Json

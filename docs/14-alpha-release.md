@@ -1,13 +1,15 @@
-# LessonLoop 0.1.0-alpha.1
+# LessonLoop 0.1.0-alpha.2
 
-首个Windows x64预览版，用于个人本机试用。包含私有Node、Python、PostgreSQL、Hindsight和本地嵌入/重排模型；工作与学习模型使用已有Copilot CLI登录。Copilot CLI需要单独安装并登录。
+Windows x64预览版，用于个人本机试用。复用电脑上符合最低版本的Python、Node.js和PostgreSQL；工作与学习模型使用已有Copilot CLI登录。Copilot CLI需要单独安装并登录。
+
+最低要求为Python 3.11 x64、Node.js 18.14.1 x64、PostgreSQL 15 x64及pgvector 0.5.0、pg_trgm扩展。满足条件直接使用；版本过旧时询问是否升级，缺失时询问是否安装，默认拒绝。具体检测与安装方式见[兼容说明](15-runtime-compatibility.md)。alpha.1仍使用原来的随包运行时，升级到alpha.2需使用新的InstallRoot和DataRoot；原数据保留。
 
 ## 安装与启动
 
-从[GitHub Releases](https://github.com/cubika/LessonLoop/releases/tag/v0.1.0-alpha.1)下载Windows ZIP和SHA256SUMS.txt，核对ZIP的SHA256后解压。不要把压缩包直接解压到已有安装目录。使用普通用户PowerShell，项目路径请替换为实际目录：
+从[GitHub Releases](https://github.com/cubika/LessonLoop/releases/tag/v0.1.0-alpha.2)下载install.ps1和SHA256SUMS.txt，核对脚本摘要后，用普通用户PowerShell运行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\distribution\install.ps1 -Bundle .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 & "$env:LOCALAPPDATA\LessonLoopRuntime\lessonloop.ps1" start
 & "$env:LOCALAPPDATA\LessonLoopRuntime\lessonloop.ps1" configure --allow-root C:\path\to\project --enable-learning
 & "$env:LOCALAPPDATA\LessonLoopRuntime\lessonloop.ps1" agent install
@@ -15,9 +17,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\distribution\install.ps1 -
 & "$env:LOCALAPPDATA\LessonLoopRuntime\lessonloop.ps1" ui
 ```
 
-安装返回2表示已安装、仍需配置；doctor返回2表示组件、登录或宿主接入尚未全部就绪。首次加载本地模型可能较慢，start返回starting时可再次运行。默认不启用自启或效果回顾；可在页面分别设置。注册后重新打开Copilot CLI，在选定项目中工作。
+脚本先检查依赖，按需确认，再下载并校验约16MB的程序ZIP。E5和MultiBERT模型在安装时在线下载，已有合格文件或缓存就复用。Python与Node.js安装或升级交给winget；官方安装器可能要求管理员权限。没有winget时会提供官方下载地址。PostgreSQL及扩展不满足条件时，经确认下载独立组件；已有数据库保持原样。安装本身不需要Docker。
 
-可选择下载同一Release中的install-alpha.ps1，它会下载固定版本、核对ZIP摘要，再执行安装。手动解压安装也不需要管理员或Docker。
+也可下载Windows产品ZIP和可选PostgreSQL组件ZIP，校验摘要后解压。在产品目录执行distribution/install.ps1 -Bundle .；若PostgreSQL不在常见安装位置，加-PostgresPath指向包含bin、lib、share的根目录。产品ZIP不含模型或Python、Node.js、PostgreSQL运行时。安装模型需访问对应Release，Python应用依赖需访问PyPI；已下载模型ZIP可用-ModelCache指定目录。不要直接解压到已有安装目录。
+
+安装返回2表示已安装、仍需配置；doctor返回2表示组件、登录或宿主接入尚未全部就绪。首次加载本地模型可能较慢，start返回starting时可再次运行。默认不启用自启或效果回顾；可在页面分别设置。注册后重新打开Copilot CLI，在选定项目中工作。-NonInteractive仅在依赖已满足时可继续，不会自动批准安装或升级。
 
 ## 管理
 

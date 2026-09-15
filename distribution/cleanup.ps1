@@ -84,6 +84,8 @@ try {
     if ((Test-Path -LiteralPath $storage) -and -not (Get-ChildItem -LiteralPath $storage -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $storage -Force }
     $identity = [ordered]@{installationId=$record.installationId;programRoot=$program;runtimeRoot=$record.runtimeRoot;dataRoot=$data;databasePort=$record.databasePort;corePort=$record.corePort;enginePort=$record.enginePort;scopeId="personal";allowedRoots=@();autostart=$false;setupState="purged"}
     if ($record.databaseRuntimeRoot) { $identity.databaseRuntimeRoot = $record.databaseRuntimeRoot }
+    if ($record.runtimeExecutables) { $identity.runtimeExecutables = $record.runtimeExecutables }
+    if ($record.pythonBase) { $identity.pythonBase = $record.pythonBase }
     if ($record.manifestDigest) { $identity.manifestDigest = $record.manifestDigest }
     $identity | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $recordPath -Encoding UTF8
     Remove-Item -LiteralPath $planTarget -Force
@@ -91,6 +93,7 @@ try {
     @{status="purged";dataRoot=$data;retainedFiles=$remaining;next="Run setup to initialize a new empty database"} | ConvertTo-Json -Depth 4 -Compress
   } elseif ($plan.action -eq "uninstall") {
     $directories = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in $plan.programDirectories) { [void]$directories.Add((Resolve-Owned $program $name)) }
     foreach ($name in $plan.programFiles) {
       $target = Resolve-Owned $program $name
       if (Test-Path -LiteralPath $target) {

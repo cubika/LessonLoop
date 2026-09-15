@@ -102,6 +102,35 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 lifecycle.removal_plan("uninstall", self.record, self.program, self.data)
 
+    def test_runtime_bindings_use_system_paths_and_legacy_bundle_fallback(self):
+        legacy = lifecycle.runtime_executables(self.record, self.program)
+        self.assertEqual(legacy["node"], self.program / "node/node.exe")
+        bindings = {"python": str(self.program / ".venv/Scripts/python.exe"),
+                    "node": str(self.fixture / "system/node.exe"), "postgres": str(self.fixture / "PostgreSQL/18")}
+        self.assertEqual(lifecycle.runtime_executables({**self.record, "runtimeExecutables": bindings}, self.program),
+                         {key: Path(value) for key, value in bindings.items()})
+        for invalid in ({}, {**bindings, "node": "node.exe"}):
+            with self.assertRaisesRegex(ValueError, "absolute path"):
+                lifecycle.runtime_executables({**self.record, "runtimeExecutables": invalid}, self.program)
+
+    def test_uninstall_refuses_an_unowned_python_environment(self):
+        (self.program / ".venv").mkdir()
+        (self.program / ".venv/user.txt").write_text("keep")
+        with self.assertRaisesRegex(ValueError, "ownership record"):
+            lifecycle.removal_plan("uninstall", self.record, self.program, self.data)
+
+    def test_active_adapter_using_system_node_blocks_removal(self):
+        class NoSuchProcess(Exception): pass
+        class AccessDenied(Exception): pass
+        node = self.fixture / "system/node.exe"
+        command = [str(node), str(self.program / "versions/previous/dist/adapters/copilot/mcp.js")]
+        process = SimpleNamespace(pid=123, info={"exe": str(node), "cmdline": command})
+        processes = SimpleNamespace(process_iter=lambda fields: [process], NoSuchProcess=NoSuchProcess, AccessDenied=AccessDenied)
+        with self.assertRaisesRegex(ValueError, "Close active Copilot sessions"):
+            lifecycle.ensure_adapters_closed(self.program, processes, node=node)
+        process.info["cmdline"] = [str(node), str(self.fixture / "other/dist/adapters/copilot/mcp.js")]
+        lifecycle.ensure_adapters_closed(self.program, processes, node=node)
+
     def test_database_pid_must_match_executable_creation_time_and_data_directory(self):
         database = self.data / "storage/postgres"
         database.mkdir(parents=True)
@@ -120,6 +149,15 @@ class LifecycleTests(unittest.TestCase):
         process.create_time = lambda: 1000
         process.exe = lambda: str(self.fixture / "other/postgres.exe")
         with self.assertRaises(ValueError):
+            lifecycle.owned_database(self.record, self.program, self.data, processes)
+        system = self.fixture / "PostgreSQL/18"
+        self.record["runtimeExecutables"] = {"python": str(self.program / ".venv/Scripts/python.exe"),
+                                             "node": str(self.fixture / "system/node.exe"), "postgres": str(system)}
+        self.write(self.data / "database-owner.json", {"dataRoot": str(self.data), "database": str(database), "runtime": str(system)})
+        process.exe = lambda: str(system / "bin/postgres.exe")
+        self.assertIs(lifecycle.owned_database(self.record, self.program, self.data, processes), process)
+        process.cmdline = lambda: [str(system / "bin/postgres.exe"), "-D", str(self.fixture / "other-database")]
+        with self.assertRaisesRegex(ValueError, "no longer owned"):
             lifecycle.owned_database(self.record, self.program, self.data, processes)
 
     def prepare_cleanup(self, action):
@@ -149,7 +187,25 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn('"status":"uninstalled"', result.stdout)
 
     @unittest.skipUnless(os.name == "nt", "Windows cleanup helper")
+    def test_uninstall_removes_product_venv_and_keeps_system_dependencies(self):
+        system = self.fixture / "system Python"
+        system.mkdir()
+        (system / "python.exe").write_text("system executable remains")
+        environment = self.program / ".venv"
+        (environment / "empty/subdirectory").mkdir(parents=True)
+        self.write(environment / "lessonloop-environment.json", {"pythonBase": str(system / "python.exe")})
+        (environment / "pyvenv.cfg").write_text("home = " + str(system))
+        result = self.cleanup(self.prepare_cleanup("uninstall"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.program.exists())
+        self.assertTrue((system / "python.exe").exists())
+        self.assertTrue((self.data / "installation.json").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows cleanup helper")
     def test_actual_purge_removes_owned_data_and_backups_but_keeps_exports(self):
+        self.record.update(pythonBase=str(self.fixture / "system/python.exe"), runtimeExecutables={
+            "python": str(self.program / ".venv/Scripts/python.exe"), "node": str(self.fixture / "system/node.exe"),
+            "postgres": str(self.fixture / "PostgreSQL/18")})
         self.write(self.data / "storage/postgres/fixture.json", {"fixture": True})
         self.write(self.data / "backups/snapshot.json", {"fixture": True})
         self.write(self.data / "host-state/session.json", {"fixture": True})
@@ -161,7 +217,10 @@ class LifecycleTests(unittest.TestCase):
             self.assertFalse((self.data / path).exists(), path)
         self.assertTrue((self.program / "owned.txt").exists())
         self.assertTrue((self.data / "user-export.txt").exists())
-        self.assertEqual(json.loads((self.data / "installation.json").read_text(encoding="utf-8-sig"))["setupState"], "purged")
+        purged = json.loads((self.data / "installation.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(purged["setupState"], "purged")
+        self.assertEqual(purged["runtimeExecutables"], self.record["runtimeExecutables"])
+        self.assertEqual(purged["pythonBase"], self.record["pythonBase"])
 
     @unittest.skipUnless(os.name == "nt", "Windows cleanup helper")
     def test_locked_installed_file_leaves_recoverable_removal_state(self):

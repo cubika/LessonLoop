@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -85,6 +86,34 @@ class InstallerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 2)
         self.assertIn("hash mismatch", result.stderr)
         self.assertFalse(self.program.exists())
+
+    def test_system_reuse_reinstall_repairs_missing_environment(self):
+        base = str(Path(sys._base_executable).resolve())
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        dependency_script = "function Resolve-LessonLoopDependencies { param($PythonPath,$NodePath,$PostgresPath,[switch]$NonInteractive) "
+        dependency_script += f"[pscustomobject]@{{PythonExe={quote(base)};NodeExe=$NodePath;PostgresPath=$PostgresPath;PostgresNeedsComponent=$false}} }}"
+        environment_script = "import argparse\nfrom pathlib import Path\np=argparse.ArgumentParser();p.add_argument('--python');p.add_argument('--runtime');a=p.parse_args()\n"
+        environment_script += "target=Path(a.runtime)/'.venv/Scripts/python.exe';target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'repaired fixture')\n"
+        for name, content in [("distribution/dependencies.ps1", dependency_script),
+                ("distribution/python_environment.py", environment_script), ("config/python-requirements.txt", "")]:
+            path = self.bundle / name
+            path.write_text(content, encoding="utf-8")
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        manifest["runtimePolicy"] = "system_reuse"
+        manifest["files"] = [{"path": path.relative_to(self.bundle).as_posix(), "size": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in self.bundle.rglob("*") if path.is_file() and path.name != "manifest.json"]
+        self.save(self.bundle / "manifest.json", manifest)
+        digest = hashlib.sha256((self.bundle / "manifest.json").read_bytes()).hexdigest()
+        self.record.update(manifestDigest=digest, pythonBase=base, runtimeExecutables={
+            "python": str(self.program / ".venv/Scripts/python.exe"), "node": str(self.fixture / "node.exe"), "postgres": str(self.fixture / "postgres")})
+        self.save(self.data / "installation.json", self.record)
+        first = self.install()
+        self.assertEqual(first.returncode, 2, first.stdout + first.stderr)
+        executable = self.program / ".venv/Scripts/python.exe"
+        executable.unlink()
+        second = self.install()
+        self.assertEqual(second.returncode, 2, second.stdout + second.stderr)
+        self.assertEqual(executable.read_bytes(), b"repaired fixture")
 
 
 if __name__ == "__main__":

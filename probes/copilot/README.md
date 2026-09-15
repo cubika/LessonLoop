@@ -4,7 +4,7 @@
 
 ## 准备与运行
 
-需要Windows x64、PowerShell和Node.js 22.18+，在仓库根目录运行：
+需要Windows x64、PowerShell和Node.js 18.14.1+，在仓库根目录运行：
 
 ```powershell
 npm ci --ignore-scripts

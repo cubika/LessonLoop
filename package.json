@@ -1,29 +1,29 @@
 {
   "name": "lessonloop",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=18.14.1"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node dist/cli/main.js serve",
     "cli": "node dist/cli/main.js",
     "test:postgres": "node scripts/test-postgres.mjs",
-    "validate:p0": "node --import tsx scripts/run-p0.ts",
+    "validate:p0": "node node_modules/tsx/dist/cli.mjs scripts/run-p0.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node scripts/test-unit.mjs",
     "validate:docs": "node scripts/validate-docs.mjs",
     "validate:evals": "node scripts/validate-eval-corpus.mjs",
-    "probe:copilot": "node --import tsx probes/copilot/host-probe.ts",
-    "probe:copilot-hooks": "node --import tsx probes/copilot/host-hook-probe.ts",
-    "validate:evolution": "node --import tsx scripts/run-method-evolution.ts",
-    "validate:evolution-resume": "node --import tsx scripts/resume-method-evolution.ts",
-    "validate:verification": "node --import tsx scripts/run-verification-validation.ts",
-    "validate:host": "node --import tsx scripts/run-host-validation.ts",
-    "validate:product-profile": "node --import tsx scripts/run-product-evaluation.ts --validate",
-    "evaluate:product": "node --import tsx scripts/run-product-evaluation.ts"
+    "probe:copilot": "node node_modules/tsx/dist/cli.mjs probes/copilot/host-probe.ts",
+    "probe:copilot-hooks": "node node_modules/tsx/dist/cli.mjs probes/copilot/host-hook-probe.ts",
+    "validate:evolution": "node node_modules/tsx/dist/cli.mjs scripts/run-method-evolution.ts",
+    "validate:evolution-resume": "node node_modules/tsx/dist/cli.mjs scripts/resume-method-evolution.ts",
+    "validate:verification": "node node_modules/tsx/dist/cli.mjs scripts/run-verification-validation.ts",
+    "validate:host": "node node_modules/tsx/dist/cli.mjs scripts/run-host-validation.ts",
+    "validate:product-profile": "node node_modules/tsx/dist/cli.mjs scripts/run-product-evaluation.ts --validate",
+    "evaluate:product": "node node_modules/tsx/dist/cli.mjs scripts/run-product-evaluation.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

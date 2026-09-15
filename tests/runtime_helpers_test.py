@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 import tempfile
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'distribution'))
@@ -37,3 +38,50 @@ assert source.index('if args.action=="rollback" and interrupted:') < source.inde
 assert 'temporary.replace(journal)' in source
 assert 'if db is not None:db.close()' in source
 assert 'databaseRestored":False' in source
+
+# System Python virtual environments launch a redirector plus the actual interpreter.
+# Capture and stop only the child with the recorded path, time, and complete command.
+import json
+import time
+owned=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='owned_process')
+capture=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='process_record')
+with tempfile.TemporaryDirectory(prefix='lessonloop-process-test-') as directory:
+ root=Path(directory);venv=root/'.venv/Scripts/python.exe';base=root/'system/python.exe';script=root/'distribution/hindsight_server.py'
+ command=[str(base),str(script)]
+ child=SimpleNamespace(pid=102,exe=lambda:str(base),create_time=lambda:1000.25,cmdline=lambda:command)
+ redirector=SimpleNamespace(pid=101,exe=lambda:str(venv),cmdline=lambda:[str(venv),str(script)],children=lambda:[child])
+ fake=SimpleNamespace(Process=lambda pid:redirector if pid==101 else child)
+ ns={'Path':Path,'time':time,'python':venv,'record':{'pythonBase':str(base)}}
+ exec(compile(ast.Module(body=[owned,capture],type_ignores=[]),'runtime-ownership','exec'),ns)
+ with patch.dict(sys.modules,{'psutil':fake}):
+  saved=ns['process_record'](SimpleNamespace(pid=101,poll=lambda:None),str(base))
+  assert saved['pid']==102 and saved['executable']==str(base)
+  assert ns['owned_process'](saved,venv) is child
+  assert ns['owned_process']({**saved,'startedAt':999},venv) is None
+  assert ns['owned_process']({**saved,'command':[str(base),'other.py']},venv) is None
+  child.exe=lambda:str(root/'other/python.exe')
+  assert ns['owned_process'](saved,venv) is None
+print('Runtime ownership checks passed: virtual-environment child requires matching executable, creation time, and full command.')
+
+import os
+if os.name=='nt' and sys.prefix!=sys.base_prefix:
+ import subprocess
+ import psutil
+ ns={'Path':Path,'time':time,'python':Path(sys.executable),'record':{'pythonBase':sys._base_executable}}
+ exec(compile(ast.Module(body=[owned,capture],type_ignores=[]),'runtime-owned-child','exec'),ns)
+ child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],creationflags=subprocess.CREATE_NO_WINDOW)
+ saved=None
+ try:
+  saved=ns['process_record'](child,sys._base_executable)
+  assert saved['pid']!=child.pid, 'Windows venv redirector must record the real interpreter child'
+  process=ns['owned_process'](saved,Path(sys.executable))
+  assert process is not None
+  process.terminate();process.wait(timeout=10)
+  child.wait(timeout=10)
+  assert ns['owned_process'](saved,Path(sys.executable)) is None
+ finally:
+  if saved:
+   process=ns['owned_process'](saved,Path(sys.executable))
+   if process:process.terminate();process.wait(timeout=10)
+  if child.poll() is None:child.terminate();child.wait(timeout=10)
+ print('Real virtual-environment process check passed: stopping the recorded engine child also exits its redirector.')

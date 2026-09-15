@@ -1,6 +1,6 @@
 # Windows 组件开发工具
 
-这些工具用于构建和验证，尚不是最终安装器。正式包必须包含私有运行时、完整依赖锁、哈希清单、安装/后台/升级/卸载管理和验收报告。
+alpha.2优先复用系统运行时；最低版本、确认流程和安装用法见[安装说明](../docs/14-alpha-release.md)。build-bundle.ps1仍用于准备开发组件，用户发行包由package-release.py生成。
 
 | 文件 | 当前用途 |
 |---|---|
@@ -10,6 +10,10 @@
 | hindsight_server.py | 启动官方引擎并加载固定版本 Schema 兼容层 |
 | hindsight_compat.py | 保留原始 JSON Schema，验证嵌套必填、枚举、nullable 和格式 |
 | build-bundle.ps1 | 汇集私有运行时、数据库、本地模型与产品构建，生成逐文件摘要 |
+| bootstrap.ps1 | 发布时生成install.ps1，检查已有依赖、按需确认安装并下载程序；模型由本地安装脚本继续准备 |
+| dependencies.ps1 | 检测最低版本、选择已有运行时，缺失或过旧时询问用户 |
+| package-release.py | --release-dir生成小程序ZIP、独立模型ZIP、可选数据库ZIP、install.ps1和SHA256SUMS.txt |
+| model_assets.py | 校验模型清单，复用当前/旧版本文件或缓存ZIP，缺失时在线下载 |
 | install.ps1 | 验证本地 bundle 清单并复制；开发包必须显式选择 AllowDevelopmentBuild |
 | runtime.py | DPAPI、独立数据库初始化、后台 start/status/stop/doctor；支持缺失组件恢复及兼容升级/回滚，完整发行生命周期待验收 |
 

@@ -22,6 +22,24 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+def runtime_executables(record, runtime):
+    """Use installation bindings; older bundles retain their private executables."""
+    runtime = Path(runtime)
+    bindings = record.get("runtimeExecutables")
+    if bindings is None:
+        return {"python": runtime / "python/python.exe", "node": runtime / "node/node.exe",
+            "postgres": Path(record.get("databaseRuntimeRoot", runtime / "postgres"))}
+    if not isinstance(bindings, dict):
+        raise ValueError("Invalid runtime executable bindings")
+    result = {}
+    for name in ("python", "node", "postgres"):
+        value = bindings.get(name)
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise ValueError("Runtime executable binding must be an absolute path: " + name)
+        result[name] = Path(value)
+    return result
+
+
 def owned_layout(record, runtime, data_root):
     runtime, data_root = unlinked(runtime), unlinked(data_root)
     program = unlinked(record.get("programRoot", runtime))
@@ -93,8 +111,7 @@ def checked_tree(path):
             pending.extend(current.iterdir())
 
 
-def manifest_paths(program):
-    """Only files declared by this installation's manifests are removable."""
+def installed_manifests(program):
     manifests = [program / "manifest.json"]
     for container in (program / "versions", program / "staging"):
         if container.exists():
@@ -103,12 +120,19 @@ def manifest_paths(program):
                 unlinked(version)
                 if version.is_dir() and (version / "manifest.json").is_file():
                     manifests.append(version / "manifest.json")
+    return manifests
+
+
+def manifest_paths(program):
+    """Remove declared product files and its isolated Python environments."""
     files = set()
-    for manifest_path in manifests:
+    for manifest_path in installed_manifests(program):
         manifest = json.loads(unlinked(manifest_path).read_text(encoding="utf-8-sig"))
         if manifest.get("platform") != "win32-x64" or not isinstance(manifest.get("files"), list):
             raise ValueError("Invalid installed manifest")
-        for item in manifest["files"]:
+        from model_assets import components
+        model_files = [item for component in components(manifest) for item in component["files"]]
+        for item in [*manifest["files"], *model_files]:
             name = item["path"].replace("\\", "/")
             relative = PurePosixPath(name)
             if relative.is_absolute() or any(part in ("", ".", "..") or ":" in part or part.endswith((".", " ")) for part in name.split("/")):
@@ -123,6 +147,14 @@ def manifest_paths(program):
                     for bytecode in cache.glob(target.stem + ".*.pyc"):
                         files.add(unlinked(bytecode).relative_to(program).as_posix())
         files.add(manifest_path.relative_to(program).as_posix())
+        environment = unlinked(manifest_path.parent / ".venv")
+        if environment.exists():
+            checked_tree(environment)
+            if not (environment / "lessonloop-environment.json").is_file():
+                raise ValueError("Python environment is missing its ownership record")
+            for target in environment.rglob("*"):
+                if target.is_file():
+                    files.add(target.relative_to(program).as_posix())
     return sorted(files)
 
 
@@ -137,9 +169,15 @@ def removal_plan(action, record, runtime, data_root, confirmation=None):
     for name in items:
         checked_tree(data_root / name)
     files = manifest_paths(program) if action == "uninstall" else []
+    directories = []
+    if action == "uninstall":
+        for manifest in installed_manifests(program):
+            environment = manifest.parent / ".venv"
+            if environment.is_dir():
+                directories.extend(path.relative_to(program).as_posix() for path in [environment, *environment.rglob("*")] if path.is_dir())
     return {"action": action, "installationId": record["installationId"],
         "programRoot": str(program), "runtimeRoot": str(runtime), "dataRoot": str(data_root),
-        "programFiles": files, "dataItems": items}
+        "programFiles": files, "programDirectories": directories, "dataItems": items}
 
 
 def owned_database(record, runtime, data_root, processes=None):
@@ -153,7 +191,7 @@ def owned_database(record, runtime, data_root, processes=None):
         if database.exists():
             raise ValueError("Database exists without an ownership record")
         return None
-    db_runtime = unlinked(record.get("databaseRuntimeRoot", Path(runtime) / "postgres"))
+    db_runtime = runtime_executables(record, runtime)["postgres"]
     owner = json.loads(owner_path.read_text(encoding="utf-8-sig"))
     if any(owner.get(key) != str(value) for key, value in (("dataRoot", data_root), ("database", database), ("runtime", db_runtime))):
         raise ValueError("Database ownership mismatch")
@@ -180,7 +218,7 @@ def owned_database(record, runtime, data_root, processes=None):
     return process
 
 
-def ensure_adapters_closed(program, processes=None):
+def ensure_adapters_closed(program, processes=None, node=None):
     if processes is None:
         import psutil as processes
     program = unlinked(program)
@@ -188,11 +226,13 @@ def ensure_adapters_closed(program, processes=None):
     for process in processes.process_iter(["exe", "cmdline"]):
         try:
             executable = Path(process.info["exe"]).resolve() if process.info["exe"] else None
-            if executable and executable.is_relative_to(program) and executable.name.lower() == "node.exe" and executable.parent.name.lower() == "node":
-                runtime = executable.parents[1]
-                scripts = {(runtime / "dist/adapters/copilot" / name).resolve() for name in ("mcp.js", "hook.js")}
-                if any(Path(argument).resolve() in scripts for argument in (process.info["cmdline"] or [])[1:]):
-                    adapter_processes.append(process.pid)
+            expected = executable == Path(node).resolve() if node else executable and executable.is_relative_to(program) and executable.name.lower() == "node.exe" and executable.parent.name.lower() == "node"
+            if expected:
+                for argument in (process.info["cmdline"] or [])[1:]:
+                    script = Path(argument).resolve()
+                    if script.is_relative_to(program) and script.parts[-4:] in (("dist", "adapters", "copilot", "mcp.js"), ("dist", "adapters", "copilot", "hook.js")):
+                        adapter_processes.append(process.pid)
+                        break
         except (processes.NoSuchProcess, processes.AccessDenied):
             continue
     if adapter_processes:

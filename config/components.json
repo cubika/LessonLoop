@@ -7,7 +7,20 @@
   "hindsight": "0.9.2",
   "hindsightClient": "0.9.2",
   "copilotSdk": "1.0.13",
-  "copilotHostObserved": "1.0.84-5",
+  "copilotHostObserved": "1.0.84-6",
+  "runtimePolicy": "system_reuse",
+  "minimumVersions": {
+    "python": "3.11.0",
+    "node": "18.14.1",
+    "postgresql": "15.0.0",
+    "pgvector": "0.5.0"
+  },
+  "hostCompatibility": {
+    "copilotCliTested": ["1.0.84-6"],
+    "otherCopilotVersions": "attempt_with_untested_warning",
+    "powershellTestedFamilies": ["5.1", "7"],
+    "systemPythonNodePostgres": "reuse_if_minimum_and_capabilities_pass"
+  },
   "pg0": "0.15.1",
   "postgresql": "18.1.0",
   "pgvector": "0.8.5",

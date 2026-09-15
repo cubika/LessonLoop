@@ -59,14 +59,24 @@ def verify(root, allow_development=False):
         target,size,expected,name=item
         if target.stat().st_size!=size or file_hash(target)!=expected:raise ValueError("Component hash mismatch: "+name)
     with ThreadPoolExecutor(max_workers=8) as executor:list(executor.map(check,pending_checks))
-    required = {"python/python.exe", "node/node.exe", "distribution/runtime.py", "dist/cli/main.js", "config/components.json"}
+    required = {"distribution/runtime.py", "dist/cli/main.js", "config/components.json"}
+    if manifest.get("runtimePolicy") == "system_reuse":
+        required.update({"distribution/dependencies.ps1", "distribution/python_environment.py", "config/python-requirements.txt"})
+    else:
+        required.update({"python/python.exe", "node/node.exe"})
     required.update(["distribution/launcher.ps1","distribution/check_runtime.py"])
+    if manifest.get("modelPolicy") == "download_on_install":
+        from model_assets import components
+        components(manifest)
+        required.add("distribution/model_assets.py")
     if not required.issubset(names):
         raise ValueError("Required runtime component missing")
     return manifest, file_hash(manifest_path)
 
 
 def compatible(previous, incoming):
+    if previous.get("runtimePolicy", "bundled_private") != incoming.get("runtimePolicy", "bundled_private"):
+        raise ValueError("Runtime policy changed; use the installer to select existing system dependencies")
     fields = ["productSchema", "protocol", "hindsight", "postgresql", "pgvector", "activationCheck"]
     left, right = previous.get("compatibility", {}), incoming.get("compatibility", {})
     if any(left.get(key) is None or left.get(key) != right.get(key) for key in fields):

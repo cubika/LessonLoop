@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { ProductStore } from "../store/postgres.js";
 import { HindsightEngine } from "../adapters/hindsight/engine.js";
@@ -108,7 +109,7 @@ async function main() {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Idempotency-Key":
-          process.env.LESSONLOOP_EVENT_ID ?? crypto.randomUUID(),
+          process.env.LESSONLOOP_EVENT_ID ?? randomUUID(),
       },
       body: JSON.stringify({ operation, input }),
       signal: AbortSignal.timeout(30000),

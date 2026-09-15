@@ -3,11 +3,36 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import urllib.request
 import uuid
+
+
+def private_environment(source=None):
+    """Keep account/network settings, but isolate bundled Python and Node loading."""
+    ignored = {"PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "NODE_PATH", "NODE_OPTIONS", "VIRTUAL_ENV", "CONDA_PREFIX"}
+    environment = {key: value for key, value in (os.environ if source is None else source).items() if key.upper() not in ignored}
+    environment.update(PYTHONNOUSERSITE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    return environment
+
+
+def compatibility_report(runtime, copilot_version, record=None):
+    components = json.loads((Path(runtime) / "config/components.json").read_text(encoding="utf-8-sig"))
+    tested = components.get("hostCompatibility", {}).get("copilotCliTested", [components["copilotHostObserved"]])
+    match = re.search(r"(?<![\d.])\d+\.\d+\.\d+(?:-\d+)?(?![\d-])", copilot_version or "")
+    observed = match.group(0) if match else None
+    system_reuse = bool((record or {}).get("runtimeExecutables")) or components.get("runtimePolicy") == "system_reuse"
+    return {"runtimePolicy": "system_reuse" if system_reuse else "bundled_private",
+            "systemPythonNodePostgres": "selected_at_installation" if system_reuse else "not_used_no_version_conflict",
+            "minimumVersions": components.get("minimumVersions", {}),
+            "selectedExecutables": (record or {}).get("runtimeExecutables", {}),
+            "testedVersions": {key: components[key] for key in ["node", "python", "postgresql", "pgvector", "hindsight", "copilotSdk"]},
+            "copilotCli": {"observed": observed, "tested": tested,
+                "status": "tested" if observed in tested else "untested" if observed else "unknown",
+                "policy": "Other versions may run; authentication and protocol checks still apply. Untested does not mean incompatible."}}
 
 
 def save_json(path, value):
@@ -162,7 +187,8 @@ def diagnostics(record, runtime, root, cfg):
     except Exception as error:
         agent = {"status": "conflict", "reason": type(error).__name__}
     return {"copilotCli": "available" if cli else "missing", "copilotVersion": version,
-            "modelAuthentication": model, "hostIntegration": agent}
+            "modelAuthentication": model, "hostIntegration": agent,
+            "compatibility": compatibility_report(runtime, version, record)}
 
 
 def open_ui(cfg):

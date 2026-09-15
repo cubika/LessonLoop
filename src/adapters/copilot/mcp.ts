@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -60,7 +61,7 @@ for (const [name, description] of Object.entries(tools))
         headers: {
           Authorization: `Bearer ${config.token}`,
           "Content-Type": "application/json",
-          "Idempotency-Key": eventId ?? crypto.randomUUID(),
+          "Idempotency-Key": eventId ?? randomUUID(),
         },
         body: JSON.stringify({ operation: name, input }),
         signal: AbortSignal.timeout(name === "reassessTask" ? 45000 : 20000),

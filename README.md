@@ -2,7 +2,7 @@
 
 LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、执行L1–L5提炼、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
 
-**首个 Windows alpha：0.1.0-alpha.1。** 预览版包含方法学习与管理、Copilot接入、样例Connector和本地运行管理；安装与试用见[alpha说明](docs/14-alpha-release.md)。正式P0–P3质量与发行矩阵尚未全部通过，当前结果和限制见[实现计划](docs/13-implementation-plan.md)及[运行记录](docs/research/2026-09-14-implementation/README.md)。
+**Windows 预览版：0.1.0-alpha.2。** 预览版包含方法学习与管理、Copilot接入、样例Connector和本地运行管理；安装与试用见[alpha说明](docs/14-alpha-release.md)。正式P0–P3质量与发行矩阵尚未全部通过，当前结果和限制见[实现计划](docs/13-implementation-plan.md)及[运行记录](docs/research/2026-09-14-implementation/README.md)。
 
 产品仍在开发，没有需要迁移的旧用户数据，首版从当前数据格式初始化。Copilot 接入优先复用官方采集、回填和诊断模块；方法库负责查看、管理和关联任务，实际多轮工作由 Copilot 执行。
 
@@ -38,7 +38,7 @@ LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法�
 
 ## 在源码中运行检查
 
-需要Node.js 22.18+。下面的检查和构建不调用模型。
+需要Node.js 18.14.1+。下面的检查和构建不调用模型。
 
 ```powershell
 npm ci --ignore-scripts

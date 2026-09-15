@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import { webcrypto as crypto } from "node:crypto";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { startUiFixture } from "./ui-library-server.mjs";
