@@ -1,6 +1,7 @@
 // Copilot prompt envelope adapted from @vectorize-io/hindsight-coding-agents
 // 0.4.2 (Hindsight v0.9.2). Copyright (c) 2025 Vectorize AI, Inc.
 // MIT license: third-party/hindsight-LICENSE. Product calls replace native recall.
+import { copilotTurn, stripOfficialMemory } from "./upstream.js";
 export interface HookEvent {
   sessionId?: string;
   prompt?: string;
@@ -40,20 +41,19 @@ export function transcriptEvent(raw: unknown) {
     timestamp?: string;
     data?: { content?: unknown; result?: unknown; toolCallId?: string };
   };
-  const role =
-    event.type === "user.message"
-      ? "user"
-      : event.type === "assistant.message"
-        ? "agent"
-        : event.type === "tool.execution_complete"
-          ? "tool"
-          : undefined;
-  const content =
-    typeof event.data?.content === "string"
-      ? stripInjectedMemory(event.data.content).trim()
-      : event.type === "tool.execution_complete"
-        ? JSON.stringify(event.data)
-        : "";
+  const turn = copilotTurn(event);
+  const role = turn
+    ? turn.role === "assistant"
+      ? "agent"
+      : "user"
+    : event.type === "tool.execution_complete"
+      ? "tool"
+      : undefined;
+  const content = turn
+    ? stripInjectedMemory(turn.content).trim()
+    : role === "tool"
+      ? JSON.stringify(event.data)
+      : "";
   if (!role || !content) return;
   return {
     role: role as "user" | "agent" | "tool",
@@ -68,9 +68,9 @@ export function transcriptEvent(raw: unknown) {
 // Adapted from the pinned upstream core/transcript-util.ts. Product guidance
 // is excluded as well, so recalled methods do not become new source evidence.
 const MEMORY_TAG_RE =
-  /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh|lessonloop-method|lessonloop-playbook)\b[\s\S]*?<\/\1>/g;
+  /<(lessonloop-method|lessonloop-playbook)\b[\s\S]*?<\/\1>/g;
 export function stripInjectedMemory(text: string) {
-  return text.replace(MEMORY_TAG_RE, "");
+  return stripOfficialMemory(text).replace(MEMORY_TAG_RE, "");
 }
 
 export function toolText(toolName: unknown, _args: unknown, result: unknown) {

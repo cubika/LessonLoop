@@ -15,6 +15,7 @@ import {
 } from "./public-contract.js";
 import { inspectSource, sourceReceipt, workView } from "./source-views.js";
 import { getGuidance } from "./guidance.js";
+import { hostTaskBoundary } from "./host-tasks.js";
 const connectors = new WeakMap<CoreService, SampleConnector>();
 function sample(core: CoreService) {
   let connector = connectors.get(core);
@@ -45,6 +46,8 @@ async function dispatchInternal(
 ): Promise<unknown> {
   const input = raw ?? {};
   switch (operation) {
+    case "hostTaskBoundary":
+      return hostTaskBoundary(core, p, input);
     case "connector.add":
       return sample(core).add(p, input);
     case "connector.list":

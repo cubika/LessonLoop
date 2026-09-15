@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProductStore, Conflict } from "../store/postgres.js";
+import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import {
   identity,
   digest,
@@ -63,6 +63,7 @@ export class Effects {
   async record(
     caller: { id: string; channel: string; scopes: string[] },
     input: unknown,
+    transaction?: Transaction,
   ) {
     if (!["host", "user"].includes(caller.channel))
       throw new Error("trusted_host_required");
@@ -93,7 +94,7 @@ export class Effects {
       try {
         if (!caller.scopes.includes(event.scopeId))
           throw new Error("scope_denied");
-        const result = await this.store.transaction(async (tx) => {
+        const persist = async (tx: Transaction) => {
           const setting = await tx.get<{ review: boolean }>(
             "settings",
             event.scopeId,
@@ -229,7 +230,10 @@ export class Effects {
             null,
           );
           return { eventId: event.eventId, status: "accepted" };
-        });
+        };
+        const result = transaction
+          ? await persist(transaction)
+          : await this.store.transaction(persist);
         results.push(result);
       } catch (e) {
         results.push({
