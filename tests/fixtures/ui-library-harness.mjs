@@ -196,19 +196,8 @@ export async function runUiLibraryChecks() {
     assert.equal(revise.input.body.steps[1].instruction, "核对新步骤");
     assert.equal(revise.input.body.steps[0].choices[0].next, "stop");
     checks.push("add reorder branch and reviewed revision");
-    await click($("detail"), "查看历史");
-    await click($("detail"), "用这版内容修改并送审");
-    editor = $("detail").children.findLast((e) =>
-      e.textContent.includes("修改说明"),
-    );
-    assert.equal(field(editor, "名称").value, "旧版生成文件检查");
-    await click(editor, "提交审查");
-    assert.equal(
-      requests.findLast((r) => r.operation === "revisePlaybook").input
-        .expectedRevision,
-      2,
-    );
-    checks.push("historical body reviews against current revision");
+    assert.equal(walk($("detail")).some((e) => e.textContent === "查看历史"), false);
+    checks.push("current method only, no historical restore");
     await click($("detail"), "关联宿主任务");
     let taskPanel = $("detail").children.findLast((e) =>
       e.textContent.includes("宿主任务"),
@@ -269,7 +258,7 @@ export async function runUiLibraryChecks() {
     checks.push("authored source submission");
     await run("show('playbook-ui')");
     await run(
-      "editPlaybook(document.getElementById('detail'), {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]})",
+      "current = {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]}; editPlaybook(document.getElementById('detail'))",
     );
     editor = $("detail").children.findLast((e) =>
       e.textContent.includes("修改说明"),
@@ -291,7 +280,7 @@ export async function runUiLibraryChecks() {
       oldRefRequests,
     );
     checks.push(
-      "changed or held supporting evidence blocks historical submission",
+      "changed or held supporting evidence blocks current submission",
     );
     const realFetch = context.fetch;
     context.fetch = async (path, options) =>

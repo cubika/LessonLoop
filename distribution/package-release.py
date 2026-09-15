@@ -59,7 +59,7 @@ def manifest(output, version, model_components=None):
         "runtimePolicy": "system_reuse", "minimumVersions": MINIMUM_VERSIONS.copy(),
         "modelPolicy": "download_on_install", "modelComponents": model_components,
         "sourceCommit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip(),
-        "compatibility": {"productSchema": 2, "protocol": 1, "activationCheck": 1,
+        "compatibility": {"productSchema": 3, "protocol": 1, "activationCheck": 1,
             **{key: components[key] for key in ["hindsight", "postgresql", "pgvector"]}}, "files": files}
     validate_components(value)
     (output / "manifest.json").write_text(json.dumps(value, indent=2), encoding="utf-8")

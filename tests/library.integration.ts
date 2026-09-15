@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { dispatch } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
 import { identity, digest, playbookSchema } from "../src/domain/schema.js";
@@ -144,6 +144,7 @@ async function setup(store: ProductStore) {
       );
     }
   });
+  await core.syncProjections([scope]);
   return { scope, owner, host, engine, core, e, playbooks };
 }
 test("Playbook library pagination binds filters, pins persist, and users cannot forge host observations", async () => {
@@ -322,6 +323,7 @@ test("Playbook guidance survives core restart and retains task, source and feedb
     assert.ok(
       uses.every(
         (u) =>
+          u.id === first.playbookUseRef &&
           u.playbookUseRef === first.playbookUseRef &&
           !["delivery", "adoption", "outcome", "stepIds"].some(
             (key) => key in u,

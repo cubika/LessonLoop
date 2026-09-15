@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { identity, refSchema, type Source } from "../src/domain/schema.js";
 import { learningQuery } from "../src/core/learning.js";
+import { workViewSchema } from "../src/core/work-view.js";
 
 test("Only Source, Experience and Playbook have domain references", () => {
   for (const kind of ["source", "experience", "playbook"])
@@ -19,6 +20,18 @@ test("Only Source, Experience and Playbook have domain references", () => {
       refSchema.safeParse({ kind, id: "id", revision: 1 }).success,
       false,
     );
+});
+test("Work views accept only the current playbook association shape", () => {
+  const uses = workViewSchema.innerType().shape.playbookUses;
+  const use = {
+    playbookUseRef: "association",
+    taskRef: "task",
+    callerId: "host",
+    playbook: { kind: "playbook", id: "playbook", revision: 1 },
+    returnedAt: new Date().toISOString(),
+  };
+  assert.ok(uses.safeParse([use]).success);
+  assert.equal(uses.safeParse([{ ...use, stepIds: ["s1"] }]).success, false);
 });
 test("Native ingestion retains every source in original order and uses its sole identity", async () => {
   const requests: any[] = [];

@@ -32,11 +32,10 @@ UI、CLI、AgentAdapter 与 Connector 使用同一带版本核心 API。认证�
 | browsePlaybooks | UI/CLI按scope、状态、主题、query和cursor分页查看有权限的active/held/disabled方法；不自动注入，cursor绑定筛选范围 |
 | pinPlaybook | 用户按id/pinned保存常用标记，不改变方法正文或发布修订 |
 | inspectPlaybook | 查看当前方法、步骤、来源和状态，可查看有权限的暂停项 |
-| playbookHistory | 查看仍保留的旧版与变化，缺失内容明确标注 |
 | preparePlaybook | 为任务返回完整方法指导，见下节 |
-| revisePlaybook | 修改目标、步骤、条件或纠正说明，通过准入和写协调形成新修订 |
+| revisePlaybook | 修改目标、步骤、条件或纠正说明，先保存临时候选；自动审查通过后，直接提交该候选并读回确认，不再次生成 |
 | setPlaybookState | active/disabled请求；重新启用仍核对依据，不强制跳过准入 |
-| removePlaybook | 先停止投递，再清理当前、旧版和投影；默认保留仍有用途的基础经验 |
+| removePlaybook | 先停止投递，再清理当前、待写候选和投影；默认保留仍有用途的基础经验 |
 | exportPlaybook | 输出Markdown/checklist/skill快照，预览范围和版本，不安装或执行 |
 
 用户约束、来源删除和方法纠正不允许通过原生 UI 或工具绕过产品控制。核心可复用官方管理实现，但产品修改必须保留自己的版本和意图。
@@ -78,6 +77,7 @@ feedback输入ObjectRef、helpful/irrelevant/incorrect和可选correctionText。
 | 回执 | 服务确认条件 |
 |---|---|
 | accepted=true | 输入及作业可靠持久化 |
+| previousUse=unchanged | 普通编辑送审时当前有效方法继续使用；后续来源或用户控制仍可立即暂停它 |
 | previousUse=suppressed | 明确旧对象及修订，产品屏障已生效，旧版不再投递 |
 | replacement.status=effective | 新ObjectRef当前通过准入，产品与投影一致且必要索引确认，写屏障解除 |
 | pending/not_effective/unknown | 未完成、依据不足、临时要求、冲突或结果未知，说明实际原因 |
