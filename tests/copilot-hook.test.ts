@@ -696,7 +696,7 @@ test("streaming preserves UTF-8 and incomplete lines, reports identity mismatche
   );
 });
 
-test("long sessions have no adapter event-count cutoff and old task state is rejected", async (t) => {
+test("long sessions have no adapter event-count cutoff and malformed task state is rejected", async (t) => {
   const f = await fixture(t);
   await f.append(
     ...Array.from({ length: 200 }, (_, n) =>
@@ -714,15 +714,6 @@ test("long sessions have no adapter event-count cutoff and old task state is rej
   );
   await assert.rejects(
     f.hook("userPromptTransformed", 202, { prompt: "Resume" }),
-    /host_session_restart_required/,
-  );
-  await rm(join(f.config.stateRoot, file));
-  await writeFile(
-    join(f.config.stateRoot, digest([f.root, "session"]) + ".json"),
-    JSON.stringify({ tasks: [] }),
-  );
-  await assert.rejects(
-    f.hook("agentStop", 203),
     /host_session_restart_required/,
   );
 });

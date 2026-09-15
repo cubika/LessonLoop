@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -111,6 +112,59 @@ class PackagingTests(unittest.TestCase):
             (output / "config/python-requirements.txt").unlink()
             with self.assertRaisesRegex(RuntimeError, "Required product file"):
                 package.manifest(output, "0.1.0-alpha.2")
+
+    def test_each_release_uses_fresh_code_and_installs_its_locked_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, base, reranker = self.fixture(root)
+            retired = write(repo, "dist/retired.js", "retired module")
+            commands = []
+
+            def dependency(version):
+                write(repo, "package.json", json.dumps({"dependencies": {"fixture-dependency": version}}))
+                write(repo, "package-lock.json", json.dumps({"lockfileVersion": 3,
+                    "packages": {"node_modules/fixture-dependency": {"version": version}}}))
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if command[0] == "npm.cmd":
+                    output = Path(kwargs["cwd"])
+                    locked = json.loads((output / "package-lock.json").read_text())["packages"]
+                    write(output, "node_modules/fixture-dependency/package.json",
+                          json.dumps(locked["node_modules/fixture-dependency"]))
+                return self.run_command(command, **kwargs)
+
+            def build(output, *flags):
+                args = ["package-release.py", "--output", str(output), "--base", str(base), "--reranker", str(reranker), *flags]
+                with patch.object(sys, "argv", args):
+                    package.main()
+
+            fake_reranker = types.SimpleNamespace(configuration=lambda _: {"status": "ready"})
+            with patch.object(package, "ROOT", repo), patch.dict(sys.modules, {"reranker": fake_reranker}), \
+                 patch.object(package.subprocess, "run", side_effect=run):
+                dependency("1.0.0")
+                previous = root / "previous"
+                build(previous)
+                retired.unlink()
+                dependency("2.0.0")
+                with patch.object(sys, "stderr", io.StringIO()), self.assertRaises(SystemExit) as rejected:
+                    build(previous, "--refresh-code")
+                self.assertEqual(rejected.exception.code, 2)
+                with self.assertRaisesRegex(RuntimeError, "new output directory"):
+                    build(previous)
+                current = root / "current"
+                build(current)
+
+            manifest = audit.audit_files(current)
+            self.assertFalse((current / "dist/retired.js").exists())
+            self.assertNotIn("dist/retired.js", {item["path"] for item in manifest["files"]})
+            self.assertTrue((previous / "dist/retired.js").is_file())
+            self.assertEqual(json.loads((previous / "node_modules/fixture-dependency/package.json").read_text())["version"], "1.0.0")
+            self.assertEqual(json.loads((current / "node_modules/fixture-dependency/package.json").read_text())["version"], "2.0.0")
+            self.assertEqual((current / "package-lock.json").read_bytes(), (repo / "package-lock.json").read_bytes())
+            installs = [command for command in commands if command[0] == "npm.cmd"]
+            self.assertEqual(len(installs), 2)
+            self.assertTrue(all(command[1:3] == ["ci", "--omit=dev"] for command in installs))
 
     def test_existing_published_archive_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:

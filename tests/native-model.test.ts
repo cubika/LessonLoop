@@ -16,10 +16,6 @@ function fixture() {
       operationId = "op";
       return { operation_id: operationId, mental_model_id: "model" };
     },
-    async cancelModelSubmission() {
-      calls.push("close");
-      return { submission_canceled: true, operation_id: operationId ?? null };
-    },
     async operation(): ReturnType<HindsightEngine["operation"]> {
       calls.push("poll");
       return { operation_id: "op", status: "pending" };
@@ -146,35 +142,6 @@ test("Transient lookup and result failures propagate without creating a replacem
   };
   await assert.rejects(f.run({ operationId: "op" }), /read timeout/);
   assert.deepEqual(f.calls, []);
-});
-
-test("Legacy missing requests fail only after the native submission is closed", async () => {
-  const f = fixture();
-  assert.deepEqual(await f.run({ query: undefined }), {
-    status: "failed",
-    reason: "native_request_unavailable",
-  });
-  assert.deepEqual(f.calls, ["lookup", "close"]);
-});
-
-test("Closing a legacy submission recovers a concurrently accepted operation", async () => {
-  const f = fixture();
-  f.engine.cancelModelSubmission = async () => ({
-    submission_canceled: true,
-    operation_id: "late-op",
-  });
-  assert.deepEqual(await f.run({ query: undefined }), { status: "waiting" });
-  assert.deepEqual(f.remembered, ["late-op"]);
-  assert.deepEqual(f.calls, ["lookup", "save", "poll"]);
-});
-
-test("An unconfirmed legacy submission closure remains retryable", async () => {
-  const f = fixture();
-  f.engine.cancelModelSubmission = async () => {
-    throw new Error("close timeout");
-  };
-  await assert.rejects(f.run({ query: undefined }), /close timeout/);
-  assert.deepEqual(f.remembered, []);
 });
 
 test("Frozen prompts are rebuilt only when an operation needs submission", async () => {

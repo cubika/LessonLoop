@@ -94,15 +94,6 @@ export class HindsightEngine {
       remaining: Record<string, number>;
     }>("erase-bank", { bank_id: bankId, generation });
   }
-  async cancelRetainSubmission(scopeId: string, operationId: string) {
-    return this.productCall<{
-      submission_canceled: boolean;
-      operation_status: string;
-    }>("cancel-retain-submission", {
-      bank_id: this.bank(scopeId),
-      operation_id: operationId,
-    });
-  }
   async drainRegisteredBank(bankId: string) {
     return this.productCall<{ drained: boolean; remaining: number }>(
       "drain-bank",
@@ -196,19 +187,15 @@ export class HindsightEngine {
         throw new Error("support_readback_failed");
     }
   }
-  async retain(sources: Source[], operationId: string, version = 1) {
+  async retain(sources: Source[], operationId: string) {
     const scopeId = sources[0]!.scopeId;
     const contents = sources.map((source) => ({
       content: source.segment!.text,
       context: JSON.stringify({
-        ...(version === 0
-          ? source.segment
-          : {
-              role: source.segment!.role,
-              locator: source.segment!.locator,
-              author: source.segment!.author,
-              observedAt: source.segment!.observedAt,
-            }),
+        role: source.segment!.role,
+        locator: source.segment!.locator,
+        author: source.segment!.author,
+        observedAt: source.segment!.observedAt,
         fingerprint: source.id,
         context: source.context,
       }),

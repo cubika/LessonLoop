@@ -175,7 +175,6 @@ def main():
     parser.add_argument("--base", type=Path, default=ROOT / ".local-validation/bundle-dev")
     parser.add_argument("--reranker", type=Path, default=ROOT / ".local-validation/reranker-prepared")
     parser.add_argument("--version", default="0.1.0-alpha.2")
-    parser.add_argument("--refresh-code", action="store_true")
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--postgres-archive", type=Path, help="Optional separate ZIP of the fixed PostgreSQL runtime")
     parser.add_argument("--release-dir", type=Path, help="New directory for both ZIPs, install.ps1, dependencies.ps1, documentation and checksums")
@@ -192,23 +191,16 @@ def main():
             raise RuntimeError("Archive must use a new path outside the product output")
     if args.archive and args.postgres_archive and args.archive.resolve() == args.postgres_archive.resolve():
         raise RuntimeError("Product and PostgreSQL archives need separate paths")
-    if not args.refresh_code:
-        if output.exists():
-            raise RuntimeError("Choose a new output directory")
-        output.mkdir(parents=True)
-        shutil.copyfile(ROOT / "package.json", output / "package.json")
-        shutil.copyfile(ROOT / "package-lock.json", output / "package-lock.json")
-        result = subprocess.run(["npm.cmd", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=output, check=False)
-        if result.returncode:
-            raise RuntimeError("Production Node dependency installation failed")
-    elif any((output / name).exists() for name in ["python", "node", "postgres", "models"]):
-        raise RuntimeError("Cannot refresh a bundled-runtime release; choose a new product output")
-    elif not (output / "node_modules").is_dir():
-        raise RuntimeError("Prepared product files missing")
-    for name in ["distribution", "dist", "config", "third-party"]:
-        copy_tree(ROOT / name, output / name)
+    if output.exists():
+        raise RuntimeError("Choose a new output directory")
+    output.mkdir(parents=True)
     shutil.copyfile(ROOT / "package.json", output / "package.json")
     shutil.copyfile(ROOT / "package-lock.json", output / "package-lock.json")
+    result = subprocess.run(["npm.cmd", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=output, check=False)
+    if result.returncode:
+        raise RuntimeError("Production Node dependency installation failed")
+    for name in ["distribution", "dist", "config", "third-party"]:
+        copy_tree(ROOT / name, output / name)
     for name in ["third-party/flashrank"]:
         copy_tree(args.reranker / name, output / name)
     sys.path.insert(0, str(ROOT / "distribution"))

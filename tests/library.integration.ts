@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/playbook-engine.js";
-import { dispatch } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
 import { identity, digest, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
@@ -201,7 +200,6 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
       taskRef: task.taskRef,
       playbookId: m.id,
       revision: m.revision,
-      requestId: "after-observation",
     });
     assert.deepEqual(refreshed, prepared);
     assert.equal(f.engine.calls, 0);
@@ -271,7 +269,6 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       taskRef: task.taskRef,
       playbookId: m.id,
       revision: m.revision,
-      requestId: "first",
     };
     const first = await f.core.prepare(f.host, input);
     const initialFeedback = (await new Effects(store).cases([f.scope])).find(
@@ -287,10 +284,7 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       },
     ]);
     const restarted = new CoreService(store, f.engine);
-    assert.deepEqual(
-      await restarted.prepare(f.host, { ...input, requestId: "again" }),
-      first,
-    );
+    assert.deepEqual(await restarted.prepare(f.host, input), first);
     assert.deepEqual(await restarted.prepare(agent, input), first);
     const records = await new Effects(store).cases([f.scope]);
     assert.equal(records.length, 1);

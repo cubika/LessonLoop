@@ -326,7 +326,6 @@ export async function productContext(
         playbookId: playbook.id,
         revision: playbook.revision,
         taskRef: task.taskRef,
-        requestId: "evaluation",
       })
     : null;
   const playbookAvailable =

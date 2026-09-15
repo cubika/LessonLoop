@@ -6,12 +6,12 @@
 
 | 文件 | 实际作用 |
 |---|---|
-| lib/experience.ts | Experience子集的字段与确定性适用性检查，不推断主张真实性 |
+| ../src/domain/experience.ts | 产品 Experience 字段与适用性规则，测试直接使用这份实现 |
 | fixtures/experience.ts | 配套手写状态和适用性样本 |
 | lib/task-runner.ts、fixtures/tasks.ts | 两个生成文件/手写反例任务，依据实际文件和检查结果判断 |
 | lib/model-client.ts | 通用模型调用辅助，尚未连接完整方法学习流程 |
 
-这些代码是开发参考，不是正式核心。产品合同以[当前设计](../docs/README.md)为准，测试数量不等于验收覆盖率。
+评测工具用于开发验证，Experience 规则直接引用产品核心。产品合同以[当前设计](../docs/README.md)为准，测试数量不等于验收覆盖率。
 
 ## 材料来源与划分
 

@@ -1,8 +1,7 @@
-import { migrateJobPayloads } from "./job-payload-migration.js";
 import pg from "pg";
-import { migrateFeedback } from "./feedback-migration.js";
 import { randomUUID } from "node:crypto";
 import { digest, playbookSchema, type Playbook } from "../domain/schema.js";
+import { experienceSchema } from "../domain/experience.js";
 import {
   splitPlaybook,
   type PlaybookContentStore,
@@ -87,6 +86,8 @@ export class Transaction {
   async put(entry: Entry, expected: number | null): Promise<void> {
     if (entry.revision !== (expected === null ? 1 : expected + 1))
       throw new Conflict("revision_must_increment");
+    if (entry.kind === "experience")
+      entry = { ...entry, value: experienceSchema.parse(entry.value) };
     if (
       ["completed", "failed", "canceled"].includes(String(entry.value.status))
     ) {
@@ -250,8 +251,6 @@ export class ProductStore {
       );
       if (versions.rows.length !== 1 || versions.rows[0].version !== 3)
         throw new Error("incompatible_product_schema");
-      await migrateFeedback(this.owner);
-      await migrateJobPayloads(this.owner);
       this.ready = true;
     } catch (error) {
       if (this.owner) {

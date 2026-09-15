@@ -31,7 +31,6 @@ export const conditionSchema = z
     (v) => !v.match || v.text === matchText(v.match),
     "A match condition must use its canonical text; use a text-only condition for natural language",
   );
-export type Condition = z.infer<typeof conditionSchema>;
 export const contextSchema = z
   .record(text(64), z.union([text(128), z.array(text(128)).min(1).max(4)]))
   .refine((v) => Object.keys(v).length <= 32);
@@ -167,7 +166,7 @@ export const playbookSchema = playbookBodySchema
   .superRefine((m, ctx) => {
     const fail = (message: string) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, message });
-    if (byteSize(m) > 32768) fail("Playbook exceeds 32 KiB");
+    if (contentByteSize(m) > 32768) fail("Playbook content exceeds 32 KiB");
     usageErrors(m).forEach(fail);
     const positions = new Map(m.steps.map((s, i) => [s.stepId, i]));
     if (positions.size !== m.steps.length || positions.has("stop"))
@@ -190,6 +189,22 @@ export const playbookSchema = playbookBodySchema
 export type Playbook = z.infer<typeof playbookSchema>;
 export function byteSize(value: unknown) {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+// Mutable control metadata has its own field limits and must not block a hold.
+export function contentByteSize(value: {
+  review?: unknown;
+  state: string;
+  revision: number;
+  updatedAt: string;
+}) {
+  const {
+    review: _review,
+    state: _state,
+    revision: _revision,
+    updatedAt: _updatedAt,
+    ...content
+  } = value;
+  return byteSize(content);
 }
 export function identity(scopeId: string) {
   const now = new Date().toISOString();

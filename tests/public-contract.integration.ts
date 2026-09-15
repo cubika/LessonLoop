@@ -6,10 +6,224 @@ import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { dispatch } from "../src/core/server.js";
-import { identity, playbookSchema } from "../src/domain/schema.js";
+import {
+  identity,
+  playbookSchema,
+  contentByteSize,
+  matchText,
+} from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
+
+test("User corrections preserve full text while keeping held objects valid", async () => {
+  const store = new ProductStore(url);
+  await store.open(true);
+  try {
+    const scopeId = randomUUID();
+    const user = {
+      id: randomUUID(),
+      channel: "user" as const,
+      scopes: [scopeId],
+    };
+    const core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    for (const correctionText of [
+      "x".repeat(513),
+      "汉".repeat(171),
+      "汉".repeat(2048),
+      "",
+    ]) {
+      const fingerprint = "a".repeat(64);
+      const experience = experienceSchema.parse({
+        ...identity(scopeId),
+        conclusion: "The observed check passed",
+        purpose: "fact",
+        applicability: "general",
+        conditions: [],
+        exceptions: [],
+        topics: [],
+        entities: [],
+        basis: "observed",
+        assessment: "supported",
+        evidence: [
+          {
+            excerpt: "Check passed",
+            role: "tool",
+            relation: "supports",
+            fingerprint,
+          },
+        ],
+        derivedFrom: [],
+        sourceFingerprints: [fingerprint],
+        state: "active",
+      });
+      const playbook = playbookSchema.parse({
+        ...identity(scopeId),
+        title: "Check the output",
+        goal: "Verify the result",
+        topics: [],
+        applicability: "general",
+        conditions: [],
+        exceptions: [],
+        state: "active",
+        steps: [
+          { stepId: "s1", instruction: "Run the check", supportIndexes: [0] },
+        ],
+        completionChecks: [{ text: "Check passed" }],
+        stopConditions: [],
+        supportRefs: [{ kind: "experience", id: experience.id, revision: 1 }],
+        change: { kind: "create", summary: "Observed check", predecessors: [] },
+      });
+      for (const [kind, value] of [
+        ["experience", experience],
+        ["playbook", playbook],
+      ] as const) {
+        await store.transaction((tx) =>
+          tx.put({ kind, id: value.id, revision: 1, scopeId, value }, null),
+        );
+        const receipt = await core.feedback(user, {
+          target: { kind, id: value.id, revision: 1 },
+          rating: "incorrect",
+          correctionText,
+        });
+        assert.equal(receipt.accepted, true);
+        assert.equal(receipt.previousUse, "suppressed");
+        const stored = await core.inspect(user, kind, value.id);
+        const held =
+          kind === "playbook"
+            ? playbookSchema.parse(stored)
+            : experienceSchema.parse(stored);
+        assert.equal(held.state, "held");
+        assert.ok(Buffer.byteLength(held.review!.question, "utf8") <= 512);
+        await store.transaction(async (tx) => {
+          const control = await tx.get<any>("control", value.id);
+          assert.equal(control.correctionText, correctionText);
+          const feedback = (await tx.list<any>("feedback", [scopeId])).find(
+            (row) => row.target.id === value.id,
+          );
+          assert.equal(feedback.correctionText, correctionText);
+        });
+      }
+    }
+  } finally {
+    await store.close();
+  }
+});
+test("Full content budgets still allow users to hold experiences and playbooks", async () => {
+  const store = new ProductStore(url);
+  await store.open(true);
+  try {
+    const scopeId = randomUUID();
+    const user = {
+      id: randomUUID(),
+      channel: "user" as const,
+      scopes: [scopeId],
+    };
+    const core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    const roots = Array.from({ length: 32 }, (_, i) =>
+      i.toString(16).padStart(64, "0"),
+    );
+    const match = {
+      key: "k".repeat(64),
+      values: ["v".repeat(100), "w".repeat(100), "x".repeat(100)],
+    };
+    const experience = {
+      ...identity(scopeId),
+      id: "i".repeat(128),
+      conclusion: "c".repeat(2048),
+      purpose: "fact",
+      applicability: "conditional",
+      conditions: Array(4).fill({ text: matchText(match), match }),
+      exceptions: Array(4).fill({ text: matchText(match), match }),
+      topics: Array(8).fill("t".repeat(64)),
+      entities: Array(16).fill("e".repeat(128)),
+      basis: "observed",
+      assessment: "supported",
+      sourceFingerprints: roots,
+      derivedFrom: Array.from({ length: 8 }, (_, i) => ({
+        id: String(i).repeat(128),
+        revision: 1,
+      })),
+      evidence: [
+        {
+          excerpt: "a".repeat(512),
+          role: "tool",
+          relation: "supports",
+          fingerprint: roots[0],
+          locator: "l".repeat(256),
+          author: "a".repeat(128),
+        },
+      ],
+      state: "active",
+    };
+    const gap = 16384 - contentByteSize(experience);
+    assert.ok(gap > 0 && gap < 2048);
+    experience.conclusion =
+      String.fromCharCode(10).repeat(gap) + "c".repeat(2048 - gap);
+    const e = experienceSchema.parse(experience);
+    const playbook = {
+      ...identity(scopeId),
+      title: "Review large content",
+      goal: "Retain control",
+      topics: [],
+      applicability: "general",
+      conditions: [],
+      exceptions: [],
+      state: "active",
+      steps: Array.from({ length: 12 }, (_, i) => ({
+        stepId: "s" + i,
+        instruction: "i".repeat(1024),
+        rationale: "r".repeat(512),
+        supportIndexes: [0],
+      })),
+      completionChecks: [{ text: "Check output" }],
+      stopConditions: [],
+      supportRefs: [{ kind: "experience", id: e.id, revision: 1 }],
+      change: { kind: "create", summary: "c".repeat(1024), predecessors: [] },
+    };
+    let bookGap = 32768 - contentByteSize(playbook);
+    assert.ok(bookGap > 0);
+    for (const step of playbook.steps) {
+      const count = Math.min(bookGap, step.instruction.length);
+      step.instruction =
+        String.fromCharCode(10).repeat(count) + step.instruction.slice(count);
+      bookGap -= count;
+    }
+    assert.equal(bookGap, 0);
+    const b = playbookSchema.parse(playbook);
+    for (const [kind, value, budget] of [
+      ["experience", e, 16384],
+      ["playbook", b, 32768],
+    ] as const) {
+      assert.equal(contentByteSize(value), budget);
+      await store.transaction((tx) =>
+        tx.put({ kind, id: value.id, revision: 1, scopeId, value }, null),
+      );
+      await core.feedback(user, {
+        target: { kind, id: value.id, revision: 1 },
+        rating: "incorrect",
+        correctionText: "c".repeat(512),
+      });
+      const saved = await core.inspect(user, kind, value.id);
+      const held =
+        kind === "experience"
+          ? experienceSchema.parse(saved)
+          : playbookSchema.parse(saved);
+      assert.equal(held.state, "held");
+      assert.equal(held.review?.question, "c".repeat(512));
+      assert.equal(contentByteSize(held), budget);
+    }
+  } finally {
+    await store.close();
+  }
+});
+
 test("Public resources preserve source identity, work provenance and playbook feedback", async () => {
   const store = new ProductStore(url);
   await store.open(true);

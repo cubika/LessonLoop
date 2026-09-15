@@ -6,6 +6,7 @@ import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import {
   identity,
+  digest,
   playbookSchema,
   type Playbook,
 } from "../src/domain/schema.js";
@@ -359,8 +360,8 @@ test("New control invalidates a pending review; unreadable playbooks do not brea
 test("Unknown successful writes retain every possibly stored source until deletion is confirmed", async () => {
   const f = await fixture();
   try {
-    const sourceB = `source-b-${f.scope}`,
-      sourceC = `source-c-${f.scope}`;
+    const sourceB = digest(["source-b", f.scope]),
+      sourceC = digest(["source-c", f.scope]);
     const b = {
       ...f.exp,
       ...identity(f.scope),
@@ -556,36 +557,6 @@ test("Revision review persists a recovered ID, survives result-read failure, and
   assert.equal((await f.published()).title, "Recovered title");
 });
 
-for (const hasOperation of [false, true]) {
-  test(
-    "Legacy revision review without frozen request " +
-      (hasOperation ? "recovers its operation" : "closes before failing"),
-    async (t) => {
-      const f = await reviewFixture(t);
-      const accepted = await f.revise("Legacy title");
-      await f.store.transaction(async (tx) => {
-        const old = await tx.get<any>("revision_review", accepted.reviewId);
-        await tx.put(
-          entry("revision_review", {
-            ...old,
-            revision: old.revision + 1,
-            status: "running",
-          }),
-          old.revision,
-        );
-        if (hasOperation) f.engine.operations.set(old.modelId, "legacy-op");
-      });
-      await f.advance();
-      const review = await f.review(accepted.reviewId);
-      assert.equal(review.status, hasOperation ? "completed" : "failed");
-      if (!hasOperation)
-        assert.equal(review.reason, "native_request_unavailable");
-      assert.equal(f.engine.submissions.length, 0);
-      assert.equal(review.candidate, undefined);
-    },
-  );
-}
-
 test("A queued revision invalidated before submission needs no native operation", async (t) => {
   const f = await reviewFixture(t);
   const accepted = await f.revise("Obsolete");
@@ -630,12 +601,17 @@ for (const stage of ["compose", "assess"] as const) {
         status: "running",
         sourceIds: [f.source.id],
         sourceRefs: [f.source.id, "extra-support"],
-        operationId: "retain-op",
-        modelId: "legacy-model",
-        assessmentId: "legacy-assessment",
+        modelId: "current-model",
+        assessmentId: "current-assessment",
         payload: {
-          modelQuery: "Frozen compose request",
-          assessmentQuery: "Frozen assessment request",
+          inputSources: [f.source],
+          candidate: {
+            workView: null,
+            experiences: [],
+            playbook: null,
+            splitPlaybooks: null,
+            decisions: [],
+          },
         },
         engineOperations: ["retain-op"],
         results: [],

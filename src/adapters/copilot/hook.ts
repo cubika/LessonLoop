@@ -204,20 +204,6 @@ export async function handleHook(
         throw new Error("host_session_restart_required");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const legacy = join(
-        config.stateRoot,
-        `${digest([cwd, event.sessionId])}.json`,
-      );
-      if (
-        await stat(legacy).then(
-          () => true,
-          (e) => {
-            if (e.code === "ENOENT") return false;
-            throw e;
-          },
-        )
-      )
-        throw new Error("host_session_restart_required");
     }
     const save = async () => {
       await writeFile(`${path}.tmp`, JSON.stringify(state));

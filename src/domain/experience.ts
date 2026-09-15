@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { conditionSchema, digest } from "./schema.js";
+import { conditionSchema, digest, contentByteSize } from "./schema.js";
 
 const byteText = (max: number) =>
   z
@@ -72,8 +72,8 @@ export const experienceSchema = z
   .superRefine((record, context) => {
     const fail = (message: string) =>
       context.addIssue({ code: z.ZodIssueCode.custom, message });
-    if (Buffer.byteLength(JSON.stringify(record), "utf8") > 16384)
-      fail("Experience exceeds 16 KiB");
+    if (contentByteSize(record) > 16384)
+      fail("Experience content exceeds 16 KiB");
     if (Buffer.byteLength(JSON.stringify(record.evidence), "utf8") > 2048)
       fail("Evidence exceeds 2 KiB");
     if (!record.evidence.length && !record.derivedFrom.length)

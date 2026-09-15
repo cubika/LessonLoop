@@ -15,10 +15,11 @@ export async function startUiFixture() {
         outcomeText: "",
         feedback: [
           {
-            playbookId: "method-ui",
+            playbookId: "playbook-ui",
             revision: 2,
             delivered: null,
             userRating: "helpful",
+            ratingText: "已核对输出",
           },
         ],
       },

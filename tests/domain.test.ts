@@ -13,7 +13,6 @@ import {
   type Eligibility,
 } from "../src/domain/prepare.js";
 import { experienceSchema } from "../src/domain/experience.js";
-import { experienceSchema as evaluationSchema } from "../evals/lib/experience.js";
 import { outputJsonSchema } from "../src/core/learning.js";
 import { exportPlaybook } from "../src/domain/export.js";
 
@@ -45,20 +44,21 @@ const experience = experienceSchema.parse({
   sourceFingerprints: [fp],
   state: "active",
 });
-test("analysis labels are optional and existing labels remain compatible", () => {
-  for (const schema of [experienceSchema, evaluationSchema]) {
-    assert.equal(schema.safeParse(experience).success, true);
-    for (const level of ["L1", "L2", "L3", "L4", "L5"])
-      assert.equal(schema.safeParse({ ...experience, level }).success, true);
+test("analysis labels are optional and limited to defined levels", () => {
+  assert.equal(experienceSchema.safeParse(experience).success, true);
+  for (const level of ["L1", "L2", "L3", "L4", "L5"])
     assert.equal(
-      schema.safeParse({ ...experience, level: "L6" }).success,
-      false,
+      experienceSchema.safeParse({ ...experience, level }).success,
+      true,
     );
-    assert.equal(
-      schema.safeParse({ ...experience, evidence: [] }).success,
-      false,
-    );
-  }
+  assert.equal(
+    experienceSchema.safeParse({ ...experience, level: "L6" }).success,
+    false,
+  );
+  assert.equal(
+    experienceSchema.safeParse({ ...experience, evidence: [] }).success,
+    false,
+  );
   const properties = outputJsonSchema.properties as Record<string, any>;
   assert.equal(properties.experiences.items.required.includes("level"), false);
   for (const support of [experience, { ...experience, level: "L4" as const }]) {
@@ -152,7 +152,7 @@ test("playbook rejects backward branches, dangling checks and support", () => {
 });
 test("complete guidance preserves branches and scoped checks without task observations", () => {
   const { m, d } = setup();
-  const r = preparePlaybook(m, { callerId: "c", taskRef: "t", revision: 1 }, d);
+  const r = preparePlaybook(m, { revision: 1 }, d);
   assert.equal(r.status, "guidance");
   assert.deepEqual(r.steps, m.steps);
   assert.deepEqual(r.completionChecks, m.completionChecks);
@@ -168,7 +168,7 @@ test("unknown applicability returns all boundaries for the agent to check", () =
   m.conditions = [{ text: "The task uses the observed generator" }];
   m.exceptions = [{ text: "The output is maintained by another tool" }];
   m.stopConditions = [{ text: "The generator cannot be identified" }];
-  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  const request = { revision: 1 };
   for (let i = 0; i < 12; i++) {
     const r = preparePlaybook(m, request, d);
     assert.equal(r.status, "guidance");
@@ -181,7 +181,7 @@ test("unknown applicability returns all boundaries for the agent to check", () =
 
 test("repeated preparation checks current revisions, permissions and supporting sources", () => {
   const { m, d } = setup();
-  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  const request = { revision: 1 };
   assert.equal(preparePlaybook(m, request, d).status, "guidance");
   assert.equal(
     preparePlaybook(m, { ...request, revision: 2 }, d).status,
@@ -224,7 +224,7 @@ test("oversized guidance requires explicit expansion without dropping branches o
     supportIndexes: [0],
   }));
   m.completionChecks = [{ text: "Verify actual output" }];
-  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  const request = { revision: 1 };
   assert.deepEqual(preparePlaybook(m, request, d), {
     status: "requires_expansion",
   });

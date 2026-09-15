@@ -48,7 +48,7 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
         schedule.revision,
       );
     });
-    const task = await core.startTask(host, scope);
+    await core.startTask(host, scope);
     const result = await reviews.maintain([scope], now + 1000);
     assert.equal(result.created.length, 1);
     assert.equal(

@@ -63,38 +63,8 @@ test("Retain sends source text once while preserving provenance", async () => {
   assert.equal(context.fingerprint, source.id);
 });
 
-test("Old extraction retries preserve their original request format", async () => {
-  const engine = new HindsightEngine("http://127.0.0.1:19888", "unused").forJob(
-    randomUUID(),
-  );
-  const original = globalThis.fetch;
-  const operationId = randomUUID();
-  let context = "";
-  globalThis.fetch = async (_url, init) => {
-    context = JSON.parse(String(init!.body)).contents[0].context;
-    return new Response(
-      JSON.stringify({ success: true, async: true, operation_id: operationId }),
-      { status: 200 },
-    );
-  };
-  try {
-    await engine.retain([source], operationId, 0);
-  } finally {
-    globalThis.fetch = original;
-  }
-  assert.equal(
-    context,
-    JSON.stringify({
-      ...source.segment,
-      fingerprint: source.id,
-      context: source.context,
-    }),
-  );
-});
-
 test("Frozen inputs regenerate identical generation, assessment and repair requests", () => {
   const payload: JobPayload = {
-    promptVersion: 1,
     inputSources: [source],
     comparisonPlaybooks: [],
     retainedSupport: [],
@@ -110,8 +80,8 @@ test("Frozen inputs regenerate identical generation, assessment and repair reque
     };
     const roundTrip = JSON.parse(canonical(stored));
     assert.equal(jobQuery(roundTrip, stage), query);
-    assert.equal(stored.payload.modelQuery, undefined);
-    assert.equal(stored.payload.assessmentQuery, undefined);
+    assert.equal("modelQuery" in stored.payload, false);
+    assert.equal("assessmentQuery" in stored.payload, false);
     assert.equal(
       JSON.stringify(stored).split(source.segment!.text).length - 1,
       1,
@@ -135,7 +105,7 @@ test("Frozen inputs regenerate identical generation, assessment and repair reque
   assert.ok(query.includes("REJECTED PROPOSAL (not evidence)"));
   assert.equal(jobQuery(JSON.parse(canonical(repair)), "compose"), query);
   assert.throws(
-    () => jobQuery({ payload: { ...payload, promptVersion: 999 } }, "compose"),
-    /job_prompt_version_unsupported/,
+    () => jobQuery({ payload: {} }, "compose"),
+    /job_prompt_inputs_missing/,
   );
 });

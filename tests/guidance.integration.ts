@@ -19,6 +19,7 @@ import {
 import { experienceSchema } from "../src/domain/experience.js";
 import { handleHook } from "../src/adapters/copilot/hook.js";
 import { Effects } from "../src/core/effects.js";
+import { tokenCount } from "../src/domain/prepare.js";
 
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
@@ -177,6 +178,71 @@ async function fixture() {
   }
   return { store, scopeId, user, agent, engine, core, call, put, update, seed };
 }
+
+test("Search skips oversized summaries and fills the result budget from later matches", async () => {
+  const f = await fixture();
+  try {
+    const { m } = await f.seed();
+    const oversized = Array.from({ length: 4 }, (_, index) =>
+      playbookSchema.parse({
+        ...m,
+        id: "oversized-" + index,
+        applicability: "conditional",
+        conditions: Array.from({ length: 4 }, () => ({
+          text: "word ".repeat(100),
+        })),
+        exceptions: Array.from({ length: 4 }, () => ({
+          text: "word ".repeat(100),
+        })),
+      }),
+    );
+    const short = [
+      m,
+      ...Array.from({ length: 2 }, (_, index) =>
+        playbookSchema.parse({ ...m, id: "short-" + index }),
+      ),
+    ];
+    for (const value of [...oversized, ...short.slice(1)]) {
+      await f.put("playbook", value);
+      await f.put("projection", {
+        id: value.id,
+        revision: 1,
+        scopeId: f.scopeId,
+        objectKind: "playbook",
+        objectRevision: 1,
+        confirmed: true,
+      });
+    }
+    await f.core.syncProjections([f.scopeId]);
+    const order = [...oversized, ...short].map((value) => value.id);
+    const search = f.engine.searchPublished.bind(f.engine);
+    f.engine.searchPublished = async (scope, query, refs, kind) => {
+      const hits = await search(scope, query, refs, kind);
+      return kind === "experience"
+        ? hits
+        : hits.sort(
+            (a: any, b: any) =>
+              order.indexOf(a.metadata.product_id) -
+              order.indexOf(b.metadata.product_id),
+          );
+    };
+    assert.ok(
+      tokenCount(oversized[0]!.conditions) +
+        tokenCount(oversized[0]!.exceptions) >
+        800,
+    );
+    const result = await f.core.search(f.agent, "generated");
+    assert.deepEqual(
+      result.results.map((row) => row.playbook.id),
+      short.map((value) => value.id),
+    );
+    const guidance = await f.call({ query: "generated" });
+    assert.equal(guidance.playbooks[0].playbook.id, m.id);
+    assert.equal(guidance.playbooks[0].status, "guidance");
+  } finally {
+    await f.store.close();
+  }
+});
 
 test("Guidance creates retryable tasks and enforces ownership, scope and lifetime without a hook", async () => {
   const f = await fixture();

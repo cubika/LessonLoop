@@ -93,6 +93,17 @@ export async function runUiLibraryChecks() {
       elements = new Map();
     for (const match of html.matchAll(/<([a-z]+)[^>]* id="([^"]+)"/g))
       elements.set(match[2], new Element(match[1]));
+    for (const match of html.matchAll(
+      /<select id="([^"]+)">([\s\S]*?)<\/select>/g,
+    ))
+      for (const option of match[2].matchAll(
+        /<option value="([^"]*)">([^<]*)<\/option>/g,
+      )) {
+        const element = new Element("option");
+        element.value = option[1];
+        element.textContent = option[2];
+        elements.get(match[1]).append(element);
+      }
     const nav = [...html.matchAll(/data-view="([^"]+)"/g)].map((match) => {
       const e = new Element("button");
       e.dataset.view = match[1];
@@ -198,7 +209,10 @@ export async function runUiLibraryChecks() {
     assert.equal(revise.input.body.steps[1].instruction, "核对新步骤");
     assert.equal(revise.input.body.steps[0].choices[0].next, "stop");
     checks.push("add reorder branch and reviewed revision");
-    assert.equal(walk($("detail")).some((e) => e.textContent === "查看历史"), false);
+    assert.equal(
+      walk($("detail")).some((e) => e.textContent === "查看历史"),
+      false,
+    );
     checks.push("current method only, no historical restore");
     await click($("detail"), "关联宿主任务");
     let taskPanel = $("detail").children.findLast((e) =>
@@ -207,9 +221,11 @@ export async function runUiLibraryChecks() {
     await click(taskPanel, "获取完整方法");
     assert.ok(taskPanel.textContent.includes("适用条件：使用生成器维护文件"));
     assert.ok(taskPanel.textContent.includes("例外：外部系统只读文件"));
-    assert.ok(taskPanel.textContent.includes("生成文件 → s2"));
+    assert.ok(taskPanel.textContent.includes("生成文件 → 步骤 2"));
     assert.ok(taskPanel.textContent.includes("手工文件 → 停止"));
-    assert.ok(taskPanel.textContent.includes("完成检查（s2）：字段符合预期"));
+    assert.ok(
+      taskPanel.textContent.includes("完成检查（步骤 2）：字段符合预期"),
+    );
     assert.ok(taskPanel.textContent.includes("停止条件（全局）：来源不明"));
     assert.equal(
       requests.findLast((r) => r.operation === "preparePlaybook").input
@@ -240,7 +256,7 @@ export async function runUiLibraryChecks() {
       "source-ui",
     );
     checks.push("source result links current revision");
-    await run("showRecord('experience','experience-ui')");
+    await run("showExperience('experience-ui')");
     assert.doesNotMatch($("record-detail").textContent, /undefined|L[1-5]/);
     await click($("record-detail"), "补充证据并审查");
     await input($("record-detail"), "实际原文或观察", "实际文件包含 auditTag");
@@ -581,6 +597,254 @@ export async function runUiLibraryChecks() {
     assert.doesNotMatch(taskCard(outcomeTask.id).textContent, /会话结果：失败/);
     checks.push(
       "unavailable assessment remains distinct from a failed task result",
+    );
+    assert.deepEqual(
+      $("record-state").options.map((o) => o.value),
+      ["", "active", "held", "disabled"],
+    );
+    $("record-state").value = "active";
+    await run("renderRecords()");
+    assert.match($("record-cards").textContent, /暂无符合条件/);
+    $("record-state").value = "held";
+    await run("renderRecords()");
+    assert.match($("record-cards").textContent, /重新生成后核对字段与扩展/);
+    checks.push("experience status options filter current experience records");
+
+    await run("show('playbook-ui')");
+    await click($("detail"), "查看使用记录");
+    assert.match($("detail").textContent, /任务结果：未知/);
+    assert.match($("detail").textContent, /投递未知 · 评价：有帮助/);
+    assert.match($("detail").textContent, /已核对输出/);
+    checks.push(
+      "playbook usage renders the TaskFeedback contract without event records",
+    );
+
+    const baselineFetch = context.fetch;
+    context.fetch = async (path, options) => {
+      const response = await baselineFetch(path, options);
+      if (JSON.parse(options.body).operation !== "inspectPlaybook")
+        return response;
+      const payload = await response.json();
+      payload.result.steps = [
+        {
+          stepId: "uuid-first",
+          instruction: "先读来源",
+          supportIndexes: [0],
+          choices: [{ when: { text: "来源明确" }, next: "uuid-second" }],
+        },
+        {
+          stepId: "uuid-second",
+          instruction: "再核对输出",
+          supportIndexes: [0],
+        },
+      ];
+      payload.result.completionChecks = [
+        { text: "输出已读回", stepIds: ["uuid-second"] },
+      ];
+      payload.result.stopConditions = [
+        { text: "来源不明", stepIds: ["uuid-first"] },
+      ];
+      return { ok: true, json: async () => payload };
+    };
+    await run("show('playbook-ui')");
+    assert.match($("detail").textContent, /来源明确 → 步骤 2/);
+    assert.match($("detail").textContent, /完成检查（步骤 2）：输出已读回/);
+    assert.match($("detail").textContent, /停止条件（步骤 1）：来源不明/);
+    assert.doesNotMatch($("detail").textContent, /uuid-first|uuid-second/);
+    context.fetch = baselineFetch;
+    checks.push(
+      "method detail preserves stop conditions and translates step references",
+    );
+
+    await run("show('playbook-ui')");
+    await click($("detail"), "查看依据");
+    await click($("detail"), "为这条经验补充证据");
+    await input($("detail"), "实际原文或观察", "  补充核实观察  ");
+    await click($("detail"), "提交补证");
+    assert.equal(
+      requests.findLast((r) => r.operation === "submitSource").input.segments[0]
+        .text,
+      "补充核实观察",
+    );
+    await click($("detail"), "查询复盘结果");
+    await click($("detail"), "查看最新内容");
+    assert.match($("detail").textContent, /核对生成文件/);
+    checks.push(
+      "supporting experience supplement shares job controls and refreshes its method",
+    );
+
+    let savedSettings = {
+      id: "ui-check",
+      scopeId: "ui-check",
+      revision: 0,
+      learning: false,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    };
+    const settingWrites = [];
+    context.fetch = async (path, options) => {
+      const { operation, input } = JSON.parse(options.body);
+      if (operation === "settings.get")
+        return {
+          ok: true,
+          json: async () => ({ result: [structuredClone(savedSettings)] }),
+        };
+      if (operation === "settings.update")
+        return new Promise((resolve) => settingWrites.push({ input, resolve }));
+      return baselineFetch(path, options);
+    };
+    await run("renderSettings()");
+    const controls = walk($("settings-form")).filter((e) => e.tag === "input");
+    controls[0].checked = true;
+    const saveLearning = controls[0].onchange();
+    assert.ok(controls.every((control) => control.disabled));
+    controls[1].checked = true;
+    await controls[1].onchange();
+    assert.equal(settingWrites.length, 1);
+    assert.equal(controls[1].checked, false);
+    savedSettings = { ...savedSettings, learning: true, revision: 1 };
+    settingWrites[0].resolve({
+      ok: true,
+      json: async () => ({ result: structuredClone(savedSettings) }),
+    });
+    await saveLearning;
+    assert.equal(controls[0].checked, true);
+    assert.ok(controls.every((control) => !control.disabled));
+    controls[1].checked = true;
+    const saveRecommendation = controls[1].onchange();
+    assert.equal(settingWrites[1].input.expectedRevision, 1);
+    settingWrites[1].resolve({
+      ok: false,
+      json: async () => ({ error: "revision_conflict" }),
+    });
+    await saveRecommendation;
+    assert.match($("notice").textContent, /revision_conflict/);
+    assert.equal(controls[1].checked, false);
+    assert.equal(controls[0].checked, true);
+    assert.ok(controls.every((control) => !control.disabled));
+    context.fetch = baselineFetch;
+    checks.push(
+      "settings prevent overlapping writes and roll back a failed save",
+    );
+
+    $("playbook-topic").value = "";
+    $("playbook-state").value = "";
+    await $("search").onsubmit({ preventDefault() {} });
+    const pageWrites = [];
+    context.fetch = async (path, options) => {
+      if (JSON.parse(options.body).operation === "browsePlaybooks")
+        return new Promise((resolve) =>
+          pageWrites.push({
+            finish: () => baselineFetch(path, options).then(resolve),
+            resolve,
+          }),
+        );
+      return baselineFetch(path, options);
+    };
+    const pageButton = button($("playbook-pages"), "下一页");
+    const nextPage = pageButton.click();
+    await pageButton.click();
+    assert.equal(pageWrites.length, 1);
+    assert.equal(pageButton.disabled, true);
+    await pageWrites[0].finish();
+    await nextPage;
+    assert.match($("playbook-pages").textContent, /第 2 页 · 共 14 项/);
+    const previousButton = button($("playbook-pages"), "上一页");
+    const failedPage = previousButton.click();
+    pageWrites[1].resolve({
+      ok: false,
+      json: async () => ({ error: "offline" }),
+    });
+    await failedPage;
+    assert.equal(previousButton.disabled, false);
+    const retryPage = previousButton.click();
+    await pageWrites[2].finish();
+    await retryPage;
+    assert.match($("playbook-pages").textContent, /第 1 页 · 共 14 项/);
+    context.fetch = baselineFetch;
+    checks.push(
+      "pagination rejects duplicate clicks and retries from the same page after failure",
+    );
+
+    const exports = [];
+    context.fetch = async (path, options) => {
+      const { operation, input } = JSON.parse(options.body);
+      if (operation === "reviews.export")
+        return new Promise((resolve) => exports.push({ input, resolve }));
+      return baselineFetch(path, options);
+    };
+    await run(
+      "exportCaseForm(document.getElementById('effect-cases'), { id: 'task-ui' })",
+    );
+    const exportPanel = $("effect-cases").children.at(-1),
+      exportTerms = field(exportPanel, "需要替换的文字（每行一项）"),
+      exportObservations = field(exportPanel, "包含仍保留的工具观察"),
+      previewButton = button(exportPanel, "生成预览");
+    const finishExport = (index, content, contentRevision = "same") =>
+      exports[index].resolve({
+        ok: true,
+        json: async () => ({
+          result: { content, contentRevision, filename: "case.json" },
+        }),
+      });
+    const firstPreview = previewButton.click();
+    exportTerms.value = "secret";
+    exportTerms.oninput();
+    finishExport(0, "secret");
+    await firstPreview;
+    assert.ok(!walk(exportPanel).some((e) => e._text === "下载已预览样本"));
+    assert.doesNotMatch(
+      walk(exportPanel).find((e) => e.tag === "pre").textContent,
+      /secret/,
+    );
+    const olderPreview = previewButton.click(),
+      newerPreview = previewButton.click();
+    finishExport(2, "latest [redacted]");
+    await newerPreview;
+    finishExport(1, "outdated [redacted]");
+    await olderPreview;
+    assert.equal(
+      walk(exportPanel).find((e) => e.tag === "pre").textContent,
+      "latest [redacted]",
+    );
+    assert.equal(
+      walk(exportPanel).filter((e) => e._text === "下载已预览样本").length,
+      1,
+    );
+    checks.push(
+      "export ignores obsolete previews after redaction changes and reordered responses",
+    );
+
+    let downloads = 0;
+    const originalUrl = context.URL;
+    context.URL = {
+      createObjectURL: () => {
+        downloads++;
+        return "blob:fixture";
+      },
+      revokeObjectURL() {},
+    };
+    const pendingDownload = button(exportPanel, "下载已预览样本").click();
+    exportObservations.checked = true;
+    exportObservations.onchange();
+    finishExport(3, "latest [redacted]");
+    await pendingDownload;
+    assert.equal(downloads, 0);
+    const finalPreview = previewButton.click();
+    assert.deepEqual(exports[4].input.redact, ["secret"]);
+    assert.equal(exports[4].input.includeObservations, true);
+    finishExport(4, "current [redacted]");
+    await finalPreview;
+    const finalDownload = button(exportPanel, "下载已预览样本").click();
+    assert.deepEqual(exports[5].input, exports[4].input);
+    finishExport(5, "current [redacted]");
+    await finalDownload;
+    assert.equal(downloads, 1);
+    context.URL = originalUrl;
+    context.fetch = baselineFetch;
+    checks.push(
+      "export cancels a pending download when conditions change and downloads the fresh preview",
     );
     return checks;
   } finally {

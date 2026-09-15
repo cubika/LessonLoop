@@ -77,10 +77,6 @@ class BankConfiguration(BaseModel):
     model_config=ConfigDict(extra="forbid")
     bank_id:str=Field(pattern=r"^lessonloop-(job|support)-[a-f0-9-]{32,36}$")
     mission:str=Field(max_length=4096)
-class RetainCancellation(BaseModel):
-    model_config=ConfigDict(extra="forbid")
-    bank_id:str=Field(pattern=r"^lessonloop-job-[a-f0-9-]{36}$")
-    operation_id:str=Field(pattern=r"^[a-f0-9-]{36}$")
 class ProjectionWrite(BaseModel):
     model_config=ConfigDict(extra="forbid")
     scope_id:str=Field(min_length=1,max_length=128)
@@ -117,9 +113,7 @@ class LessonLoopProduct(HttpExtension):
                                 await connection.execute("SELECT pg_advisory_xact_lock(816026)")
                                 await connection.execute("CREATE SCHEMA IF NOT EXISTS lessonloop_engine")
                                 await connection.execute("CREATE TABLE IF NOT EXISTS lessonloop_engine.model_submissions(bank_id text NOT NULL,model_id text NOT NULL,content_hash text NOT NULL,operation_id text,canceled boolean NOT NULL DEFAULT false,PRIMARY KEY(bank_id,model_id))")
-                                await connection.execute("ALTER TABLE lessonloop_engine.model_submissions ADD COLUMN IF NOT EXISTS canceled boolean NOT NULL DEFAULT false")
                                 await connection.execute("CREATE TABLE IF NOT EXISTS lessonloop_engine.retain_submissions(bank_id text NOT NULL,operation_id text NOT NULL,content_hash text NOT NULL,PRIMARY KEY(bank_id,operation_id))")
-                                await connection.execute("ALTER TABLE lessonloop_engine.retain_submissions ADD COLUMN IF NOT EXISTS canceled boolean NOT NULL DEFAULT false")
                     except BaseException:
                         await candidate.close();raise
                     pool=candidate
@@ -163,8 +157,7 @@ class LessonLoopProduct(HttpExtension):
                     if body.mode=="learning":
                         if not body.operation_id:raise HTTPException(400,"operation_identity_required")
                         content_hash=hashlib.sha256(json.dumps(body.contents,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
-                        previous=await conn.fetchrow("SELECT content_hash,canceled FROM lessonloop_engine.retain_submissions WHERE bank_id=$1 AND operation_id=$2",body.bank_id,body.operation_id)
-                        if previous and previous["canceled"]:raise HTTPException(409,"retain_submission_canceled")
+                        previous=await conn.fetchrow("SELECT content_hash FROM lessonloop_engine.retain_submissions WHERE bank_id=$1 AND operation_id=$2",body.bank_id,body.operation_id)
                         if previous and previous["content_hash"]!=content_hash:raise HTTPException(409,"retain_content_conflict")
                         await conn.execute("INSERT INTO lessonloop_engine.retain_submissions(bank_id,operation_id,content_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",body.bank_id,body.operation_id,content_hash)
                         result=await memory.submit_async_retain(body.bank_id,body.contents,request_context=context,operation_id=body.operation_id)
@@ -172,18 +165,6 @@ class LessonLoopProduct(HttpExtension):
                     await memory.update_bank(body.bank_id,config_updates={"retain_strategies":{"retained_support":{"retain_extraction_mode":"chunks"}},"enable_observations":False,"enable_auto_consolidation":False},request_context=context)
                     _,usage=await memory.retain_batch_async(body.bank_id,body.contents,request_context=context,strategy="retained_support",return_usage=True)
                     return {"success":True,"async":False,"usage":{"input_tokens":usage.input_tokens,"output_tokens":usage.output_tokens}}
-        @router.post("/lessonloop/cancel-retain-submission")
-        async def cancel_retain(body:RetainCancellation,authorization:str=Header(default="")):
-            if not hmac.compare_digest(authorization,"Bearer "+key):raise HTTPException(401,"authentication_required")
-            metadata=await metadata_pool()
-            async with metadata.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute("SET LOCAL lock_timeout='20s'")
-                    await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,816028))",body.bank_id)
-                    if not await conn.fetchval("SELECT EXISTS(SELECT 1 FROM lessonloop.objects WHERE kind='engine_bank' AND id=$1)",body.bank_id):raise HTTPException(403,"bank_not_registered")
-                    await conn.execute("INSERT INTO lessonloop_engine.retain_submissions(bank_id,operation_id,content_hash,canceled) VALUES($1,$2,'',true) ON CONFLICT(bank_id,operation_id) DO UPDATE SET canceled=true",body.bank_id,body.operation_id)
-                    operation=await memory.get_operation_status(body.bank_id,body.operation_id,request_context=RequestContext(api_key=key))
-            return {"submission_canceled":True,"operation_status":operation["status"]}
         def projection_bank(scope):
             return "lessonloop-"+hashlib.sha256(json.dumps(scope,ensure_ascii=False,separators=(",",":")).encode()).hexdigest()[:32]+"-published"
         @router.post("/lessonloop/write-projection")
@@ -241,7 +222,7 @@ class LessonLoopProduct(HttpExtension):
                     context=RequestContext(api_key=key)
                     await memory.delete_bank(body.bank_id,request_context=context)
                     # These optional diagnostic copies have no bank foreign key in 0.9.2.
-                    # New runtime profiles disable them; legacy copies are removed by exact owned bank.
+                    # Remove diagnostic copies for the owned bank before confirming erasure.
                     for table in ["llm_requests","audit_log"]:
                         await conn.execute(f"DELETE FROM hindsight.{table} WHERE bank_id=$1",body.bank_id)
                     await conn.execute("UPDATE lessonloop_engine.model_submissions SET canceled=true WHERE bank_id=$1",body.bank_id)

@@ -76,10 +76,6 @@ article section {
   padding-top: 20px;
   border-top: 1px solid #dce6e0;
 }
-summary {
-  cursor: pointer;
-  padding: 10px 0;
-}
 blockquote {
   border-left: 3px solid #aac8ba;
   margin: 12px 0;
@@ -112,10 +108,6 @@ article {
 .card {
   margin-bottom: 12px;
   cursor: pointer;
-}
-.meta {
-  color: #617b6e;
-  font-size: 13px;
 }
 article {
   min-height: 340px;
@@ -160,8 +152,7 @@ form {
   flex: 0 1 auto;
   padding-bottom: 12px;
 }
-.pagination,
-.actions {
+.pagination {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -190,9 +181,6 @@ button:focus-visible,
 .card:focus-visible {
   outline: 3px solid #3a826e;
   outline-offset: 3px;
-}
-.card.selected {
-  border-color: #3a826e;
 }
 textarea {
   resize: vertical;

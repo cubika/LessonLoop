@@ -3,18 +3,14 @@ import { modelUsage, type OperationUsage } from "./usage.js";
 
 type NativeModelEngine = Pick<
   HindsightEngine,
-  | "findModelOperation"
-  | "createModel"
-  | "cancelModelSubmission"
-  | "operation"
-  | "model"
+  "findModelOperation" | "createModel" | "operation" | "model"
 >;
 
 type NativeModelResult =
   | { status: "waiting" }
   | {
       status: "failed";
-      reason: "native_operation_failed" | "native_request_unavailable";
+      reason: "native_operation_failed";
     }
   | { status: "completed"; output: unknown; usage: OperationUsage | undefined };
 
@@ -25,7 +21,7 @@ export async function advanceNativeModel(
     scopeId: string;
     modelId: string;
     operationId?: string | undefined;
-    query?: string | (() => string) | undefined;
+    query: string | (() => string);
     sourceRefs: string[];
     schema: Record<string, unknown>;
   },
@@ -36,24 +32,15 @@ export async function advanceNativeModel(
     request.operationId ?? (await engine.findModelOperation(scopeId, modelId));
   let submitted = false;
   if (!operationId) {
-    if (request.query !== undefined) {
-      const accepted = await engine.createModel(
-        scopeId,
-        modelId,
-        typeof request.query === "function" ? request.query() : request.query,
-        request.sourceRefs,
-        request.schema,
-      );
-      operationId = accepted.operation_id;
-      submitted = true;
-    } else {
-      // Older records may have no replayable request. Close the submission under
-      // the native lock before failing; an in-flight request may still have won.
-      const closed = await engine.cancelModelSubmission(scopeId, modelId);
-      operationId = closed.operation_id ?? undefined;
-      if (!operationId && closed.submission_canceled)
-        return { status: "failed", reason: "native_request_unavailable" };
-    }
+    const accepted = await engine.createModel(
+      scopeId,
+      modelId,
+      typeof request.query === "function" ? request.query() : request.query,
+      request.sourceRefs,
+      request.schema,
+    );
+    operationId = accepted.operation_id;
+    submitted = true;
   }
   if (!operationId) throw new Error("native_model_identity_unconfirmed");
   if (operationId !== request.operationId) await rememberOperation(operationId);

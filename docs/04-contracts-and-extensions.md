@@ -42,7 +42,7 @@ UI、CLI、AgentAdapter 与 Connector 使用同一带版本核心 API。认证�
 
 ## 方法使用与结果回传
 
-preparePlaybook 输入 playbookId/revision、taskRef，可选 requestId 和 viewMode=auto/expanded。一次返回完整指导，无需提交步骤完成记录或调用 reassessTask；该旧接口已移除。taskRef 由核心创建并绑定调用身份，不能用任意字符串冒充其他任务。UI 可选择当前有权访问的同范围宿主任务。
+preparePlaybook 输入 playbookId/revision、taskRef，可选 viewMode=auto/expanded。一次返回完整指导，无需提交步骤完成记录或调用 reassessTask；该旧接口已移除。taskRef 由核心创建并绑定调用身份，不能用任意字符串冒充其他任务。UI 可选择当前有权访问的同范围宿主任务。
 
 核心核对任务身份、范围、结束状态和期限，以及方法当前修订、发布状态、有效期、来源和支持经验。工作 Agent 根据现场信息判断全局条件、例外和分支。搜索相关不等于本次适用，指定方法也必须检查这些边界。
 

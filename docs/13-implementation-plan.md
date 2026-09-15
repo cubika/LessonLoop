@@ -83,7 +83,7 @@ PublishedProjection 已使用官方独立bank和chunks索引，前置资格过�
 | `config/`、`distribution/` | 固定组件清单、学习配置、Windows 构建与安装管理 |
 | `tests/`、`evals/` | 合同、集成、宿主、发行测试和真实方法评测 |
 
-现有 `evals/lib/experience.ts` 只迁移仍符合合同的规则和测试。`evals/lib/model-client.ts` 不作为重写 Copilot provider 的起点。官方包及复用源码记录版本、许可和局部改动。
+Experience 的规则和测试统一使用 `src/domain/experience.ts`。`evals/lib/model-client.ts` 不作为重写 Copilot provider 的起点。官方包及复用源码记录版本、许可和局部改动。
 
 ## 工作包与依赖
 

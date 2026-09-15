@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
-import type { Principal } from "./service.js";
+import { ApiError, type Principal } from "./service.js";
 import { Effects, type TaskFeedback } from "./effects.js";
 const DAY = 86400000;
 type Stored = { id: string; revision: number; scopeId: string };
@@ -43,7 +43,8 @@ type Issue = Stored & {
 export class Reviews {
   constructor(private readonly store: ProductStore) {}
   async recordIssue(p: Principal, input: unknown) {
-    if (p.channel !== "user") throw new Error("user_operation_required");
+    if (p.channel !== "user")
+      throw new ApiError("user_operation_required", 403);
     const v = z
       .object({
         scopeId: z.string(),
@@ -73,18 +74,19 @@ export class Reviews {
       })
       .strict()
       .parse(input);
-    if (!p.scopes.includes(v.scopeId)) throw new Error("not_found");
+    if (!p.scopes.includes(v.scopeId)) throw new ApiError("not_found", 404);
     return this.store.transaction(async (tx) => {
       const settings = await tx.get<{
         review: boolean;
         notifications: boolean;
       }>("settings", v.scopeId);
-      if (!settings?.review) throw new Error("review_disabled");
-      if (!v.id && !v.problemKey) throw new Error("problem_identity_required");
+      if (!settings?.review) throw new ApiError("review_disabled", 409);
+      if (!v.id && !v.problemKey)
+        throw new ApiError("problem_identity_required", 400);
       const id = v.id ?? digest([v.scopeId, v.problemKey]),
         old = await tx.get<Issue>("review_issue", id);
       if ((old && old.scopeId !== v.scopeId) || (v.id && !old))
-        throw new Error("not_found");
+        throw new ApiError("not_found", 404);
       if ((old?.revision ?? 0) !== v.expectedRevision) throw new Conflict();
       if (old && old.category !== v.category)
         throw new Conflict("issue_category_changed");
@@ -93,7 +95,8 @@ export class Reviews {
           [...(old?.evidence ?? []), ...v.evidence].map((r) => [r.caseId, r]),
         ).values(),
       ];
-      if (evidence.length > 32) throw new Error("issue_evidence_budget");
+      if (evidence.length > 32)
+        throw new ApiError("issue_evidence_budget", 400);
       for (const ref of v.evidence) {
         const task = await tx.get<TaskFeedback>("task_feedback", ref.caseId);
         if (
@@ -103,7 +106,7 @@ export class Reviews {
           task.revision !== ref.revision ||
           Date.parse(task.createdAt) <= Date.now() - 30 * DAY
         )
-          throw new Error("issue_evidence_unavailable");
+          throw new ApiError("issue_evidence_unavailable", 409);
       }
       const issue: Issue = {
         id,
@@ -199,7 +202,8 @@ export class Reviews {
     return transaction ? read(transaction) : this.store.transaction(read);
   }
   async exportCases(p: Principal, input: unknown) {
-    if (p.channel !== "user") throw new Error("user_operation_required");
+    if (p.channel !== "user")
+      throw new ApiError("user_operation_required", 403);
     const v = z
       .object({
         caseIds: z.array(z.string()).min(1).max(8),
@@ -213,7 +217,7 @@ export class Reviews {
       const feedbackCases = await new Effects(this.store).cases(p.scopes, tx);
       for (const id of new Set(v.caseIds)) {
         const task = feedbackCases.find((c) => c.id === id);
-        if (!task) throw new Error("not_found");
+        if (!task) throw new ApiError("not_found", 404);
         const original = await tx.get<{
           rawObservations?: Array<{
             eventId: string;
@@ -262,7 +266,7 @@ export class Reviews {
       });
       const content = JSON.stringify(data, null, 2);
       if (Buffer.byteLength(content) > 262144)
-        throw new Error("export_budget_exceeded");
+        throw new ApiError("export_budget_exceeded", 413);
       return {
         filename: "lessonloop-development-cases.json",
         content,
@@ -273,7 +277,8 @@ export class Reviews {
     });
   }
   async configure(p: Principal, input: unknown) {
-    if (p.channel !== "user") throw new Error("user_operation_required");
+    if (p.channel !== "user")
+      throw new ApiError("user_operation_required", 403);
     const v = z
       .object({
         scopeId: z.string(),
@@ -282,7 +287,7 @@ export class Reviews {
       })
       .strict()
       .parse(input);
-    if (!p.scopes.includes(v.scopeId)) throw new Error("not_found");
+    if (!p.scopes.includes(v.scopeId)) throw new ApiError("not_found", 404);
     return this.store.transaction(async (tx) => {
       const old = await tx.get<Schedule>("review_schedule", v.scopeId);
       if ((old?.revision ?? 0) !== v.expectedRevision) throw new Conflict();
@@ -523,10 +528,12 @@ export class Reviews {
     });
   }
   async dismiss(p: Principal, id: string) {
-    if (p.channel !== "user") throw new Error("user_operation_required");
+    if (p.channel !== "user")
+      throw new ApiError("user_operation_required", 403);
     return this.store.transaction(async (tx) => {
       const n = await tx.get<Notification>("review_notification", id);
-      if (!n || !p.scopes.includes(n.scopeId)) throw new Error("not_found");
+      if (!n || !p.scopes.includes(n.scopeId))
+        throw new ApiError("not_found", 404);
       if (!n.read)
         await tx.put(
           entry("review_notification", {

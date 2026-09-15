@@ -107,7 +107,6 @@ interface Job {
   operationUsage?: Record<string, OperationUsage>;
   modelSourceRefs?: string[];
   assessmentSourceRefs?: string[];
-  retainVersion?: number;
   verificationRef?: ObjectRef;
 }
 
@@ -767,7 +766,6 @@ export class CoreService {
           effective,
         });
       }
-      const published = results.filter((r) => r.effective !== null);
       const playbookWrites = await tx.list<PlaybookWrite>("playbook_write", [
         j.scopeId,
       ]);
@@ -794,7 +792,7 @@ export class CoreService {
           accepted: true,
           replacement: {
             status:
-              published.length && published.every((r) => r.effective)
+              results.length && results.every((r) => r.effective)
                 ? "effective"
                 : group?.state === "pending" || awaitingContent
                   ? "pending"
@@ -1308,6 +1306,8 @@ export class CoreService {
     const runModel = async (stage: "compose" | "assess") => {
       const compose = stage === "compose";
       const payload = j.payload ?? {};
+      if (!payload.inputSources)
+        throw new JobPromptError("job_prompt_inputs_missing");
       const operationField = compose ? "operationId" : "assessmentOperationId";
       const modelId = compose ? j.modelId : j.assessmentId;
       if (!modelId)
@@ -1317,24 +1317,14 @@ export class CoreService {
             : "assessment_identity_unconfirmed",
         );
       const sourceRefs = compose ? j.modelSourceRefs : j.assessmentSourceRefs;
-      const query = compose ? payload.modelQuery : payload.assessmentQuery;
       const result = await advanceNativeModel(
         engine,
         {
           scopeId: j.scopeId,
           modelId,
-          // Legacy compose records may still contain the retain operation ID.
-          operationId: compose && !sourceRefs ? undefined : j[operationField],
-          query:
-            payload.promptVersion || query !== undefined
-              ? () => jobQuery(j, stage)
-              : undefined,
-          sourceRefs:
-            sourceRefs ??
-            (compose && j.playbookRepairCount && !payload.promptVersion
-              ? j.sourceRefs
-              : undefined) ??
-            inputSources.map((s) => s.id),
+          operationId: j[operationField],
+          query: () => jobQuery(j, stage),
+          sourceRefs: sourceRefs ?? inputSources.map((s) => s.id),
           schema: compose
             ? (payload.modelSchema ?? outputJsonSchema)
             : (payload.assessmentSchema ?? learningAssessmentJsonSchema),
@@ -1353,12 +1343,7 @@ export class CoreService {
       if (result.status === "failed")
         await this.updateJob(j.id, {
           status: "failed",
-          error:
-            result.reason === "native_request_unavailable"
-              ? result.reason
-              : compose
-                ? "native_model_failed"
-                : "native_assessment_failed",
+          error: compose ? "native_model_failed" : "native_assessment_failed",
         });
       if (result.status !== "completed") return;
       return {
@@ -1388,7 +1373,6 @@ export class CoreService {
         j.id,
         {
           stage: "extract",
-          retainVersion: 1,
           status: "running",
           operationId,
           engineOperations: [...(j.engineOperations ?? []), operationId],
@@ -1402,7 +1386,7 @@ export class CoreService {
       if (!j.operationId) throw new ApiError("missing_native_operation");
       const op = await engine.operation(j.scopeId, j.operationId);
       if (op.status === "not_found") {
-        await engine.retain(inputSources, j.operationId, j.retainVersion ?? 0);
+        await engine.retain(inputSources, j.operationId);
         return;
       }
       if (op.status === "failed" || op.status === "cancelled") {
@@ -1492,7 +1476,6 @@ export class CoreService {
         }
         const payload: JobPayload = {
           ...current.payload,
-          promptVersion: 1,
           inputSources,
           comparisonPlaybooks: existing,
           retainedSupport,
@@ -1554,12 +1537,7 @@ export class CoreService {
     }
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = "assess-" + randomUUID();
-      const assessmentQuery = jobQuery(
-        j.payload?.promptVersion
-          ? j
-          : { ...j, payload: { ...j.payload, promptVersion: 1, inputSources } },
-        "assess",
-      );
+      const assessmentQuery = jobQuery(j, "assess");
       const reviewSchema =
         j.payload?.assessmentSchema ?? learningAssessmentJsonSchema;
       j = await this.updateJob(
@@ -1568,9 +1546,7 @@ export class CoreService {
           assessmentId,
           payload: {
             ...j.payload,
-            ...(j.payload?.promptVersion
-              ? { assessmentQueryHash: digest(assessmentQuery) }
-              : { assessmentQuery }),
+            assessmentQueryHash: digest(assessmentQuery),
             assessmentSchema: reviewSchema,
           },
           assessmentSourceRefs: inputSources.map((m) => m.id),
@@ -1611,13 +1587,7 @@ export class CoreService {
             throw new Conflict();
           const payload = { ...old.payload, repairReasons: verdict.reasons };
           delete payload.modelQueryHash;
-          const query = old.payload?.promptVersion
-            ? jobQuery({ ...old, payload }, "compose")
-            : (old.payload?.modelQuery ?? "") +
-              "\nONE BOUNDED REVISION: the proposal below was rejected by independent support/path review. Correct only the cited problems using the same authorized evidence; do not weaken scope or invent facts. If no supported playbook is possible return playbook=null.\nREJECTED PROPOSAL (not evidence):\n" +
-              JSON.stringify(old.payload?.candidate) +
-              "\nREVIEW FINDINGS (not evidence):\n" +
-              JSON.stringify(verdict.reasons);
+          const query = jobQuery({ ...old, payload }, "compose");
           if (byteSize(query) > 524288)
             throw new ApiError("learning_query_budget", 413);
           const next = mutate(old, {
@@ -1625,9 +1595,7 @@ export class CoreService {
             status: "running",
             modelId: "job-" + randomUUID(),
             payload,
-            modelSourceRefs: old.payload?.promptVersion
-              ? inputSources.map((m) => m.id)
-              : (old.sourceRefs ?? inputSources.map((m) => m.id)),
+            modelSourceRefs: inputSources.map((m) => m.id),
 
             playbookRepairCount: 1,
             decisions: [
@@ -1638,12 +1606,7 @@ export class CoreService {
           delete next.operationId;
           delete next.assessmentId;
           delete next.assessmentOperationId;
-          if (payload.promptVersion) payload.modelQueryHash = digest(query);
-          else {
-            payload.modelQuery = query;
-            delete payload.candidate;
-          }
-          delete payload.assessmentQuery;
+          payload.modelQueryHash = digest(query);
           delete payload.assessmentQueryHash;
           delete payload.verdict;
           delete next.assessmentSourceRefs;
@@ -1743,14 +1706,6 @@ export class CoreService {
         )
       )
         throw new ApiError("source_changed_before_publish");
-      const validEvidence = (e: {
-        fingerprint: string;
-        excerpt: string;
-        role: string;
-      }) => {
-        const s = sourceMap.get(e.fingerprint);
-        return !!s && s.role === e.role && s.text.includes(e.excerpt);
-      };
       const indexedSources = inputSources.map((s) => ({
         ...s.segment!,
         fingerprint: s.id,
@@ -3368,7 +3323,10 @@ export class CoreService {
           review: {
             reason: "conflict",
             question:
-              v.correctionText ?? "Check the reported incorrect guidance",
+              v.correctionText &&
+              Buffer.byteLength(v.correctionText, "utf8") <= 512
+                ? v.correctionText
+                : "Check the reported incorrect guidance against the user correction",
             reviewBy: new Date(Date.now() + 30 * 86400000).toISOString(),
           },
         });
@@ -3431,7 +3389,8 @@ export class CoreService {
         .filter((v) => v.score > 0)
         .sort((a, b) => b.score - a.score);
       const results = [];
-      for (const { m } of ranked.slice(0, 3)) {
+      for (const { m } of ranked) {
+        if (results.length === 3) break;
         const row = {
           playbook: ref("playbook", m),
           title: m.title,
@@ -3439,7 +3398,7 @@ export class CoreService {
           conditions: m.conditions,
           exceptions: m.exceptions,
         };
-        if (tokenCount([...results, row]) > 800) break;
+        if (tokenCount([...results, row]) > 800) continue;
         results.push(row);
       }
       return {
@@ -3559,14 +3518,7 @@ export class CoreService {
         ended: !!v.ended,
       };
       if (prior) {
-        // Old observations may still contain retired step-tracking fields.
-        const comparable = {
-          id: prior.id,
-          text: prior.text,
-          values: prior.values,
-          ended: prior.ended,
-        };
-        if (canonical(comparable) !== canonical(event))
+        if (canonical(prior) !== canonical(event))
           throw new Conflict("event_conflict");
         return { accepted: true, duplicate: true };
       }
@@ -3634,7 +3586,6 @@ export class CoreService {
         revision: z.number().int().positive(),
         taskRef: z.string(),
         viewMode: z.enum(["auto", "expanded"]).optional(),
-        requestId: z.string().min(1).max(128).optional(),
       })
       .strict()
       .parse(input);
@@ -3652,7 +3603,7 @@ export class CoreService {
       const m = await tx.readablePlaybook(v.playbookId);
       const prepared = preparePlaybook(
         m?.scopeId === t.scopeId ? m : undefined,
-        { callerId: t.callerId, ...v },
+        { revision: v.revision, viewMode: v.viewMode },
         await this.eligibility(tx, p),
       );
       if (m && prepared.status === "guidance") {
@@ -4315,6 +4266,13 @@ export class CoreService {
             return next;
           });
         }
+        if (!review.modelQuery) {
+          await this.updateRevisionReview(review.id, {
+            status: "failed",
+            reason: "revision_request_missing",
+          });
+          continue;
+        }
         const result = await advanceNativeModel(
           engine,
           {
@@ -4334,10 +4292,7 @@ export class CoreService {
         if (result.status === "failed") {
           await this.updateRevisionReview(review.id, {
             status: "failed",
-            reason:
-              result.reason === "native_request_unavailable"
-                ? result.reason
-                : "native_assessment_failed",
+            reason: "native_assessment_failed",
           });
           continue;
         }
@@ -4453,10 +4408,6 @@ export class CoreService {
         revision: number;
         scopeId: string;
       }>("control", id);
-      const jobs = await tx.list<Job>("job", [old.scopeId]);
-      const inputDigests = jobs
-        .filter((j) => j.results.some((r) => r.id === id && r.kind === kind))
-        .map((j) => j.inputDigest);
       await tx.put(
         entry("control", {
           id,
@@ -4464,7 +4415,6 @@ export class CoreService {
           scopeId: old.scopeId,
           reason: "user_deleted",
           ...(await this.controlBinding(tx, kind, old)),
-          inputDigests,
         }),
         control?.revision ?? null,
       );

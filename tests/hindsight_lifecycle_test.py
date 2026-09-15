@@ -3,6 +3,8 @@ import asyncio
 import importlib.util
 import json
 import os
+import sys
+from urllib.parse import urlsplit
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,8 +12,10 @@ import asyncpg
 from fastapi import HTTPException
 
 root = Path(__file__).resolve().parents[1]
-secret = json.loads((root / '.local-validation/data/development-secret.json').read_text())
-database = f"postgresql://lessonloop:{secret['password']}@127.0.0.1:19432/postgres"
+sys.path.insert(0, str(root / 'distribution'))
+database = os.environ['LESSONLOOP_TEST_DATABASE_URL']
+assert urlsplit(database).path.startswith('/ll_native_methods_'), 'Use a dedicated test database'
+secret = {'engineToken': 'test-only-' + 'a' * 40}
 os.environ.update(HINDSIGHT_API_DATABASE_URL=database, HINDSIGHT_API_LLM_TRACE_ENABLED='false', HINDSIGHT_API_AUDIT_LOG_ENABLED='false')
 spec = importlib.util.spec_from_file_location('product', root / 'distribution/hindsight_product.py')
 module = importlib.util.module_from_spec(spec)
@@ -65,10 +69,6 @@ async def main():
     try:
         await put('engine_bank', bank, {'state': 'reserved'})
         await native.update_bank(bank)
-        operation = str(uuid4())
-        result = await endpoints['cancel-retain-submission'](module.RetainCancellation(bank_id=bank, operation_id=operation), auth)
-        assert result == {'submission_canceled': True, 'operation_status': 'not_found'}
-        await rejected(endpoints['retain-submissions'](module.RetainSubmission(bank_id=bank, operation_id=operation, mode='learning', contents=[{'content': 'late source'}]), auth), 'retain_submission_canceled')
         pending, processing = uuid4(), uuid4()
         for id, state in [(pending, 'pending'), (processing, 'processing')]:
             await db.execute("INSERT INTO hindsight.async_operations(operation_id,bank_id,operation_type,status) VALUES($1,$2,'retain',$3)", id, bank, state)
@@ -97,7 +97,7 @@ async def main():
         await put('scope_barrier', scope, {'pending': False})
         await put('playbook', object_id, {'state': 'disabled', 'revision': 2})
         await rejected(endpoints['write-projection'](write, auth), 'projection_changed')
-        print('Lifecycle gates passed: unsubmitted retain closure, child drain, erasure, delayed projection write, stale replay.')
+        print('Lifecycle gates passed: child drain, erasure, delayed projection write, stale replay.')
     finally:
         native.release.set()
         for callback in router.on_shutdown:

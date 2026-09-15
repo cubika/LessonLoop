@@ -3,14 +3,18 @@ import asyncio
 import importlib.util
 import json
 import os
+import sys
+from urllib.parse import urlsplit
 from pathlib import Path
 from uuid import uuid4
 import asyncpg
 from fastapi import HTTPException
 
 root=Path(__file__).resolve().parents[1]
-secret=json.loads((root/".local-validation/data/development-secret.json").read_text())
-database=f"postgresql://lessonloop:{secret['password']}@127.0.0.1:19432/postgres"
+sys.path.insert(0, str(root / 'distribution'))
+database = os.environ['LESSONLOOP_TEST_DATABASE_URL']
+assert urlsplit(database).path.startswith('/ll_native_methods_'), 'Use a dedicated test database'
+secret = {'engineToken': 'test-only-' + 'a' * 40}
 os.environ["HINDSIGHT_API_DATABASE_URL"]=database
 spec=importlib.util.spec_from_file_location("product",root/"distribution/hindsight_product.py");module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 class Native:

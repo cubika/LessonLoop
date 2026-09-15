@@ -11,7 +11,7 @@ if (!url)
   throw new Error(
     "LESSONLOOP_TEST_DATABASE_URL is required for actual PostgreSQL tests",
   );
-test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role binding", async () => {
+test("PostgreSQL initialization, singleton, durable idempotency, CAS and source-role binding", async () => {
   let store = new ProductStore(url);
   await store.open(true);
   const contender = new ProductStore(url);
@@ -90,27 +90,6 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     values: { kind: "manual" },
   };
   assert.equal((await core.observe(p, obs)).duplicate, false);
-  await store.transaction(async (tx) => {
-    const saved = await tx.get<any>("task", task.taskRef);
-    await tx.put(
-      {
-        kind: "task",
-        id: saved.id,
-        scopeId: scope,
-        revision: saved.revision + 1,
-        value: {
-          ...saved,
-          revision: saved.revision + 1,
-          observations: saved.observations.map((o: any) => ({
-            ...o,
-            completedStepIds: ["legacy"],
-            conditionResults: { old: true },
-          })),
-        },
-      },
-      saved.revision,
-    );
-  });
   assert.equal((await core.observe(p, obs)).duplicate, true);
   await assert.rejects(core.observe(p, { ...obs, completedStepIds: [] }));
   await assert.rejects(

@@ -99,8 +99,6 @@ function usable(
 export function preparePlaybook(
   playbook: Playbook | undefined,
   request: {
-    callerId: string;
-    taskRef: string;
     revision: number;
     viewMode?: "auto" | "expanded" | undefined;
   },

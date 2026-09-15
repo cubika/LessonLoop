@@ -571,7 +571,6 @@ test("Rejected playbooks get one bounded revision while retaining every native o
           assessmentOperationId: "op-review-1",
           payload: {
             ...j.payload,
-            promptVersion: 1,
             inputSources: await Promise.all(
               j.sourceIds.map((id: string) => tx.get("source", id)),
             ),

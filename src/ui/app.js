@@ -11,11 +11,6 @@ const labels = {
   active: "可用",
   held: "待核实",
   disabled: "已停用",
-  succeeded: "成功",
-  failed: "失败",
-  partial: "部分完成",
-  abandoned: "已放弃",
-  unknown: "结果未知",
 };
 const $ = (id) => document.getElementById(id);
 const node = (tag, text) => {
@@ -142,14 +137,28 @@ async function list() {
     next = node("button", "下一页");
   previous.disabled = playbookPage === 0;
   next.disabled = !result.nextCursor;
-  previous.onclick = handle(async () => {
-    playbookPage--;
-    await list();
-  });
-  next.onclick = handle(async () => {
-    playbookCursors[++playbookPage] = result.nextCursor;
-    await list();
-  });
+  let paging = false;
+  const turnPage = async (page, cursor) => {
+    if (paging) return;
+    paging = true;
+    previous.disabled = next.disabled = true;
+    const oldPage = playbookPage,
+      request = playbookListRequest + 1;
+    playbookPage = page;
+    if (cursor) playbookCursors[page] = cursor;
+    try {
+      await list();
+    } catch (error) {
+      if (request === playbookListRequest) playbookPage = oldPage;
+      throw error;
+    } finally {
+      paging = false;
+      previous.disabled = oldPage === 0;
+      next.disabled = !result.nextCursor;
+    }
+  };
+  previous.onclick = handle(() => turnPage(playbookPage - 1));
+  next.onclick = handle(() => turnPage(playbookPage + 1, result.nextCursor));
   $("playbook-pages").replaceChildren(
     previous,
     node("span", `第 ${playbookPage + 1} 页 · 共 ${result.total} 项`),
@@ -194,20 +203,7 @@ async function show(id) {
       current[key].forEach((v) => ul.append(node("li", v.text)));
       d.append(ul);
     }
-  const steps = node("ol", "");
-  for (const s of current.steps) {
-    const li = node("li", s.instruction);
-    if (s.choices)
-      li.append(
-        node(
-          "pre",
-          s.choices.map((c) => `${c.when.text} → ${c.next}`).join("\n"),
-        ),
-      );
-    steps.append(li);
-  }
-  d.append(steps, node("h3", "完成检查"));
-  current.completionChecks.forEach((c) => d.append(node("p", c.text)));
+  renderPlaybookSteps(d, current);
   d.append(node("h3", "最近变化"), node("p", current.change.summary));
   const state = node(
     "button",
@@ -232,7 +228,11 @@ async function show(id) {
     if (!rows.length) panel.append(node("p", "暂无保留的使用记录。"));
     for (const row of rows) {
       panel.append(node("h4", row.taskRef));
-      row.events.forEach((event) => panel.append(node("p", event.text)));
+      renderTaskOutcome(panel, row);
+      renderUseFeedback(
+        panel,
+        row.feedback.filter((f) => f.playbookId === id),
+      );
     }
     d.append(panel);
   });
@@ -248,10 +248,7 @@ async function show(id) {
     for (const support of current.supportRefs) {
       const value = await rpc("inspectExperience", { id: support.id });
       panel.append(
-        node(
-          "p",
-          `${value.assessment} · 修订 ${value.revision}`,
-        ),
+        node("p", `${value.assessment} · 修订 ${value.revision}`),
         node("p", value.conclusion),
       );
       value.evidence.forEach((e) =>
@@ -259,48 +256,8 @@ async function show(id) {
       );
       if (value.state === "held") {
         const supplement = node("button", "为这条经验补充证据");
-        supplement.onclick = handle(() => {
-          const form = node("section", "");
-          form.append(
-            node(
-              "p",
-              value.review?.question ??
-                "补充可核对的观察；提交不等于证据通过。",
-            ),
-          );
-          const text = field(form, "实际原文或观察", "", true);
-          const send = node("button", "提交补证");
-          send.onclick = handle(async () => {
-            const receipt = await rpc("submitSource", {
-              scopeId: value.scopeId,
-              verificationFor: {
-                kind: "experience",
-                id: value.id,
-                revision: value.revision,
-              },
-              segments: [{ text: text.value, role: "user" }],
-            });
-            form.replaceChildren(
-              node("p", "补证已接收，作业 " + receipt.jobId),
-            );
-            const check = node("button", "查询补证结果");
-            check.onclick = handle(async () =>
-              form.append(
-                node(
-                  "pre",
-                  JSON.stringify(
-                    await rpc("getJob", { id: receipt.jobId }),
-                    null,
-                    2,
-                  ),
-                ),
-              ),
-            );
-            form.append(check);
-          });
-          form.append(send);
-          panel.append(form);
-        });
+        supplement.onclick = () =>
+          supplementExperience(panel, value, () => show(id));
         panel.append(supplement);
       }
     }
@@ -379,6 +336,47 @@ const taskOutcomeLabels = {
   abandoned: "已取消或放弃",
   unknown: "未知",
 };
+function renderPlaybookSteps(parent, playbook) {
+  const stepLabel = (id) =>
+    id === "stop"
+      ? "停止"
+      : `步骤 ${playbook.steps.findIndex((s) => s.stepId === id) + 1}`;
+  const steps = node("ol", "");
+  for (const step of playbook.steps) {
+    const item = node("li", step.instruction);
+    for (const choice of step.choices ?? [])
+      item.append(node("p", `${choice.when.text} → ${stepLabel(choice.next)}`));
+    steps.append(item);
+  }
+  parent.append(steps);
+  for (const [key, label] of [
+    ["completionChecks", "完成检查"],
+    ["stopConditions", "停止条件"],
+  ])
+    for (const check of playbook[key] ?? [])
+      parent.append(
+        node(
+          "p",
+          `${label}（${check.stepIds?.map(stepLabel).join("、") ?? "全局"}）：${check.text}`,
+        ),
+      );
+}
+function renderUseFeedback(parent, feedback) {
+  const ratings = {
+    helpful: "有帮助",
+    incorrect: "有问题",
+    irrelevant: "不相关",
+  };
+  for (const item of feedback) {
+    parent.append(
+      node(
+        "p",
+        `${item.playbookId} · 修订 ${item.revision} · 投递${item.delivered ? "已确认" : "未知"} · 评价：${ratings[item.userRating] ?? "暂无"}`,
+      ),
+    );
+    if (item.ratingText) parent.append(node("p", item.ratingText));
+  }
+}
 function renderOutcomeSources(parent, summary) {
   const sources = summary.outcomeSources;
   if (!sources) return;
@@ -437,20 +435,7 @@ async function renderEffects() {
       section.className = "card";
       section.append(node("h2", c.classification), node("p", c.taskRef));
       renderTaskOutcome(section, c);
-      const ratings = {
-        helpful: "有帮助",
-        incorrect: "有问题",
-        irrelevant: "不相关",
-      };
-      c.feedback.forEach((f) => {
-        section.append(
-          node(
-            "p",
-            `${f.playbookId} · 修订 ${f.revision} · 投递${f.delivered ? "已确认" : "未知"} · 评价：${ratings[f.userRating] ?? "暂无"}`,
-          ),
-        );
-        if (f.ratingText) section.append(node("p", f.ratingText));
-      });
+      renderUseFeedback(section, c.feedback);
       if (
         c.outcomeSource !== "user" &&
         (c.taskOutcome !== "unknown" || c.outcomeSource)
@@ -552,6 +537,14 @@ async function renderSettings() {
   for (const s of settings) {
     const section = node("section", "");
     section.append(node("h2", s.scopeId));
+    const controls = [];
+    let saving = false;
+    const reset = () => {
+      for (const [key, control] of controls) {
+        control.checked = s[key];
+        control.disabled = saving;
+      }
+    };
     for (const [key, label] of [
       ["learning", "从新工作材料中学习"],
       ["recommendation", "新任务自动推荐方法"],
@@ -562,14 +555,27 @@ async function renderSettings() {
       const i = node("input", "");
       i.type = "checkbox";
       i.checked = s[key];
+      controls.push([key, i]);
       i.onchange = handle(async () => {
-        s[key] = i.checked;
+        if (saving) {
+          reset();
+          return;
+        }
+        const checked = i.checked;
+        saving = true;
+        for (const [, control] of controls) control.disabled = true;
         const { id, revision, ...body } = s;
-        const saved = await rpc("settings.update", {
-          ...body,
-          expectedRevision: revision,
-        });
-        Object.assign(s, saved);
+        try {
+          const saved = await rpc("settings.update", {
+            ...body,
+            [key]: checked,
+            expectedRevision: revision,
+          });
+          Object.assign(s, saved);
+        } finally {
+          saving = false;
+          reset();
+        }
       });
       l.prepend(i);
       section.append(l);
@@ -960,7 +966,6 @@ async function preparePlaybook(parent) {
       revision: playbook.revision,
       taskRef,
       viewMode,
-      requestId: crypto.randomUUID(),
     });
     if (request !== preparationRequest || task.value !== taskRef) return;
     use = result.feedbackRevision;
@@ -979,36 +984,7 @@ async function preparePlaybook(parent) {
         (result[key] ?? []).forEach((c) =>
           output.append(node("p", label + "：" + c.text)),
         );
-      const steps = node("ol", "");
-      result.steps.forEach((s) => {
-        const item = node("li", s.stepId + "：" + s.instruction);
-        (s.choices ?? []).forEach((c) =>
-          item.append(
-            node(
-              "p",
-              c.when.text + " → " + (c.next === "stop" ? "停止" : c.next),
-            ),
-          ),
-        );
-        steps.append(item);
-      });
-      output.append(steps);
-      for (const [key, label] of [
-        ["completionChecks", "完成检查"],
-        ["stopConditions", "停止条件"],
-      ])
-        (result[key] ?? []).forEach((c) =>
-          output.append(
-            node(
-              "p",
-              label +
-                "（" +
-                (c.stepIds?.join("、") ?? "全局") +
-                "）：" +
-                c.text,
-            ),
-          ),
-        );
+      renderPlaybookSteps(output, result);
     } else if (result.status === "requires_expansion") {
       const expand = node("button", "展开完整方法");
       expand.onclick = handle(() => prepare("expanded"));
@@ -1140,7 +1116,11 @@ function jobControls(parent, receipt, refresh) {
   panel.append(status, check, cancel, retry);
   parent.append(panel);
 }
-function supplementExperience(parent, experience) {
+function supplementExperience(
+  parent,
+  experience,
+  refresh = () => showExperience(experience.id),
+) {
   const panel = node("section", "");
   panel.append(
     node("h3", "补充核实依据"),
@@ -1164,20 +1144,10 @@ function supplementExperience(parent, experience) {
       segments: [{ text: evidence.value.trim(), role: "user" }],
     });
     send.disabled = true;
-    jobControls(panel, receipt, () => showRecord("experience", experience.id));
+    jobControls(panel, receipt, refresh);
   });
   panel.append(send);
   parent.append(panel);
-}
-function resetRecordStates() {
-  const states = ["active", "held", "disabled"];
-  $("record-state").replaceChildren(node("option", "全部状态"));
-  $("record-state").firstChild.value = "";
-  for (const state of states) {
-    const option = node("option", labels[state]);
-    option.value = state;
-    $("record-state").append(option);
-  }
 }
 $("record-search").onsubmit = handle(async (event) => {
   event.preventDefault();
@@ -1185,15 +1155,14 @@ $("record-search").onsubmit = handle(async (event) => {
   await renderRecords();
 });
 async function renderRecords() {
-  const kind = "experience",
-    query = $("record-query").value.trim().toLowerCase(),
+  const query = $("record-query").value.trim().toLowerCase(),
     scope = $("record-scope").value,
     state = $("record-state").value;
   const rows = (await rpc("browseExperiences"))
     .filter(
       (row) =>
         (!scope || row.scopeId === scope) &&
-        (!state || (row.state ?? row.result?.status) === state) &&
+        (!state || row.state === state) &&
         (!query || JSON.stringify(row).toLowerCase().includes(query)),
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -1210,13 +1179,10 @@ async function renderRecords() {
     card.className = "card";
     card.tabIndex = 0;
     card.append(
-      node("h2", row.topic ?? row.conclusion),
-      node(
-        "p",
-        `${row.scopeId} · ${labels[row.state ?? row.result?.status]} · 修订 ${row.revision}`,
-      ),
+      node("h2", row.conclusion),
+      node("p", `${row.scopeId} · ${labels[row.state]} · 修订 ${row.revision}`),
     );
-    card.onclick = handle(() => showRecord(kind, row.id));
+    card.onclick = handle(() => showExperience(row.id));
     card.onkeydown = (event) => {
       if (["Enter", " "].includes(event.key)) {
         event.preventDefault();
@@ -1244,70 +1210,63 @@ async function renderRecords() {
     next,
   );
 }
-async function showRecord(kind, id) {
+async function showExperience(id) {
   const value = await rpc("inspectExperience", { id }),
     d = $("record-detail");
   d.replaceChildren(
-    node("h2", value.topic ?? value.conclusion),
+    node("h2", value.conclusion),
     node("p", `${value.scopeId} · 修订 ${value.revision}`),
   );
   const reference = field(
     d,
     "内容引用",
-    JSON.stringify({ kind, id, revision: value.revision }),
+    JSON.stringify({ kind: "experience", id, revision: value.revision }),
   );
   reference.readOnly = true;
   reference.onclick = () => reference.select();
-  {
+  d.append(node("p", `${labels[value.state]} · ${value.assessment}`));
+  for (const [key, title] of [
+    ["conditions", "适用条件"],
+    ["exceptions", "例外"],
+  ])
+    if (value[key].length)
+      d.append(
+        node("h3", title),
+        ...value[key].map((item) => node("p", item.text)),
+      );
+  if (value.review)
     d.append(
+      node("h3", "待核实问题"),
+      node("p", value.review.question),
       node(
         "p",
-        `${labels[value.state]} · ${value.assessment}`,
+        `核实期限：${new Date(value.review.reviewBy).toLocaleString()}`,
       ),
     );
-    for (const [key, title] of [
-      ["conditions", "适用条件"],
-      ["exceptions", "例外"],
-    ])
-      if (value[key].length)
-        d.append(
-          node("h3", title),
-          ...value[key].map((item) => node("p", item.text)),
-        );
-    if (value.review)
-      d.append(
-        node("h3", "待核实问题"),
-        node("p", value.review.question),
-        node(
-          "p",
-          `核实期限：${new Date(value.review.reviewBy).toLocaleString()}`,
-        ),
-      );
-    const feedback = node("button", "评价或提交修订意见");
-    feedback.onclick = handle(() =>
-      feedbackForm(d, kind, value, () => showRecord(kind, id)),
-    );
-    d.append(feedback);
-    if (value.state === "held") {
-      const supplement = node("button", "补充证据并审查");
-      supplement.onclick = () => supplementExperience(d, value);
-      d.append(supplement);
-    }
-    const state = node(
-      "button",
-      value.state === "disabled" ? "重新启用" : "停用经验",
-    );
-    state.onclick = handle(async () => {
-      await rpc("setExperienceState", {
-        id,
-        expectedRevision: value.revision,
-        state: value.state === "disabled" ? "active" : "disabled",
-      });
-      await showRecord(kind, id);
-      await renderRecords();
-    });
-    d.append(state);
+  const feedback = node("button", "评价或提交修订意见");
+  feedback.onclick = handle(() =>
+    feedbackForm(d, "experience", value, () => showExperience(id)),
+  );
+  d.append(feedback);
+  if (value.state === "held") {
+    const supplement = node("button", "补充证据并审查");
+    supplement.onclick = () => supplementExperience(d, value);
+    d.append(supplement);
   }
+  const state = node(
+    "button",
+    value.state === "disabled" ? "重新启用" : "停用经验",
+  );
+  state.onclick = handle(async () => {
+    await rpc("setExperienceState", {
+      id,
+      expectedRevision: value.revision,
+      state: value.state === "disabled" ? "active" : "disabled",
+    });
+    await showExperience(id);
+    await renderRecords();
+  });
+  d.append(state);
   addWorkView(d, { kind: "experience", id });
   d.append(node("h3", "原文依据"));
   for (const evidence of value.evidence)
@@ -1699,8 +1658,10 @@ function exportCaseForm(parent, caseData) {
   observations.type = "checkbox";
   const preview = node("button", "生成预览"),
     output = node("pre", "");
-  let download;
+  let download,
+    previewVersion = 0;
   const invalidate = () => {
+    previewVersion++;
     download?.remove();
     download = undefined;
     output.textContent = "预览条件已变化，请重新生成。";
@@ -1708,17 +1669,22 @@ function exportCaseForm(parent, caseData) {
   terms.oninput = invalidate;
   observations.onchange = invalidate;
   preview.onclick = handle(async () => {
-    download?.remove();
+    invalidate();
+    output.textContent = "正在生成预览。";
+    const version = previewVersion;
     const input = {
       caseIds: [caseData.id],
       includeObservations: observations.checked,
       redact: terms.value.split("\n").filter(Boolean),
     };
     const result = await rpc("reviews.export", input);
+    if (version !== previewVersion) return;
     output.textContent = result.content;
     download = node("button", "下载已预览样本");
     download.onclick = handle(async () => {
+      if (version !== previewVersion) return;
       const fresh = await rpc("reviews.export", input);
+      if (version !== previewVersion) return;
       if (fresh.contentRevision !== result.contentRevision) {
         invalidate();
         throw new Error("来源已变化，请重新预览后下载。");
