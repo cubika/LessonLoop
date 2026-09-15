@@ -14,6 +14,8 @@ def install():
         Draft7Validator.check_schema(response_schema)
         validator = Draft7Validator(response_schema, format_checker=FormatChecker())
 
+        invalid_fields = []
+
         class StructuredResponse(BaseModel):
             model_config = ConfigDict(extra="allow")
 
@@ -24,28 +26,39 @@ def install():
             @model_validator(mode="before")
             @classmethod
             def validate_original_schema(cls, value):
-                error = next(validator.iter_errors(value), None)
-                if error:
-                    # Values may contain source data; report only the schema path.
-                    raise ValueError("Invalid structured field at " + "/".join(map(str, error.absolute_path)))
+                errors = list(validator.iter_errors(value))
+                if errors:
+                    # Schema paths contain no source values or model-authored object keys.
+                    def leaves(error):
+                        if error.context:
+                            return [leaf for child in error.context for leaf in leaves(child)]
+                        return [error]
+                    invalid_fields[:] = ["/".join(map(str, e.absolute_schema_path))+":"+str(e.validator) for error in errors for e in leaves(error)][:8]
+                    raise ValueError("Structured response does not match the requested schema")
                 return value
 
         usage = None
-        try:
-            result, usage = await llm_config.call(
-                messages=[{"role":"system","content":"Convert the supplied reflection into the exact JSON Schema. Preserve its actual evidence and roles. Do not invent missing observations. Return no proposal when the evidence does not justify one."},{"role":"user","content":json.dumps({"reflection":answer,"schema":response_schema},ensure_ascii=False)}],
-                response_format=StructuredResponse, scope="reflect_structured", strict_schema=True,
-                max_completion_tokens=max_tokens, max_retries=1, initial_backoff=0.25, max_backoff=1,
-                skip_validation=False, return_usage=True,
-            )
-            value=result.model_dump() if hasattr(result,"model_dump") else result
-            validator.validate(value)
-            return agent.StructuredOutputResult(structured_output=value,input_tokens=usage.input_tokens,output_tokens=usage.output_tokens,cached_tokens=usage.cached_tokens,thoughts_tokens=usage.thoughts_tokens)
-        except Exception:
-            agent.logger.warning("LessonLoop structured output did not pass the original JSON Schema")
-            if usage is not None:
-                return agent.StructuredOutputResult(input_tokens=usage.input_tokens,output_tokens=usage.output_tokens,cached_tokens=usage.cached_tokens,thoughts_tokens=usage.thoughts_tokens)
-            agent.logger.warning("LessonLoop failed structured call usage is unknown; do not treat it as zero cost")
-            return agent.StructuredOutputResult()
+        messages=[{"role":"system","content":"Convert the supplied reflection into the exact JSON Schema. Preserve its actual evidence and roles. Do not invent missing observations. Omit optional properties when absent; null is valid only where the schema explicitly allows it. Include required empty arrays. Translate the reflection to the schema field names rather than copying undeclared fields."},{"role":"user","content":json.dumps({"reflection":answer,"schema":response_schema},ensure_ascii=False)}]
+        totals={"input_tokens":0,"output_tokens":0,"cached_tokens":0,"thoughts_tokens":0}
+        for attempt in range(2):
+            invalid_fields.clear()
+            usage = None
+            try:
+                result, usage = await llm_config.call(
+                    messages=messages,response_format=StructuredResponse,scope="reflect_structured",strict_schema=True,
+                    max_completion_tokens=max_tokens,max_retries=0,skip_validation=True,return_usage=True,
+                )
+                for name in totals:totals[name]+=getattr(usage,name,0) or 0
+                value=result.model_dump() if hasattr(result,"model_dump") else result
+                StructuredResponse.model_validate(value)
+                return agent.StructuredOutputResult(structured_output=value,**totals)
+            except Exception as error:
+                agent.logger.warning("LessonLoop structured output rejected: type=%s schema_checks=%s",type(error).__name__,invalid_fields)
+                if usage is None:
+                    agent.logger.warning("LessonLoop failed structured call usage is unknown; do not treat it as zero cost")
+                if not invalid_fields or attempt==1:
+                    return agent.StructuredOutputResult(**totals)
+                messages.append({"role":"user","content":"The previous conversion did not validate. Correct only the JSON shape using the same reflection and schema. Failed schema checks: "+json.dumps(invalid_fields)+". Do not add factual evidence or loosen boundaries."})
+        return agent.StructuredOutputResult(**totals)
 
     agent._generate_structured_output=generate
