@@ -32,7 +32,7 @@ ObjectRef={kind,id,revision} 用于跨对象结果、反馈、纠正和回执。
 | pinMethod | 用户按id/pinned保存常用标记，不改变方法正文或发布修订 |
 | inspectMethod | 查看当前方法、步骤、来源和状态，可查看有权限的暂停项 |
 | methodHistory | 查看仍保留的旧版与变化，缺失内容明确标注 |
-| prepareMethod | 为任务准备当前可执行前缀，见下节 |
+| prepareMethod | 为任务返回完整方法指导，见下节 |
 | reviseMethod | 修改目标、步骤、条件或纠正说明，通过准入和写协调形成新修订 |
 | setMethodState | active/disabled请求；重新启用仍核对依据，不强制跳过准入 |
 | removeMethod | 先停止投递，再清理当前、旧版和投影；默认保留仍有用途的基础经验 |
@@ -42,25 +42,23 @@ ObjectRef={kind,id,revision} 用于跨对象结果、反馈、纠正和回执。
 
 ## 方法使用与结果回传
 
-prepareMethod 输入 methodId/revision、taskRef、requestId、viewMode=auto/expanded。当前上下文来自核心已保存的任务观察，宿主先recordHostObservation，再reassessTask。续用还带 methodUseRef、completedStepIds。taskRef 由可信宿主绑定；UI/CLI独立使用时由核心生成，不能复用一个任意模型字符串冒充其他任务。
+prepareMethod 输入 methodId/revision、taskRef，可选 requestId 和 viewMode=auto/expanded。一次返回完整指导，无需提交步骤完成记录或调用 reassessTask；该旧接口已移除。taskRef 由核心创建并绑定调用身份，不能用任意字符串冒充其他任务。UI 可选择当前有权访问的同范围宿主任务。
 
-核心先核对授权、当前修订、发布状态、有效期、来源和支持经验，再判断方法全局条件及本次路径。已知例外优先于未知项。搜索相关不等于适用，方法指定也不跳过检查。
+核心核对任务身份、范围、结束状态和期限，以及方法当前修订、发布状态、有效期、来源和支持经验。工作 Agent 根据现场信息判断全局条件、例外和分支。搜索相关不等于本次适用，指定方法也必须检查这些边界。
 
 | 准备结果 | 含义与返回 |
 |---|---|
-| guidance / applicable | 当前可执行前缀、相关条件与检查、executionBoundary、ObjectRef、methodUseRef |
-| lead / undetermined | 前缀本身尚不能确定；返回具体missingChecks，不授予未确定步骤 |
-| not_applicable | 本次不使用，不改方法全局状态 |
+| guidance | 完整条件、步骤/分支、全部检查及其stepIds、executionBoundary、ObjectRef、methodUseRef；不宣称本次已适用或完成 |
 | target_changed | 旧revision过期，丢弃旧视图后重新准备 |
 | target_unavailable | 不存在、无权或资格失效；不泄露隐藏详情 |
 | requires_expansion / too_large | 自动预算不足可显式expanded；显式上限仍不足则不提供残缺视图 |
 | unavailable | 引擎、存储或核对失败；不能当作“没有相关方法” |
 
-诊断步骤可以先执行，停在首个未知分支。choices 在对应步骤完成后按新观察判断；无匹配、多匹配或未知均停止，不暗选默认路。新contextEvidence到达后再次prepare，服务校验completedStepIds来自先前视图且有相应依据。模型自报完成不证明实际结果。准备视图包含全局检查和已选择路径/前缀所绑定的检查，不要求未选分支完成；执行完前缀不等于方法整体完成。
+Agent 从第一个步骤开始，无 choices 时继续下一步；有 choices 时完成该步骤，再根据当前观察选择唯一匹配的 next 或 stop。条件缺失、无匹配或多匹配时调查或询问。完整展示所有分支便于理解，执行时只走所选路径，并应用全局及该路径绑定的检查。执行后才能得知的结果须来自本轮实际操作，不能用旧结果代替。
 
-PrepareContext由核心计数，预算和期限见07。正常方法步骤不算额外补查；重复请求、改排序和修订变化不自动重置任务预算。结束、取消、过期或重启使续用失效，不能自动重开旧执行；显式重新准备需要当前上下文并说明状态已失效。
+prepareMethod 不维护内存执行会话，不保存当前步骤或分支补查次数。每次获取都重查当前资格；核心重启后，未结束且未过期的任务仍可获取方法。methodUseRef 按任务归属、任务和方法修订稳定生成，仅关联反馈，不是执行凭据。相同调用身份重复获取不重复记录使用，也不重置已有结果。
 
-历史返回关联独立保存：学习获准时写入WorkCase.methodUses，只开回顾时写入EffectTask。它只证明核心返回过某视图，投递、采用和结果需要各自依据。关联到期、清空或写入失败后仍接受获准真实结果，但方法关系标unknown，不恢复执行资格。
+学习或回顾开启时保存轻量方法返回关联，学习复盘可将其带入 WorkCase.methodUses，回顾单独记录投递、实际观察及用户评价。返回或投递方法不证明采用和成功；缺少对应依据时保留 unknown。工具结果采集和后台复盘独立于方法获取。
 
 ## 直接经验操作
 
@@ -91,7 +89,7 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 
 首个工作宿主是Copilot CLI，P0前固定候选官方包与版本，比较统一coding-agents和专用copilot-cli中实际可用模块。官方VS Code Copilot和通用Agent Plugin的Skills+MCP能力不等同CLI生命周期hooks，见[官方核查](research/2026-09-14-agent-integration-reuse/README.md)。
 
-官方专用插件已有会话开始召回、按轮次写回、结束保存及工具记录选项；统一包也提供会话写回、注册和日志。分别固定版本并验证覆盖后复用。LessonLoop补充真实任务身份、方法修订、准备续用与结果关联；当前适配未接通的官方能力归为接入工作。
+官方专用插件已有会话开始召回、按轮次写回、结束保存及工具记录选项；统一包也提供会话写回、注册和日志。分别固定版本并验证覆盖后复用。LessonLoop补充真实任务身份、方法修订、完整指导与结果关联；当前适配未接通的官方能力归为接入工作。
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
@@ -100,7 +98,7 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 | 能力 | 验收与限制 |
 |---|---|
 | taskInjection | 新任务首次规划/行动前搜索并准备方法；只配置MCP不算自动路径 |
-| explicitPrepare | 显式指定方法、核实、前缀推进和版本刷新可运行 |
+| explicitPrepare | 显式获取完整方法与刷新当前版本可运行 |
 | trustedCapture | 实际来源角色、尝试与结果可核对；工具配置存在不等于覆盖完整 |
 | stepToolRefresh | 可选增强：工具动作能关联methodUseRef/stepId并在开始前刷新，失败不重新取得旧资格 |
 | trustedOutcome | 声明能观察哪些检查/产物与任务结束，未观察的结果为unknown |

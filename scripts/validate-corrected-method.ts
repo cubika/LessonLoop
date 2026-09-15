@@ -1,10 +1,11 @@
+import { methodPaths } from "../src/domain/method-paths.js";
 import { readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import { digest, type Method } from "../src/domain/schema.js";
+import { type Method } from "../src/domain/schema.js";
 const report = JSON.parse(
   await readFile(
     ".local-validation/results/method-path-correction.json",
@@ -34,7 +35,7 @@ const core = new CoreService(
     scopes: [report.scope],
   };
 const output: any = {
-  classification: "real_generated_method_deterministic_branch_validation",
+  classification: "real_generated_method_guidance_and_path_structure",
   cases: [],
 };
 try {
@@ -47,50 +48,17 @@ try {
     ["version 1 unsupported extension", 2, []],
   ] as const) {
     const task = await core.startTask(p, report.scope);
-    const conditions: Record<string, boolean> = {};
-    method.conditions.forEach((c) => (conditions[digest(c)] = true));
-    method.exceptions.forEach((c) => (conditions[digest(c)] = false));
-    await core.observe(p, {
-      taskRef: task.taskRef,
-      eventId: "global",
-      text: "Synthetic fixture scope established",
-      values: {},
-      completedStepIds: [],
-      conditionResults: conditions,
-    });
-    const prefix = await core.prepare(p, {
-      methodId: method.id,
-      revision: method.revision,
-      taskRef: task.taskRef,
-    });
-    assert.equal(prefix.status, "guidance");
-    assert.deepEqual(
-      (prefix.steps as any[]).map((s) => s.stepId),
-      ["s1"],
-    );
-    method.steps[0]!.choices!.forEach(
-      (choice, i) => (conditions[digest(choice.when)] = i === branch),
-    );
-    await core.observe(p, {
-      taskRef: task.taskRef,
-      eventId: "branch",
-      text: "Synthetic fixture version and requested target inspected",
-      values: {},
-      completedStepIds: ["s1"],
-      conditionResults: conditions,
-    });
     const prepared = await core.prepare(p, {
       methodId: method.id,
       revision: method.revision,
       taskRef: task.taskRef,
-      methodUseRef: prefix.methodUseRef,
-      completedStepIds: ["s1"],
+      viewMode: "expanded",
     });
     assert.equal(prepared.status, "guidance");
-    assert.deepEqual(
-      (prepared.steps as any[]).map((s) => s.stepId),
-      [...want],
-    );
+    assert.deepEqual(prepared.steps, method.steps);
+    const paths = methodPaths(method);
+    assert.equal(paths.truncated, false);
+    assert.deepEqual(paths.paths[branch]?.steps, ["s1", ...want]);
     output.cases.push({ scenario, steps: want, status: "passed" });
   }
   output.status = "passed";

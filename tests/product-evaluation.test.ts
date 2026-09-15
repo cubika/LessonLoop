@@ -221,7 +221,11 @@ test("Product evaluation injects one prepared method or falls back to direct exp
       results: available ? [{ method: { id: "method", revision: 1 } }] : [],
     }),
     startTask: async () => ({ taskRef: "task" }),
-    prepare: async () => ({ status: "lead", missingChecks: ["version"] }),
+    prepare: async () => ({
+      status: "guidance",
+      conditions: [{ text: "version" }],
+      steps: [{ stepId: "inspect" }],
+    }),
     recall: async () => {
       recallCalls++;
       return [{ usage: "lead" }];

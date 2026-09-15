@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
@@ -37,12 +38,14 @@ try {
     previous.methods[0].id,
   )) as Method;
   const task = await core.startTask(host, previous.scope);
-  const lead = await core.prepare(host, {
+  const guidance = await core.prepare(host, {
     methodId: method.id,
     revision: method.revision,
     taskRef: task.taskRef,
   });
-  report.lead = lead;
+  report.guidance = guidance;
+  assert.equal(guidance.status, "guidance");
+  assert.deepEqual(guidance.steps, method.steps);
   const raw =
     "This current task uses the fixture pipeline that copies schema.json to client.json. The requested generated client contract field must survive regeneration. The pipeline relationship is confirmed by reading the pipeline configuration.";
   await core.recordHostObservation(host, {
@@ -51,18 +54,13 @@ try {
     text: raw,
     occurredAt: new Date().toISOString(),
   });
-  report.assessment = await core.reassessTask(agent, {
-    taskRef: task.taskRef,
-    methodId: method.id,
-    revision: method.revision,
-    methodUseRef: lead.methodUseRef,
-  });
   report.prepared = await core.prepare(agent, {
     methodId: method.id,
     revision: method.revision,
     taskRef: task.taskRef,
-    methodUseRef: lead.methodUseRef,
   });
+  assert.deepEqual(report.prepared, guidance);
+  report.classification = "complete_guidance_with_host_observation_capture";
   report.status =
     (report.prepared as { status: string }).status === "guidance"
       ? "passed"

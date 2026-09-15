@@ -16,9 +16,7 @@ const tools = {
   getJob: "Read current learning status",
   searchMethods: "Search currently published method summaries",
   prepareMethod:
-    "Get method guidance. input: {methodId, revision, taskRef, methodUseRef?, completedStepIds?, requestId?}. Reuse the taskRef and methodUseRef supplied by the LessonLoop hook. After checking missing facts with real tools, call reassessTask first and pass its completedStepIds here.",
-  reassessTask:
-    "Check method conditions against tool evidence captured by the host. input: {taskRef, methodId, revision, methodUseRef}. Use the references from the LessonLoop hook. Run the relevant real tools before this call; text claims do not count as observed completion.",
+    "Get complete method guidance. input: {methodId, revision, taskRef, viewMode?, requestId?}. Reuse the taskRef supplied by the LessonLoop hook. Check applicability, follow the steps and choose branches using current tool results. No completion report is needed to obtain later steps. If requires_expansion is returned, request viewMode=expanded.",
   inspectMethod: "Read current method details",
   recall: "Recall eligible experiences",
   inspect: "Inspect a product experience",
@@ -33,14 +31,10 @@ const methodInput = {
   taskRef: z.string().min(1),
 };
 const inputs: Record<string, z.ZodTypeAny> = {
-  reassessTask: z
-    .object({ ...methodInput, methodUseRef: z.string().min(1) })
-    .strict(),
   prepareMethod: z
     .object({
       ...methodInput,
-      methodUseRef: z.string().min(1).optional(),
-      completedStepIds: z.array(z.string()).max(12).optional(),
+      viewMode: z.enum(["auto", "expanded"]).optional(),
       requestId: z.string().max(128).optional(),
     })
     .strict(),
@@ -64,7 +58,7 @@ for (const [name, description] of Object.entries(tools))
           "Idempotency-Key": eventId ?? randomUUID(),
         },
         body: JSON.stringify({ operation: name, input }),
-        signal: AbortSignal.timeout(name === "reassessTask" ? 45000 : 20000),
+        signal: AbortSignal.timeout(20000),
       });
       return {
         content: [

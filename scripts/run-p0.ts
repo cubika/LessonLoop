@@ -119,9 +119,7 @@ try {
   report.runStatus = report.job ? "completed" : "timeout";
   report.gateStatus =
     methods.length &&
-    ["lead", "guidance"].includes(
-      (report.prepared as { status?: string } | undefined)?.status ?? "",
-    )
+    (report.prepared as { status?: string } | undefined)?.status === "guidance"
       ? "partial_evidence"
       : "failed";
 } catch (e) {

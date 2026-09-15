@@ -334,7 +334,7 @@ export async function productContext(
   const methodAvailable =
     prepared &&
     typeof prepared.status === "string" &&
-    ["guidance", "lead"].includes(prepared.status);
+    prepared.status === "guidance";
   const recalled = methodAvailable
     ? null
     : await core.recall(host, fixture.request);
