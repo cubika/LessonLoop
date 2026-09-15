@@ -103,7 +103,7 @@ try {
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
-  await core.syncProjections();
+  await core.syncProjections([scope]);
   const methods = await core.browse(host, "method");
   report.methods = methods;
   report.experiences = await core.browse(host, "experience");
@@ -117,7 +117,13 @@ try {
     });
   }
   report.runStatus = report.job ? "completed" : "timeout";
-  report.gateStatus = methods.length ? "partial_evidence" : "failed";
+  report.gateStatus =
+    methods.length &&
+    ["lead", "guidance"].includes(
+      (report.prepared as { status?: string } | undefined)?.status ?? "",
+    )
+      ? "partial_evidence"
+      : "failed";
 } catch (e) {
   report.runStatus = "failed";
   report.gateStatus = "failed";

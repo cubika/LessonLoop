@@ -254,6 +254,7 @@ export class CoreService {
   private preparation = new Preparation();
   private ticking = false;
   private tickOffset = 0;
+  private projectionOffset = 0;
   private revisionOffset = 0;
   private maintenanceAt = 0;
   constructor(
@@ -1317,7 +1318,7 @@ export class CoreService {
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = "assess-" + randomUUID();
       const assessmentQuery =
-        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
+        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Evaluate a task for EACH branch: assume that branch condition true and other branches false, and verify every global condition is compatible. Reject a global condition specific to another branch, or exceptions that are past observations rather than current task exclusion predicates. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
         JSON.stringify({
           materials,
           retainedSupport: j.retainedSupport ?? [],
@@ -2078,11 +2079,37 @@ export class CoreService {
     );
   }
   async syncProjections(scopes?: string[]) {
-    const pending = await this.store.transaction(async (tx) =>
-      (await tx.list<Projection>("projection", scopes))
-        .filter((v) => !v.confirmed)
-        .slice(0, 8),
+    const candidates = await this.store.transaction(async (tx) => {
+      const rows = [];
+      for (const projection of await tx.list<Projection>(
+        "projection",
+        scopes,
+      )) {
+        if (
+          projection.confirmed ||
+          (await tx.get<ScopeBarrier>("scope_barrier", projection.scopeId))
+            ?.pending
+        )
+          continue;
+        const object = await tx.get<Method | Experience>(
+          projection.objectKind,
+          projection.id,
+        );
+        if (
+          object?.state === "active" &&
+          object.revision === projection.objectRevision
+        )
+          rows.push(projection);
+      }
+      return rows;
+    });
+    const pending = Array.from(
+      { length: Math.min(8, candidates.length) },
+      (_, i) => candidates[(this.projectionOffset + i) % candidates.length]!,
     );
+    if (candidates.length)
+      this.projectionOffset =
+        (this.projectionOffset + pending.length) % candidates.length;
     for (const projection of pending) {
       try {
         if (

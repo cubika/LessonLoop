@@ -634,3 +634,43 @@ test("Rejected methods get one bounded revision while retaining every native ope
     await store.close();
   }
 });
+
+test("A failing published projection cannot starve later valid objects", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    const f = await setup(store),
+      indexed: string[] = [];
+    const engine = f.engine as any;
+    engine.index = async (_scope: string, ref: ObjectRef) => {
+      indexed.push(ref.id);
+      if (ref.id.startsWith("a")) throw new Error("temporarily unavailable");
+      return ref.id;
+    };
+    await store.transaction(async (tx) => {
+      for (let i = 0; i < 10; i++) {
+        const id = (i < 8 ? "a" : "z") + i,
+          method = { ...f.method, id };
+        await tx.put(entry("method", method), null);
+        await tx.put(
+          entry("projection", {
+            id,
+            revision: 1,
+            scopeId: f.scope,
+            objectKind: "method",
+            objectRevision: 1,
+            confirmed: false,
+            text: id,
+          }),
+          null,
+        );
+      }
+    });
+    await f.core.syncProjections([f.scope]);
+    await f.core.syncProjections([f.scope]);
+    assert.ok(indexed.includes("z8"));
+    assert.ok(indexed.includes("z9"));
+  } finally {
+    await store.close();
+  }
+});
