@@ -22,12 +22,12 @@
       </section>
       <section id="workspace" hidden>
         <nav>
-          <button data-view="methods" aria-current="page">方法库</button
-          ><button data-view="records">案例与经验</button
-          ><button data-view="materials">提交材料</button
-          ><button data-view="settings">设置</button>
+          <button data-view="methods" aria-current="page">
+            方法库 · Playbook</button
+          ><button data-view="records">经验 · Experience</button>
+          <button data-view="sources">来源 · Source</button>
+          <button data-view="settings">设置</button>
           <button data-view="effects">效果回顾</button>
-          <button data-view="sources">来源</button>
           <button data-view="connections">连接器</button>
         </nav>
         <div id="review-notifications" role="status"></div>
@@ -67,15 +67,8 @@
           </div>
         </div>
         <div id="records" hidden>
-          <h1>案例与经验</h1>
-          <button id="new-case">记录工作案例</button>
+          <h1>经验</h1>
           <form id="record-search" class="filters">
-            <label
-              >内容<select id="record-kind">
-                <option value="work_case">工作案例</option>
-                <option value="experience">经验</option>
-              </select></label
-            >
             <label>关键词<input id="record-query" /></label>
             <label
               >范围<select id="record-scope">
@@ -95,11 +88,11 @@
               <div id="record-pages" class="pagination"></div>
             </div>
             <article id="record-detail">
-              <p>选择案例查看尝试与结果，或选择经验查看依据。</p>
+              <p>选择经验查看依据，展开相关工作记录。</p>
             </article>
           </div>
         </div>
-        <div id="materials" hidden>
+        <div id="sources" hidden>
           <h1>记录工作片段</h1>
           <label>范围<input id="scope" value="personal" /></label
           ><label
@@ -110,6 +103,12 @@
             ></textarea></label
           ><button id="submit">提交并复盘</button>
           <pre id="job"></pre>
+          <h2>已保存来源</h2>
+          <p>
+            撤回会停止使用该来源。擦除会清除服务中的副本；永久忘记还会拒收该来源的后续输入。
+          </p>
+          <button id="refresh-sources">刷新</button>
+          <div id="source-list"></div>
         </div>
         <div id="settings" hidden>
           <h1>设置</h1>
@@ -124,14 +123,6 @@
           <div id="review-issues"></div>
           <h2>周期回顾</h2>
           <div id="periodic-reviews"></div>
-        </div>
-        <div id="sources" hidden>
-          <h1>材料来源</h1>
-          <p>
-            撤回会停止使用该来源。擦除会清除服务中的副本；永久忘记还会拒收该来源的后续输入。
-          </p>
-          <button id="refresh-sources">刷新</button>
-          <div id="source-list"></div>
         </div>
         <div id="connections" hidden>
           <h1>样例连接器</h1>

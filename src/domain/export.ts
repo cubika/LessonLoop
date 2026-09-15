@@ -10,7 +10,7 @@ export function exportMethod(
   const line = (value: string) => value.replaceAll("\r", "");
   const sections: string[] = [];
   if (format === "skill") {
-    const name = `method-${method.id}`;
+    const name = `playbook-${method.id}`;
     sections.push(`---
 name: ${name}
 description: ${JSON.stringify(method.goal)}
@@ -18,7 +18,7 @@ description: ${JSON.stringify(method.goal)}
   }
   sections.push(
     `# ${line(method.title)}`,
-    `Method ${method.id} · revision ${method.revision} · ${method.state}`,
+    `Playbook ${method.id} · revision ${method.revision} · ${method.state}`,
     `Exported ${new Date().toISOString()}. This is an independent snapshot. Check the current revision in LessonLoop before use. Source changes and deletion do not update this file.`,
     line(method.goal),
   );

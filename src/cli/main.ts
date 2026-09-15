@@ -24,17 +24,17 @@ async function main() {
       [
         "LessonLoop CLI",
         "  serve [--initialize] | status | rpc <operation> [input.json]",
-        "  method list [--query text --scope id --topic text --state active|held|disabled --limit n --cursor value --pinned]",
-        "  method show|history <id> | pin|unpin <id> | restore <id> <old-revision>",
-        "  method prepare|revise|state|remove|export|rate <input.json>",
-        "  case list [input.json] | show <id> | submit|append <material.json>",
-        "    append requires material.caseFor = {kind: work_case, id, revision}.",
-        "  experience list [input.json] | show <id> | verify <material.json>",
+        "  playbook list [--query text --scope id --topic text --state active|held|disabled --limit n --cursor value --pinned]",
+        "  playbook show|history|work|usage <id> | pin|unpin <id> | restore <id> <old-revision>",
+        "  playbook prepare|revise|state|remove|export|rate <input.json>",
+        "  experience list [input.json] | show|work <id> | verify <source.json>",
         "  experience revise <input.json> (id, expectedRevision, correctionText; holds for evidence review)",
         "  experience feedback|state|remove <input.json>",
         "  task list [input.json] | review topic <input.json> | job show|cancel|retry <id>",
-        "  source list|control|cleanup | connector add|list|sync|schedule|bindings|state|forget|retry",
-        "  report list|notifications|configure|dismiss|export | material submit <material.json>",
+        "  source list | show|work <id> | submit|append|control <input.json> | cleanup <id>",
+        "    append requires sourceFor = {id, revision} from a Source reference.",
+        "  connector add|list|sync|schedule|bindings|state|forget|retry",
+        "  report list|notifications|configure|dismiss|export",
         "JSON inputs follow the corresponding RPC contract. restore sends old content for review; it does not immediately publish it.",
       ].join("\n"),
     );
@@ -108,8 +108,7 @@ async function main() {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Idempotency-Key":
-          process.env.LESSONLOOP_EVENT_ID ?? randomUUID(),
+        "Idempotency-Key": process.env.LESSONLOOP_EVENT_ID ?? randomUUID(),
       },
       body: JSON.stringify({ operation, input }),
       signal: AbortSignal.timeout(30000),
@@ -133,15 +132,17 @@ async function main() {
   }
   let operation = args.shift();
   let input: unknown = {};
-  if (command === "method") {
+  if (command === "playbook") {
     if (operation === "restore") {
       const id = args.shift(),
         revision = Number(args.shift());
       if (!id || !Number.isSafeInteger(revision) || revision < 1)
-        throw new Error("method restore requires an id and positive revision");
+        throw new Error(
+          "playbook restore requires an id and positive revision",
+        );
       const [history, current] = await Promise.all([
-        call("methodHistory", { id }),
-        call("inspectMethod", { id }),
+        call("playbookHistory", { id }),
+        call("inspectPlaybook", { id }),
       ]);
       const previous = (history.result as Array<Record<string, unknown>>).find(
         (v) => v.revision === revision,
@@ -151,11 +152,11 @@ async function main() {
         id: string;
         revision: number;
       }>) {
-        const fetched = (await call("inspect", { id: reference.id }))
+        const fetched = (await call("inspectExperience", { id: reference.id }))
           .result as { revision: number };
         if (fetched.revision !== reference.revision)
           throw new Error(
-            "Historical support has changed. Open the method editor to review current evidence before resubmitting.",
+            "Historical support has changed. Open the playbook editor to review current evidence before resubmitting.",
           );
       }
       const body = Object.fromEntries(
@@ -179,7 +180,7 @@ async function main() {
       };
       console.log(
         JSON.stringify(
-          await call("reviseMethod", {
+          await call("revisePlaybook", {
             id,
             expectedRevision: (current.result as { revision: number }).revision,
             body,
@@ -192,22 +193,27 @@ async function main() {
     }
     const action = operation;
     const map: Record<string, string> = {
-      list: "browseMethods",
-      show: "inspectMethod",
-      history: "methodHistory",
-      prepare: "prepareMethod",
-      revise: "reviseMethod",
-      state: "setMethodState",
-      remove: "removeMethod",
-      export: "exportMethod",
-      pin: "pinMethod",
-      unpin: "pinMethod",
-      rate: "rateMethodUse",
+      list: "browsePlaybooks",
+      show: "inspectPlaybook",
+      history: "playbookHistory",
+      work: "getWorkView",
+      usage: "getUsageView",
+      prepare: "preparePlaybook",
+      revise: "revisePlaybook",
+      state: "setPlaybookState",
+      remove: "removePlaybook",
+      export: "exportPlaybook",
+      pin: "pinPlaybook",
+      unpin: "pinPlaybook",
+      rate: "ratePlaybookUse",
     };
     operation = map[operation ?? ""];
-    if (operation === "pinMethod")
+    if (operation === "getWorkView")
+      input = { kind: "playbook", id: args.shift() };
+    else if (operation === "getUsageView") input = { playbookId: args.shift() };
+    else if (operation === "pinPlaybook")
       input = { id: args.shift(), pinned: action === "pin" };
-    else if (operation === "browseMethods" && args[0]?.startsWith("--")) {
+    else if (operation === "browsePlaybooks" && args[0]?.startsWith("--")) {
       const filters: Record<string, unknown> = {};
       while (args.length) {
         const flag = args.shift()!;
@@ -241,7 +247,7 @@ async function main() {
         } else filters[flag.slice(2)] = value;
       }
       input = filters;
-    } else if (["inspectMethod", "methodHistory"].includes(operation ?? ""))
+    } else if (["inspectPlaybook", "playbookHistory"].includes(operation ?? ""))
       input = { id: args.shift() };
     else if (args[0])
       input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
@@ -250,7 +256,6 @@ async function main() {
       "source",
       "connector",
       "report",
-      "case",
       "experience",
       "review",
       "job",
@@ -259,25 +264,24 @@ async function main() {
   ) {
     const action = operation;
     const maps: Record<string, Record<string, string>> = {
-      case: {
-        list: "browseWorkCases",
-        show: "inspectWorkCase",
-        submit: "submitMaterial",
-        append: "submitMaterial",
-      },
       experience: {
-        list: "browse",
-        show: "inspect",
-        verify: "submitMaterial",
+        work: "getWorkView",
+        list: "browseExperiences",
+        show: "inspectExperience",
+        verify: "submitSource",
         revise: "feedback",
         feedback: "feedback",
-        state: "setState",
-        remove: "remove",
+        state: "setExperienceState",
+        remove: "removeExperience",
       },
       review: { topic: "reviewTopic" },
       job: { show: "getJob", cancel: "cancelJob", retry: "retryJob" },
       task: { list: "listTasks" },
       source: {
+        submit: "submitSource",
+        append: "submitSource",
+        show: "inspectSource",
+        work: "getWorkView",
         list: "listSources",
         control: "controlSource",
         cleanup: "getSourceCleanup",
@@ -308,14 +312,16 @@ async function main() {
         "connector.bindings",
         "connector.retry",
         "reviews.dismiss",
-        "inspectWorkCase",
-        "inspect",
+        "inspectSource",
+        "inspectExperience",
         "getJob",
         "cancelJob",
         "retryJob",
       ].includes(operation ?? "")
     )
       input = { id: args.shift() };
+    else if (operation === "getWorkView")
+      input = { kind: command, id: args.shift() };
     else if (args[0])
       input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
     if (command === "experience" && action === "revise") {
@@ -337,12 +343,12 @@ async function main() {
       };
     }
     if (
-      command === "case" &&
+      command === "source" &&
       action === "append" &&
-      !(input as { caseFor?: unknown }).caseFor
+      !(input as { sourceFor?: unknown }).sourceFor
     )
       throw new Error(
-        "case append requires caseFor with the current case id and revision",
+        "source append requires sourceFor with the current source id and revision",
       );
     if (
       command === "experience" &&
@@ -352,9 +358,6 @@ async function main() {
       throw new Error(
         "experience verify requires verificationFor with the held experience id and revision",
       );
-  } else if (command === "material" && operation === "submit") {
-    operation = "submitMaterial";
-    input = JSON.parse(await readFile(resolve(args[0] ?? ""), "utf8"));
   } else if (command === "rpc" && args[0])
     input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
   else if (command !== "rpc") throw new Error("unknown command");

@@ -30,7 +30,7 @@ try {
   await new Promise((done, reject) => {
     const child = spawn(
       node,
-      [resolve(product, "dist/cli/main.js"), "rpc", "searchMethods"],
+      [resolve(product, "dist/cli/main.js"), "rpc", "searchPlaybooks"],
       {
         windowsHide: true,
         env: { ...environment, LESSONLOOP_CONFIG_STDIN: "1" },
@@ -73,9 +73,9 @@ try {
   await client.connect(transport, { timeout: 15000 });
   transport.stderr?.resume();
   const tools = await client.listTools();
-  assert.ok(tools.tools.some((tool) => tool.name === "searchMethods"));
+  assert.ok(tools.tools.some((tool) => tool.name === "searchPlaybooks"));
   const result = await client.callTool({
-    name: "searchMethods",
+    name: "searchPlaybooks",
     arguments: { input: {} },
   });
   assert.equal(result.isError, false);
@@ -83,7 +83,7 @@ try {
   assert.equal(requests.length, 2);
   for (const request of requests) {
     assert.equal(request.headers.authorization, "Bearer " + token);
-    assert.equal(request.body.operation, "searchMethods");
+    assert.equal(request.body.operation, "searchPlaybooks");
     assert.match(request.headers["idempotency-key"], /^[0-9a-f-]{36}$/);
   }
   console.log(

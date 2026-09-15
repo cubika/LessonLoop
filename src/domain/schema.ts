@@ -92,6 +92,7 @@ export const materialInputSchema = z
     verificationFor: refSchema
       .extend({ kind: z.literal("experience") })
       .optional(),
+    sourceFor: z.object({ id, revision }).strict().optional(),
   })
   .strict()
   .refine((v) => byteSize(v) <= 32768, "Material exceeds 32 KiB");

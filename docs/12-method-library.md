@@ -4,6 +4,8 @@
 
 ## 方法库首页
 
+主要内容入口是方法库（Playbook）、经验（Experience）和来源（Source）。来源页合并原文提交、查看与控制；经验和方法详情按需展开相关工作记录。效果回顾是事件视图，不提供独立案例的创建或编辑入口。
+
 首页按工作主题组织方法，例如接口变更、性能排查和发布检查。方法卡显示名称、目标、主要适用范围、使用状态和最近变化。用户可固定常用方法，按主题、项目条件、可用性和关键词查找。
 
 方法库优先展示用户可做的事和具体变化，L1–L5用于展开学习依据，不把最高层级放在所有结果最前。复盘中、需要新信息和处理失败属于作业状态，方法未更新时不显示虚假的成长。
@@ -27,7 +29,7 @@
 
 自动推荐开启时，Agent在新任务开始搜索方法并获取最相关一项的完整指导。Agent核实全局条件，按步骤取得实际结果并选择分支；没有合适方法照常工作。使用过程中无需向服务逐步上报完成或申请后续步骤。
 
-用户可在详情选择“用于当前任务”，或在Agent中直接指定方法。客户端绑定方法修订和任务，调用prepareMethod；宿主无法关联任务时提供方法引用或导出，不显示已投递。UI不另起一个工作流执行器。
+用户可在详情选择“用于当前任务”，或在Agent中直接指定方法。客户端绑定方法修订和任务，调用preparePlaybook；宿主无法关联任务时提供方法引用或导出，不显示已投递。UI不另起一个工作流执行器。
 
 页面承担方法查看、编辑、选择和状态反馈。实际观察与步骤结果由Copilot工作过程捕获，供后台学习和回顾；首版不要求用户在页面逐步勾选或手工驱动分支。官方管理组件可复用，产品读写须接到核心。当前页面可选择核心列出的活跃宿主任务，并复制含方法修订及使用引用的结果；准备成功仍不冒充宿主已投递。
 
@@ -49,14 +51,16 @@
 
 | 命令组 | 用途 |
 |---|---|
-| lessonloop case submit/show | 提交或查看工作案例和部分结果 |
-| lessonloop review topic/job | 发起主题复盘或查询学习作业 |
-| lessonloop method list/show/history | 查找方法、查看步骤及版本变化 |
-| lessonloop method prepare | 给定任务与上下文准备方法，不执行步骤 |
-| lessonloop method revise/disable/remove | 修订、停用或删除，核对当前版本 |
-| lessonloop method export | 导出指定修订的可审阅快照 |
-| lessonloop learning status/pause/resume | 管理学习范围内的新摄取和自动复盘 |
-| lessonloop report show/settings | 查看效果回顾并管理回顾和通知 |
+| lessonloop source submit/show/append | 提交、查看来源片段，补充同一工作的结果 |
+| lessonloop source work / experience work / playbook work | 按需展开相关工作记录 |
+| lessonloop experience list/show/verify | 查看经验与补充依据 |
+| lessonloop review topic / job show | 发起主题复盘或查询学习作业 |
+| lessonloop playbook list/show/history | 查找方法、查看步骤及版本变化 |
+| lessonloop playbook prepare | 为任务获取完整指导 |
+| lessonloop playbook revise/state/remove | 修订、停用或删除，核对当前版本 |
+| lessonloop playbook export | 导出指定修订的可审阅快照 |
+| lessonloop playbook usage | 按需查看该方法的使用记录 |
+| lessonloop report list/configure | 查看效果回顾并管理回顾和通知 |
 
 默认中文界面不强制存储语言。翻译显示不改原文引用或自动产生新修订。安装、运行和引擎诊断命令由[10](10-distribution-and-installation.md)说明。
 

@@ -9,6 +9,7 @@ const secret = JSON.parse(
 const files = [
   "tests/postgres.integration.ts",
   "tests/http.integration.ts",
+  "tests/public-contract.integration.ts",
   "tests/connector.integration.ts",
   "tests/source-control.integration.ts",
   "tests/task-learning.integration.ts",

@@ -40,7 +40,7 @@ flowchart LR
 | 官方能力 | 使用方式 | 产品仍负责什么 |
 |---|---|---|
 | facts、因果提取、observations | 原生学习管线，读取有来源的候选 | 组织案例与分层目标、准入和方法内容 |
-| reflect、mental models | 复用结构化输出、playbook、自动/delta刷新及历史，生成并维护方法候选 | 定义方法Schema，核对结构、依据和范围，持有已发布的独立Method版本 |
+| reflect、mental models | 复用结构化输出、playbook、自动/delta刷新及历史，生成并维护方法候选 | 定义方法Schema，核对结构、依据和范围，持有已发布的独立Playbook版本 |
 | 索引、实体和原生存储 | 通过 HindsightAdapter 调用 | 发布资格、产品检索投影和迁移合同 |
 | 持久异步作业、取消和重试 | 直接使用官方原生处理队列和状态接口 | LearningJob关联原生操作，协调产品取消意图、写屏障及发布结果 |
 | Agent hooks、MCP、诊断模块 | 选定官方包后复用可用代码并转换调用 | 方法准备、可信来源、结果关联及宿主能力声明 |
@@ -52,7 +52,7 @@ flowchart LR
 
 ## 可替换边界
 
-工作代理、模型 provider 和 MemoryEngine 分开适配。产品持有 WorkCase、Experience、Method、用户控制和版本；Hindsight 持有原文、事实、图与内部归纳。原生 ID、bank 和 score 不成为公开产品身份或可信度。
+工作代理、模型 provider 和 MemoryEngine 分开适配。产品持有 WorkCase、Experience、Playbook、用户控制和版本；Hindsight 持有原文、事实、图与内部归纳。原生 ID、bank 和 score 不成为公开产品身份或可信度。
 
 更换 Agent 只替换宿主接入；更换引擎需要新适配、来源/索引映射、数据迁移和相同合同验收。首期只实现 Hindsight，不为将来替换提前建设第二后端或实时双写。模型 provider 可复用现有 Copilot 登录，与前台工作会话隔离，避免递归采集学习模型自己的输出。
 
@@ -70,7 +70,7 @@ flowchart LR
 
 投影优先使用可验证的引擎独立命名空间；不支持精确映射和前置过滤时增加可重建索引。它不执行另一轮提取，不作为产品状态权威。所有返回在组装时再核对产品当前修订、来源、依赖及写屏障。
 
-自动方法路径是 searchMethods → prepareMethod。服务核对权限、修订与依据资格后返回完整指导，工作 Agent 负责检查适用性、执行步骤和选择分支。工具结果继续按授权采集，供后台复盘使用；使用方法无需额外模型复核或逐步续用。直接经验 recall 是补充路径，预算由[07](07-storage-model.md#预算)统一规定。
+自动方法路径是 searchPlaybooks → preparePlaybook。服务核对权限、修订与依据资格后返回完整指导，工作 Agent 负责检查适用性、执行步骤和选择分支。工具结果继续按授权采集，供后台复盘使用；使用方法无需额外模型复核或逐步续用。直接经验 recall 是补充路径，预算由[07](07-storage-model.md#预算)统一规定。
 
 ## 经验输出必须经过核心
 
@@ -80,9 +80,9 @@ browse/inspect 可以显式查看有权限的 held 或 disabled 对象，但不�
 
 ## 来源与用户控制
 
-产品 ID 和修订独立于原生对象。EngineBinding 记录实际原生依据，Method 引用产品 Experience。来源重处理、拆分或 ID 变化后重查绑定，无法确认则暂停受影响的建议，不凭相似文本恢复。
+产品 ID 和修订独立于原生对象。EngineBinding 记录实际原生依据，Playbook 引用产品 Experience。来源重处理、拆分或 ID 变化后重查绑定，无法确认则暂停受影响的建议，不凭相似文本恢复。
 
-纠正和停用先写产品控制屏障，再调用原生操作。官方 curation 会在来源重处理时重置，独立控制用于保留用户意图。Method 的沿革与有限旧版保存在产品库，不依赖原生 mental model 历史。
+纠正和停用先写产品控制屏障，再调用原生操作。官方 curation 会在来源重处理时重置，独立控制用于保留用户意图。Playbook 的沿革与有限旧版保存在产品库，不依赖原生 mental model 历史。
 
 依赖失效同步阻止新的投递，后台再重新归纳和组装。缺来源或超过检查预算时不返回方法。所有支持查询必须说明覆盖是否完整，几条真实引用不等于所有依赖都已检查。
 

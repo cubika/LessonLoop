@@ -77,6 +77,7 @@ interface Job {
     | "uncertain"
     | "canceled";
   materialIds: string[];
+  sourceSupplement?: boolean;
   operationId?: string;
   modelId?: string;
   assessmentId?: string;
@@ -437,6 +438,54 @@ export class CoreService {
         if (prev.hash !== hash) throw new Conflict("idempotency_conflict");
         return { ...prev, accepted: true, duplicate: true };
       }
+      let parentMaterial: Material | undefined;
+      let parentTaskRef: string | undefined;
+      let parentSourceFamily: string | undefined;
+      if (data.sourceFor) {
+        const parent = await this.owned<Source>(
+          tx,
+          p,
+          "source",
+          data.sourceFor.id,
+        );
+        if (
+          parent.scopeId !== data.scopeId ||
+          parent.revision !== data.sourceFor.revision
+        )
+          throw new Conflict("source_target_changed");
+        if (parent.blocked || parent.erased || parent.excluded)
+          throw new ApiError("source_unavailable", 409);
+        parentMaterial = await tx.get<Material>("material", parent.materialId);
+        const cases = (await tx.list<WorkCase>("work_case", [data.scopeId]))
+          .filter((c) => c.evidence.some((e) => e.fingerprint === parent.id))
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        if (cases[0])
+          data.caseFor = ref("work_case", cases[0]) as NonNullable<
+            typeof data.caseFor
+          >;
+        parentTaskRef = parentMaterial?.taskRef ?? cases[0]?.taskRef;
+        parentSourceFamily =
+          parentMaterial?.sourceFamily ??
+          cases[0]?.sourceFamily ??
+          digest(parent.sourceIdentity);
+        if (parentTaskRef) {
+          const task = await this.owned<Task>(tx, p, "task", parentTaskRef);
+          if (
+            task.scopeId !== data.scopeId ||
+            (p.channel === "host" &&
+              (task.callerId !== p.id ||
+                (data.context?.taskRef &&
+                  data.context.taskRef !== parentTaskRef)))
+          )
+            throw new ApiError("task_identity_mismatch", 403);
+          if (
+            data.segments.some((s) =>
+              task.erasedObservationHashes?.includes(digest(s.text)),
+            )
+          )
+            throw new ApiError("source_erased_from_task", 409);
+        }
+      }
       if (!(await this.settings(tx, data.scopeId)).learning)
         throw new ApiError("learning_disabled", 409);
       if ((await tx.get<ScopeBarrier>("scope_barrier", data.scopeId))?.pending)
@@ -518,6 +567,8 @@ export class CoreService {
           : p.channel === "host" && typeof data.context?.taskRef === "string"
             ? { sourceFamily: digest([p.id, data.context.taskRef]) }
             : {}),
+        ...(parentTaskRef ? { taskRef: parentTaskRef } : {}),
+        ...(parentSourceFamily ? { sourceFamily: parentSourceFamily } : {}),
       };
       const blockedSources = new Set(
         (await tx.list<Source>("source", [data.scopeId]))
@@ -533,12 +584,14 @@ export class CoreService {
             )
           : new Set<string>();
       const taskMaterials =
-        p.channel === "host" && typeof data.context?.taskRef === "string"
+        material.taskRef || parentSourceFamily
           ? (await tx.list<Material>("material", [data.scopeId]))
               .filter(
                 (m) =>
-                  ((m.sourceFamily === material.sourceFamily &&
-                    m.taskRef === data.context!.taskRef) ||
+                  (((m.sourceFamily ?? digest(m.sourceIdentity)) ===
+                    material.sourceFamily &&
+                    m.taskRef === material.taskRef) ||
+                    m.id === parentMaterial?.id ||
                     (m.caseFor && linkedCases.has(m.caseFor.id))) &&
                   !m.fingerprints.some((fp) => blockedSources.has(fp)),
               )
@@ -549,8 +602,10 @@ export class CoreService {
         byteSize([...taskMaterials, material]) > 131072
       )
         throw new ApiError("task_material_budget", 413);
-      if (material.taskRef) {
-        const sequenceId = digest([data.scopeId, material.taskRef]);
+      if (material.taskRef || parentSourceFamily) {
+        const sequenceId = material.taskRef
+          ? digest([data.scopeId, material.taskRef])
+          : digest([data.scopeId, "source-family", parentSourceFamily]);
         const counter = await tx.get<{
           id: string;
           revision: number;
@@ -609,6 +664,7 @@ export class CoreService {
           ...new Set(learningMaterials.flatMap((m) => m.fingerprints)),
         ],
         ...(data.caseFor ? { caseTarget: data.caseFor } : {}),
+        ...(data.sourceFor ? { sourceSupplement: true } : {}),
         ...(verificationTarget
           ? {
               verificationTarget,
@@ -821,6 +877,7 @@ export class CoreService {
         results: [],
         decisions: [],
         ...(old.caseTarget ? { caseTarget: old.caseTarget } : {}),
+        ...(old.sourceSupplement ? { sourceSupplement: true } : {}),
         ...(old.verificationTarget
           ? {
               verificationTarget: old.verificationTarget,
@@ -1643,6 +1700,38 @@ export class CoreService {
             m.taskRef === inputTask ||
             !!(m.caseFor && linkedCases.has(m.caseFor.id)),
         );
+      // A source-family snapshot can finish before its original ingestion job.
+      // Do not create a second work view for inputs already covered by it.
+      if (!inputTask && !j.sourceSupplement && materials.length === 1) {
+        const material = materials[0]!;
+        const binding = await tx.get<{ materialIds?: string[] }>(
+          "case_binding",
+          digest([
+            j.scopeId,
+            "source-family",
+            material.sourceFamily ?? digest(material.sourceIdentity),
+          ]),
+        );
+        if (binding?.materialIds?.includes(material.id)) {
+          await tx.put(
+            entry(
+              "job",
+              mutate(j, {
+                status: "completed",
+                stage: "done",
+                decisions: [
+                  {
+                    disposition: "merge",
+                    reason: "newer_source_snapshot_already_published",
+                  },
+                ],
+              }),
+            ),
+            j.revision,
+          );
+          return;
+        }
+      }
       if (inputTask && j.taskSequence && sameTask) {
         const bindingId = digest([j.scopeId, "host-task", inputTask]);
         const binding = await tx.get<{ taskSequence?: number }>(
@@ -1728,7 +1817,13 @@ export class CoreService {
         const caseBindingId =
           task && task.scopeId === j.scopeId
             ? digest([j.scopeId, "host-task", task.id])
-            : digest([j.scopeId, ...materials.map((m) => m.id).sort()]);
+            : j.sourceSupplement
+              ? digest([
+                  j.scopeId,
+                  "source-family",
+                  materials.at(-1)?.sourceFamily,
+                ])
+              : digest([j.scopeId, ...materials.map((m) => m.id).sort()]);
         const existingBinding = await tx.get<{ caseId: string }>(
           "case_binding",
           caseBindingId,
@@ -1737,7 +1832,7 @@ export class CoreService {
           | { caseId: string; materialIds?: string[]; taskSequence?: number }
           | undefined;
         if (
-          task &&
+          (task || j.sourceSupplement) &&
           generation?.taskSequence &&
           j.taskSequence &&
           generation.taskSequence > j.taskSequence
@@ -1759,17 +1854,49 @@ export class CoreService {
           ? await tx.get<WorkCase>("work_case", j.caseTarget.id)
           : undefined;
         const taskCase =
-          task && existingBinding
+          (task || j.sourceSupplement) && existingBinding
             ? await tx.get<WorkCase>("work_case", existingBinding.caseId)
             : undefined;
         if (
           j.caseTarget &&
           (!oldCase ||
-            oldCase.revision !== j.caseTarget.revision ||
+            (!j.sourceSupplement &&
+              oldCase.revision !== j.caseTarget.revision) ||
             oldCase.scopeId !== j.scopeId)
         )
           throw new Conflict("case_target_changed");
         const bound = bindEvidence(output.workCase.evidence);
+        // Source supplements may include a full task snapshot. Merge the same
+        // observation once while preserving the original evidence indexes.
+        const combinedEvidence = oldCase ? [...oldCase.evidence] : [...bound];
+        const evidenceMap = bound.map((e) => {
+          const index = combinedEvidence.findIndex(
+            (prior) => canonical(prior) === canonical(e),
+          );
+          if (index >= 0) return index;
+          combinedEvidence.push(e);
+          return combinedEvidence.length - 1;
+        });
+        const combinedAttempts = oldCase ? [...oldCase.attempts] : [];
+        for (const attempt of output.workCase.attempts) {
+          const next = {
+            ...attempt,
+            evidenceIndexes: attempt.evidenceIndexes.map(
+              (i) => evidenceMap[i]!,
+            ),
+          };
+          if (
+            !combinedAttempts.some(
+              (prior) =>
+                prior.action === next.action &&
+                prior.observation === next.observation &&
+                prior.outcome === next.outcome &&
+                canonical([...prior.evidenceIndexes].sort()) ===
+                  canonical([...next.evidenceIndexes].sort()),
+            )
+          )
+            combinedAttempts.push(next);
+        }
         if (taskCase) {
           const retained = taskCase.evidence.filter((e) =>
             indexedSources.some((s) => s.fingerprint === e.fingerprint),
@@ -1799,26 +1926,14 @@ export class CoreService {
         }
         const c: WorkCase = workCaseSchema.parse({
           ...output.workCase,
-          evidence: oldCase ? [...oldCase.evidence, ...bound] : bound,
-          attempts: oldCase
-            ? [
-                ...oldCase.attempts,
-                ...output.workCase.attempts.map((a) => ({
-                  ...a,
-                  evidenceIndexes: a.evidenceIndexes.map(
-                    (i) => i + oldCase.evidence.length,
-                  ),
-                })),
-              ]
-            : output.workCase.attempts,
-          result: oldCase
-            ? {
-                ...output.workCase.result,
-                evidenceIndexes: output.workCase.result.evidenceIndexes.map(
-                  (i) => i + oldCase.evidence.length,
-                ),
-              }
-            : output.workCase.result,
+          evidence: combinedEvidence,
+          attempts: combinedAttempts,
+          result: {
+            ...output.workCase.result,
+            evidenceIndexes: output.workCase.result.evidenceIndexes.map(
+              (i) => evidenceMap[i]!,
+            ),
+          },
           ...(oldCase
             ? {
                 ...identity(j.scopeId),
@@ -1890,7 +2005,7 @@ export class CoreService {
                 revision: 1,
                 scopeId: j.scopeId,
                 caseId: c.id,
-                ...(task
+                ...(task || j.sourceSupplement
                   ? {
                       materialIds: j.materialIds,
                       taskSequence: j.taskSequence ?? 0,
@@ -1899,7 +2014,7 @@ export class CoreService {
               }),
               null,
             );
-          else if (task) {
+          else if (task || j.sourceSupplement) {
             const binding = await tx.get<{
               id: string;
               revision: number;
@@ -3151,14 +3266,16 @@ export class CoreService {
           [cleanup.scopeId],
         ))
           if (material.fingerprints.includes(source.id)) {
-            if (typeof material.context?.taskRef === "string") {
-              const texts = taskCopies.get(material.context.taskRef) ?? [];
+            const retainedTaskRef =
+              material.taskRef ?? material.context?.taskRef;
+            if (typeof retainedTaskRef === "string") {
+              const texts = taskCopies.get(retainedTaskRef) ?? [];
               texts.push(
                 ...material.segments
                   .filter((_, i) => material.fingerprints[i] === source.id)
                   .map((s) => s.text),
               );
-              taskCopies.set(material.context.taskRef, texts);
+              taskCopies.set(retainedTaskRef, texts);
             }
             const next = mutate(material, {
               context:

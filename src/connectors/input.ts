@@ -34,14 +34,14 @@ export const connectorMaterialSchema = z
   .object({
     ...common,
     segments: evidence,
-    caseFor: materialInputSchema.innerType().shape.caseFor,
+    sourceFor: materialInputSchema.innerType().shape.sourceFor,
     verificationFor: materialInputSchema.innerType().shape.verificationFor,
   })
   .strict();
 const workCaseInput = z
   .object({
     ...common,
-    kind: z.literal("work_case"),
+    kind: z.literal("source"),
     topic: text(256).optional(),
     goal: text(1024),
     attempts: z
@@ -77,7 +77,7 @@ const experienceInput = z
 const methodInput = z
   .object({
     ...common,
-    kind: z.literal("method_draft"),
+    kind: z.literal("playbook_draft"),
     title: text(256),
     goal: text(1024),
     conditions: boundary,
@@ -108,8 +108,8 @@ const methodInput = z
     evidence,
   })
   .strict();
-export const connectorInputSchema = z.discriminatedUnion("kind", [
-  connectorMaterialSchema.extend({ kind: z.literal("material") }),
+export const connectorInputSchema = z.union([
+  connectorMaterialSchema.extend({ kind: z.literal("source") }),
   workCaseInput,
   experienceInput,
   methodInput,
@@ -125,11 +125,11 @@ export function normalizeInput(input: unknown): MaterialPart[] {
   const value = connectorInputSchema.parse(input);
   if (byteSize(value) > CONNECTOR_LIMITS.batchBytes)
     throw new ApiError("source_change_too_large");
-  if (value.kind === "material") {
+  if (value.kind === "source" && "segments" in value) {
     const { kind, ...material } = value;
     return splitMaterial(material);
   }
-  if (value.kind === "method_draft") {
+  if (value.kind === "playbook_draft") {
     const positions = new Map(
       value.steps.map((step, index) => [step.stepId, index]),
     );

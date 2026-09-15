@@ -12,26 +12,26 @@ if (!["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
   throw new Error("agent_api_must_be_local");
 const server = new McpServer({ name: "lessonloop", version: "0.0.1" });
 const tools = {
-  submitMaterial: "Submit authorized agent material for learning",
+  submitSource: "Submit authorized agent material for learning",
   getJob: "Read current learning status",
-  searchMethods: "Search currently published method summaries",
-  prepareMethod:
-    "Get complete method guidance. input: {methodId, revision, taskRef, viewMode?, requestId?}. Reuse the taskRef supplied by the LessonLoop hook. Check applicability, follow the steps and choose branches using current tool results. No completion report is needed to obtain later steps. If requires_expansion is returned, request viewMode=expanded.",
-  inspectMethod: "Read current method details",
-  recall: "Recall eligible experiences",
-  inspect: "Inspect a product experience",
+  searchPlaybooks: "Search currently published playbook summaries",
+  preparePlaybook:
+    "Get complete playbook guidance. input: {playbookId, revision, taskRef, viewMode?, requestId?}. Reuse the taskRef supplied by the LessonLoop hook. Check applicability, follow the steps and choose branches using current tool results. No completion report is needed to obtain later steps. If requires_expansion is returned, request viewMode=expanded.",
+  inspectPlaybook: "Read current playbook details",
+  recallExperiences: "Recall eligible experiences",
+  inspectExperience: "Inspect a product experience",
   reviewTopic: "Review a bounded topic",
-  feedback: "Report method or experience feedback",
+  feedback: "Report playbook or experience feedback",
   startTask:
     "Create a separate agent-owned task. input: {scopeId, eventId?}. When the LessonLoop hook already supplied a taskRef, continue that task instead.",
 };
 const methodInput = {
-  methodId: z.string().min(1),
+  playbookId: z.string().min(1),
   revision: z.number().int().positive(),
   taskRef: z.string().min(1),
 };
 const inputs: Record<string, z.ZodTypeAny> = {
-  prepareMethod: z
+  preparePlaybook: z
     .object({
       ...methodInput,
       viewMode: z.enum(["auto", "expanded"]).optional(),

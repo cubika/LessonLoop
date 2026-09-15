@@ -8,6 +8,12 @@ import { Conflict } from "../store/postgres.js";
 import { Effects } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import { SampleConnector } from "../connectors/sample.js";
+import {
+  publicOperations,
+  publicValue,
+  internalInput,
+} from "./public-contract.js";
+import { inspectSource, sourceReceipt, workView } from "./source-views.js";
 const connectors = new WeakMap<CoreService, SampleConnector>();
 function sample(core: CoreService) {
   let connector = connectors.get(core);
@@ -29,7 +35,7 @@ const envelope = z
   .object({ operation: z.string(), input: z.unknown().optional() })
   .strict();
 const identifier = z.object({ id: z.string().min(1).max(128) }).strict();
-export async function dispatch(
+async function dispatchInternal(
   core: CoreService,
   p: Principal,
   operation: string,
@@ -110,33 +116,6 @@ export async function dispatch(
       return core.getSettings(p);
     case "settings.update":
       return core.configure(p, input);
-    case "submitMaterial":
-    case "submitWorkCase":
-      return core.submitMaterial(p, input, key);
-    case "appendCaseResult": {
-      const v = z
-        .object({
-          caseId: z.string(),
-          expectedRevision: z.number().int().positive(),
-          scopeId: z.string(),
-          segments: z.array(z.unknown()).min(1).max(16),
-        })
-        .strict()
-        .parse(input);
-      return core.submitMaterial(
-        p,
-        {
-          scopeId: v.scopeId,
-          segments: v.segments,
-          caseFor: {
-            kind: "work_case",
-            id: v.caseId,
-            revision: v.expectedRevision,
-          },
-        },
-        key,
-      );
-    }
     case "listSources":
       return core.listSources(p);
     case "controlSource":
@@ -214,10 +193,6 @@ export async function dispatch(
         correctionText: v.correctionText,
       });
     }
-    case "inspectWorkCase":
-      return core.inspect(p, "work_case", identifier.parse(input).id);
-    case "browseWorkCases":
-      return core.browse(p, "work_case");
     case "inspect":
       return core.inspect(p, "experience", identifier.parse(input).id);
     case "browse":
@@ -297,6 +272,101 @@ export async function dispatch(
     default:
       throw new ApiError("unknown_operation", 404);
   }
+}
+export async function dispatch(
+  core: CoreService,
+  p: Principal,
+  operation: string,
+  raw: unknown,
+  key: string,
+): Promise<unknown> {
+  if (
+    Object.values(publicOperations).includes(operation) ||
+    [
+      "submitMaterial",
+      "submitWorkCase",
+      "appendCaseResult",
+      "inspectWorkCase",
+      "browseWorkCases",
+    ].includes(operation)
+  )
+    throw new ApiError("unknown_operation", 404);
+  if (operation === "submitSource") {
+    const input = z
+      .object({
+        scopeId: z.string(),
+        segments: z.array(z.unknown()).min(1).max(16),
+        context: z.unknown().optional(),
+        verificationFor: z.unknown().optional(),
+        sourceFor: z
+          .object({ id: z.string(), revision: z.number().int().positive() })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .parse(raw);
+    return sourceReceipt(core, p, await core.submitMaterial(p, input, key));
+  }
+  if (operation === "inspectSource")
+    return inspectSource(core, p, identifier.parse(raw).id);
+  if (operation === "listSources")
+    return Promise.all(
+      (await core.listSources(p)).map((s) => inspectSource(core, p, s.id)),
+    );
+  if (operation === "getWorkView") {
+    const input = z
+      .object({
+        kind: z.enum(["source", "experience", "playbook"]),
+        id: z.string().min(1).max(128),
+      })
+      .strict()
+      .parse(raw);
+    return workView(core, p, input);
+  }
+  if (operation === "getUsageView") {
+    const input = z
+      .object({ playbookId: z.string().optional() })
+      .strict()
+      .parse(raw ?? {});
+    if (input.playbookId) await core.inspect(p, "method", input.playbookId);
+    const rows = await new Effects(core.store).cases(p.scopes);
+    return publicValue(
+      rows.filter(
+        (row) =>
+          !input.playbookId ||
+          row.events.some((e) => e.method?.id === input.playbookId),
+      ),
+    );
+  }
+  if (operation === "feedback")
+    z.object({
+      target: z
+        .object({ kind: z.enum(["experience", "playbook"]) })
+        .passthrough(),
+    })
+      .passthrough()
+      .parse(raw);
+  const input = internalInput(raw);
+  if (operation === "cancelJob") {
+    const id = identifier.parse(input).id;
+    await core.cancelJob(p, id);
+    return publicValue(await core.getJob(p, id));
+  }
+  if (operation === "revisePlaybook" && input?.body?.change) {
+    const previous = (await core.inspect(p, "method", input.id)) as unknown as {
+      change: { caseRefs: unknown[] };
+    };
+    input.body.change.caseRefs = previous.change.caseRefs;
+  }
+  return publicValue(
+    await dispatchInternal(
+      core,
+      p,
+      publicOperations[operation] ?? operation,
+      input,
+      key,
+    ),
+  );
 }
 async function body(req: IncomingMessage) {
   const chunks: Buffer[] = [];

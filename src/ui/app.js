@@ -91,7 +91,7 @@ async function list() {
     methodPage = 0;
   }
   const request = ++methodListRequest;
-  const result = await rpc("browseMethods", {
+  const result = await rpc("browsePlaybooks", {
     ...filter,
     limit: pageSize,
     ...(methodCursors[methodPage] ? { cursor: methodCursors[methodPage] } : {}),
@@ -118,7 +118,7 @@ async function list() {
     pin.setAttribute("aria-pressed", String(method.pinned));
     pin.onclick = handle(async (event) => {
       event.stopPropagation();
-      await rpc("pinMethod", { id: method.id, pinned: !method.pinned });
+      await rpc("pinPlaybook", { id: method.id, pinned: !method.pinned });
       methodPage = 0;
       methodCursors = [undefined];
       await list();
@@ -159,7 +159,7 @@ $("search").onsubmit = handle(async (e) => {
   await list();
 });
 async function show(id) {
-  current = await rpc("inspectMethod", { id });
+  current = await rpc("inspectPlaybook", { id });
   const d = $("detail");
   d.replaceChildren(node("h2", current.title), node("p", current.goal));
   d.append(
@@ -172,7 +172,7 @@ async function show(id) {
     d,
     "方法引用（可带回宿主任务）",
     JSON.stringify({
-      kind: "method",
+      kind: "playbook",
       id: current.id,
       revision: current.revision,
     }),
@@ -210,7 +210,7 @@ async function show(id) {
     current.state === "disabled" ? "重新检查并启用" : "停用",
   );
   state.onclick = handle(async () => {
-    await rpc("setMethodState", {
+    await rpc("setPlaybookState", {
       id,
       expectedRevision: current.revision,
       state: current.state === "disabled" ? "active" : "disabled",
@@ -220,7 +220,7 @@ async function show(id) {
   });
   const history = node("button", "查看历史");
   history.onclick = handle(async () => {
-    const versions = await rpc("methodHistory", { id });
+    const versions = await rpc("playbookHistory", { id });
     const panel = node("section", "");
     panel.append(node("h3", "修订比较"));
     if (!versions.length) panel.append(node("p", "暂无保留的历史修订。"));
@@ -253,16 +253,30 @@ async function show(id) {
     d.append(panel);
   });
   d.append(state, history);
+  addWorkView(d, { kind: "playbook", id });
+  const usage = node("button", "查看使用记录");
+  usage.onclick = handle(async () => {
+    const rows = await rpc("getUsageView", { playbookId: id });
+    const panel = node("section", "");
+    panel.append(node("h3", "使用记录"));
+    if (!rows.length) panel.append(node("p", "暂无保留的使用记录。"));
+    for (const row of rows) {
+      panel.append(node("h4", row.taskRef));
+      row.events.forEach((event) => panel.append(node("p", event.text)));
+    }
+    d.append(panel);
+  });
+  d.append(usage);
   const edit = node("button", "修改方法");
   edit.onclick = handle(() => editMethod(d));
   const prepare = node("button", "关联宿主任务");
-  prepare.onclick = handle(() => prepareMethod(d));
+  prepare.onclick = handle(() => preparePlaybook(d));
   const evidence = node("button", "查看依据");
   evidence.onclick = handle(async () => {
     const panel = node("section", "");
     panel.append(node("h3", "方法依据"));
     for (const support of current.supportRefs) {
-      const value = await rpc("inspect", { id: support.id });
+      const value = await rpc("inspectExperience", { id: support.id });
       panel.append(
         node(
           "p",
@@ -287,7 +301,7 @@ async function show(id) {
           const text = field(form, "实际原文或观察", "", true);
           const send = node("button", "提交补证");
           send.onclick = handle(async () => {
-            const receipt = await rpc("submitMaterial", {
+            const receipt = await rpc("submitSource", {
               scopeId: value.scopeId,
               verificationFor: {
                 kind: "experience",
@@ -325,12 +339,12 @@ async function show(id) {
   d.append(edit, prepare, evidence);
   const feedback = node("button", "评价或报告错误");
   feedback.onclick = handle(() =>
-    feedbackForm(d, "method", current, () => show(id)),
+    feedbackForm(d, "playbook", current, () => show(id)),
   );
   const remove = node("button", "删除方法");
   remove.onclick = handle(async () => {
     if (!confirm("删除这个方法？删除后将不再推荐它。")) return;
-    await rpc("removeMethod", { id, expectedRevision: current.revision });
+    await rpc("removePlaybook", { id, expectedRevision: current.revision });
     d.replaceChildren(node("p", "方法已删除。"));
     await list();
   });
@@ -348,7 +362,7 @@ async function show(id) {
   }
   const exportButton = node("button", "导出快照");
   exportButton.onclick = handle(async () => {
-    const result = await rpc("exportMethod", {
+    const result = await rpc("exportPlaybook", {
       id,
       revision: current.revision,
       format: format.value,
@@ -377,7 +391,6 @@ document.querySelectorAll("[data-view]").forEach(
       [
         "methods",
         "records",
-        "materials",
         "settings",
         "effects",
         "sources",
@@ -397,7 +410,7 @@ document.querySelectorAll("[data-view]").forEach(
             `任务 ${summary.tasks} · 已投递 ${summary.delivered} · 成功 ${summary.succeeded} · 失败 ${summary.failed} · 结果未知 ${summary.unknownOutcome}`,
           ),
         );
-        const cases = await rpc("listEffectCases");
+        const cases = await rpc("getUsageView");
         $("effect-cases").replaceChildren(
           ...cases.map((c) => {
             const section = node("section", "");
@@ -504,7 +517,7 @@ async function editMethod(parent, previous) {
     true,
   );
   const loadedSupport = await Promise.allSettled(
-    method.supportRefs.map((ref) => rpc("inspect", { id: ref.id })),
+    method.supportRefs.map((ref) => rpc("inspectExperience", { id: ref.id })),
   );
   const missing = loadedSupport.flatMap((result, index) =>
     result.status === "rejected" ? [method.supportRefs[index].id] : [],
@@ -752,7 +765,7 @@ async function editMethod(parent, previous) {
       }
     }
     if (!reason.value.trim()) throw new Error("请填写修改说明。");
-    const result = await rpc("reviseMethod", {
+    const result = await rpc("revisePlaybook", {
       id: latest.id,
       expectedRevision: latest.revision,
       body: {
@@ -788,7 +801,7 @@ async function editMethod(parent, previous) {
   });
   panel.append(save, cancel);
 }
-async function prepareMethod(parent) {
+async function preparePlaybook(parent) {
   const method = structuredClone(current);
   const panel = node("section", "");
   panel.append(
@@ -830,15 +843,15 @@ async function prepareMethod(parent) {
   const prepare = async (viewMode = "auto") => {
     const taskRef = task.value,
       request = ++preparationRequest;
-    const result = await rpc("prepareMethod", {
-      methodId: method.id,
+    const result = await rpc("preparePlaybook", {
+      playbookId: method.id,
       revision: method.revision,
       taskRef,
       viewMode,
       requestId: crypto.randomUUID(),
     });
     if (request !== preparationRequest || task.value !== taskRef) return;
-    use = result.methodUseRef;
+    use = result.playbookUseRef;
     output.replaceChildren(node("h4", "本次任务的方法"));
     if (result.status === "guidance") {
       output.append(
@@ -906,16 +919,16 @@ async function prepareMethod(parent) {
         "带回宿主的任务引用",
         JSON.stringify({
           taskRef,
-          methodId: method.id,
+          playbookId: method.id,
           revision: method.revision,
-          methodUseRef: use,
+          playbookUseRef: use,
         }),
       );
       reference.readOnly = true;
       reference.onclick = () => reference.select();
       const rate = node("button", "评价这次使用");
-      const methodUseRef = use;
-      rate.onclick = handle(() => rateUseForm(output, taskRef, methodUseRef));
+      const playbookUseRef = use;
+      rate.onclick = handle(() => rateUseForm(output, taskRef, playbookUseRef));
       output.append(rate);
     }
   };
@@ -956,7 +969,7 @@ function feedbackForm(parent, kind, value, refresh) {
   panel.append(save);
   parent.append(panel);
 }
-function rateUseForm(parent, taskRef, methodUseRef) {
+function rateUseForm(parent, taskRef, playbookUseRef) {
   const panel = node("section", "");
   panel.append(node("h3", "评价这次使用"));
   const rating = selectField(panel, "实际感受", [
@@ -967,9 +980,9 @@ function rateUseForm(parent, taskRef, methodUseRef) {
     text = field(panel, "说明（可选）", "", true);
   const save = node("button", "保存评价");
   save.onclick = handle(async () => {
-    const receipt = await rpc("rateMethodUse", {
+    const receipt = await rpc("ratePlaybookUse", {
       taskRef,
-      methodUseRef,
+      playbookUseRef,
       rating: rating.value,
       ...(text.value.trim() ? { text: text.value.trim() } : {}),
     });
@@ -1032,7 +1045,7 @@ function supplementExperience(parent, experience) {
     send = node("button", "提交补证");
   send.onclick = handle(async () => {
     if (!evidence.value.trim()) throw new Error("请填写可核对的原文或观察。");
-    const receipt = await rpc("submitMaterial", {
+    const receipt = await rpc("submitSource", {
       scopeId: experience.scopeId,
       verificationFor: {
         kind: "experience",
@@ -1048,10 +1061,7 @@ function supplementExperience(parent, experience) {
   parent.append(panel);
 }
 function resetRecordStates() {
-  const states =
-    $("record-kind").value === "experience"
-      ? ["active", "held", "disabled"]
-      : ["succeeded", "failed", "partial", "abandoned", "unknown"];
+  const states = ["active", "held", "disabled"];
   $("record-state").replaceChildren(node("option", "全部状态"));
   $("record-state").firstChild.value = "";
   for (const state of states) {
@@ -1060,67 +1070,17 @@ function resetRecordStates() {
     $("record-state").append(option);
   }
 }
-$("record-kind").onchange = handle(async () => {
-  resetRecordStates();
-  recordPage = 0;
-  await renderRecords();
-});
 $("record-search").onsubmit = handle(async (event) => {
   event.preventDefault();
   recordPage = 0;
   await renderRecords();
 });
-$("new-case").onclick = () => {
-  const d = $("record-detail");
-  d.replaceChildren(
-    node("h2", "记录工作案例"),
-    node("p", "写下实际尝试和观察。复盘会保留依据，不确定的结果可以继续补充。"),
-  );
-  const scope = selectField(
-      d,
-      "范围",
-      settings.map((s) => [s.scopeId, s.scopeId]),
-      $("record-scope").value || settings[0]?.scopeId,
-    ),
-    topic = field(d, "主题", ""),
-    goal = field(d, "工作目标", "", true),
-    context = field(d, "背景与限制", "", true),
-    attempts = field(d, "实际尝试、观察及原文依据", "", true),
-    status = selectField(
-      d,
-      "结果",
-      ["unknown", "partial", "succeeded", "failed", "abandoned"].map((key) => [
-        key,
-        labels[key],
-      ]),
-    ),
-    result = field(d, "结果说明与仍待确认的问题", "", true),
-    submit = node("button", "提交案例复盘");
-  submit.onclick = handle(async () => {
-    if (!topic.value.trim() || !goal.value.trim() || !attempts.value.trim())
-      throw new Error("请填写主题、目标和实际尝试。");
-    const text = `主题：${topic.value.trim()}\n工作目标：${goal.value.trim()}\n背景与限制：${context.value.trim()}\n实际尝试与观察：${attempts.value.trim()}\n用户报告结果：${labels[status.value]}\n结果说明与未解决问题：${result.value.trim()}`;
-    const receipt = await rpc("submitMaterial", {
-      scopeId: scope.value,
-      segments: [{ role: "user", text }],
-    });
-    submit.disabled = true;
-    jobControls(d, receipt, async () => {
-      $("record-kind").value = "work_case";
-      resetRecordStates();
-      recordPage = 0;
-      await renderRecords();
-    });
-  });
-  d.append(submit);
-};
-resetRecordStates();
 async function renderRecords() {
-  const kind = $("record-kind").value,
+  const kind = "experience",
     query = $("record-query").value.trim().toLowerCase(),
     scope = $("record-scope").value,
     state = $("record-state").value;
-  const rows = (await rpc(kind === "experience" ? "browse" : "browseWorkCases"))
+  const rows = (await rpc("browseExperiences"))
     .filter(
       (row) =>
         (!scope || row.scopeId === scope) &&
@@ -1176,10 +1136,7 @@ async function renderRecords() {
   );
 }
 async function showRecord(kind, id) {
-  const value = await rpc(
-      kind === "experience" ? "inspect" : "inspectWorkCase",
-      { id },
-    ),
+  const value = await rpc("inspectExperience", { id }),
     d = $("record-detail");
   d.replaceChildren(
     node("h2", value.topic ?? value.conclusion),
@@ -1192,76 +1149,7 @@ async function showRecord(kind, id) {
   );
   reference.readOnly = true;
   reference.onclick = () => reference.select();
-  if (kind === "work_case") {
-    d.append(node("h3", "目标与背景"), node("p", value.goal));
-    for (const [key, text] of Object.entries(value.context))
-      d.append(
-        node("p", `${key}：${Array.isArray(text) ? text.join("、") : text}`),
-      );
-    d.append(node("h3", "尝试与观察"));
-    for (const attempt of value.attempts)
-      d.append(
-        node("h4", attempt.action),
-        node("p", attempt.observation),
-        node("p", labels[attempt.outcome]),
-      );
-    d.append(
-      node("h3", "结果"),
-      node("p", `${labels[value.result.status]}：${value.result.summary}`),
-    );
-    if (value.unresolved.length)
-      d.append(
-        node("h3", "仍待确认"),
-        ...value.unresolved.map((text) => node("p", text)),
-      );
-    if (value.coverage.length)
-      d.append(
-        node("h3", "记录范围"),
-        ...value.coverage.map((text) => node("p", text)),
-      );
-    if (value.taskRef) d.append(node("p", `关联任务：${value.taskRef}`));
-    for (const use of value.methodUses) {
-      const rate = node(
-        "button",
-        `评价方法 ${use.method.id.slice(0, 8)} 的使用`,
-      );
-      rate.onclick = handle(() =>
-        rateUseForm(d, use.taskRef, use.methodUseRef),
-      );
-      d.append(rate);
-    }
-    const supplement = node("button", "补充结果或后续观察");
-    supplement.onclick = () => {
-      const panel = node("section", "");
-      const result = selectField(
-          panel,
-          "观察到的结果",
-          ["unknown", "partial", "succeeded", "failed", "abandoned"].map(
-            (status) => [status, labels[status]],
-          ),
-        ),
-        text = field(panel, "实际结果、尝试及可核对的依据", "", true),
-        send = node("button", "提交结果复盘");
-      send.onclick = handle(async () => {
-        if (!text.value.trim()) throw new Error("请填写实际结果和依据。");
-        const receipt = await rpc("submitMaterial", {
-          scopeId: value.scopeId,
-          caseFor: { kind: "work_case", id, revision: value.revision },
-          segments: [
-            {
-              role: "user",
-              text: `用户报告结果：${labels[result.value]}。\n${text.value.trim()}`,
-            },
-          ],
-        });
-        send.disabled = true;
-        jobControls(panel, receipt, () => showRecord(kind, id));
-      });
-      panel.append(send);
-      d.append(panel);
-    };
-    d.append(supplement);
-  } else {
+  {
     d.append(
       node(
         "p",
@@ -1301,7 +1189,7 @@ async function showRecord(kind, id) {
       value.state === "disabled" ? "重新启用" : "停用经验",
     );
     state.onclick = handle(async () => {
-      await rpc("setState", {
+      await rpc("setExperienceState", {
         id,
         expectedRevision: value.revision,
         state: value.state === "disabled" ? "active" : "disabled",
@@ -1311,6 +1199,7 @@ async function showRecord(kind, id) {
     });
     d.append(state);
   }
+  addWorkView(d, { kind: "experience", id });
   d.append(node("h3", "原文依据"));
   for (const evidence of value.evidence)
     d.append(node("blockquote", `[${evidence.role}] ${evidence.excerpt}`));
@@ -1328,6 +1217,20 @@ async function renderSources() {
         `${source.scopeId} · ${source.erased ? "副本已擦除" : source.blocked ? "已撤回" : "可用"}${source.excluded ? " · 永久拒收" : ""}`,
       ),
     );
+    if (source.segment) card.append(node("blockquote", source.segment.text));
+    else
+      card.append(
+        node(
+          "p",
+          source.contentStatus === "erased" ? "原文已擦除" : "原文保留期已结束",
+        ),
+      );
+    addWorkView(card, { kind: "source", id: source.id });
+    if (!source.blocked && !source.erased) {
+      const append = node("button", "补充结果或后续观察");
+      append.onclick = () => supplementSource(card, source);
+      card.append(append);
+    }
     for (const [action, label] of [
       ["withdraw", "撤回"],
       ["erase", "擦除副本"],
@@ -1477,7 +1380,7 @@ $("add-connection").onclick = handle(async () => {
     `已添加，初始范围为所选文件全部 ${result.preview.changes} 项。连接保持暂停，恢复后可同步。`;
 });
 $("submit").onclick = handle(async () => {
-  const r = await rpc("submitMaterial", {
+  const r = await rpc("submitSource", {
     scopeId: $("scope").value,
     segments: [{ text: $("material").value, role: "user" }],
   });
@@ -1537,7 +1440,7 @@ async function renderPeriodicReviews() {
           stats.unknownOutcome,
       ),
     );
-    review.methods.forEach((m) =>
+    review.playbooks.forEach((m) =>
       card.append(node("p", "方法变化：" + m.title + " · 修订 " + m.revision)),
     );
     card.append(
@@ -1728,5 +1631,52 @@ function exportCaseForm(parent, caseData) {
     panel.append(download);
   });
   panel.append(preview, output);
+  parent.append(panel);
+}
+
+function addWorkView(parent, target) {
+  const button = node("button", "查看相关工作记录");
+  button.onclick = handle(async () => {
+    const view = await rpc("getWorkView", target);
+    const panel = node("section", "");
+    panel.append(node("h3", "相关工作记录"));
+    if (!view.items.length) panel.append(node("p", "暂无保留的工作记录。"));
+    for (const item of view.items) {
+      panel.append(node("h4", item.topic), node("p", item.goal));
+      for (const attempt of item.attempts)
+        panel.append(node("p", attempt.action), node("p", attempt.observation));
+      panel.append(node("p", item.result.summary));
+      for (const evidence of item.evidence)
+        panel.append(node("blockquote", evidence.excerpt));
+      for (const source of item.sources) {
+        const open = node("button", "查看来源 " + source.id.slice(0, 8));
+        open.onclick = handle(async () => {
+          const value = await rpc("inspectSource", { id: source.id });
+          panel.append(node("blockquote", value.segment?.text ?? "原文已清理"));
+          if (!value.blocked && !value.erased) supplementSource(panel, value);
+        });
+        panel.append(open);
+      }
+    }
+    parent.append(panel);
+    button.disabled = true;
+  });
+  parent.append(button);
+}
+function supplementSource(parent, source) {
+  const panel = node("section", "");
+  const text = field(panel, "实际结果、尝试及可核对的依据", "", true);
+  const send = node("button", "提交结果复盘");
+  send.onclick = handle(async () => {
+    if (!text.value.trim()) throw new Error("请填写实际结果和依据。");
+    const receipt = await rpc("submitSource", {
+      scopeId: source.scopeId,
+      sourceFor: { id: source.id, revision: source.revision },
+      segments: [{ role: "user", text: text.value.trim() }],
+    });
+    send.disabled = true;
+    jobControls(panel, receipt, renderSources);
+  });
+  panel.append(send);
   parent.append(panel);
 }

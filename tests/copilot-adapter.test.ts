@@ -4,6 +4,7 @@ import {
   eventTime,
   promptEnvelope,
   transcriptEvent,
+  stripInjectedMemory,
 } from "../src/adapters/copilot/protocol.js";
 test("Copilot transformation preserves the actual transformed prompt", () => {
   const out = promptEnvelope(
@@ -13,6 +14,14 @@ test("Copilot transformation preserves the actual transformed prompt", () => {
   assert.equal(
     out.modifiedTransformedPrompt,
     "transformed\n\nbounded guidance",
+  );
+});
+test("Current and previous guidance tags never become source text", () => {
+  assert.equal(
+    stripInjectedMemory(
+      "before <lessonloop-method>old</lessonloop-method><lessonloop-playbook>new</lessonloop-playbook> after",
+    ),
+    "before  after",
   );
 });
 test("Copilot transcript roles bind actual host event types", () => {

@@ -4,7 +4,7 @@
 
 ## 职责
 
-Connector负责外部认证、读取、分页、来源身份和内容转换。ConnectorRuntime负责连接配置、调度、背压、可靠接收与游标。核心将获准输入整理为WorkCase或提炼Experience，再形成Method。Connector不直写引擎，不授予active/supported，不替用户运行方法。
+Connector负责外部认证、读取、分页、来源身份和内容转换。ConnectorRuntime负责连接配置、调度、背压、可靠接收与游标。核心将获准输入整理为WorkCase或提炼Experience，再形成Playbook。Connector不直写引擎，不授予active/supported，不替用户运行方法。
 
 同一Connector可有多个Connection，各自绑定账号、选择范围和目标scope。凭据在系统凭据设施，模块只保存引用。首期随产品交付显式注册的模块，无插件市场、热加载或公网Webhook要求。
 
@@ -18,10 +18,9 @@ Connection包含connectionId、connectorType/version、targetScopeId、sourceSel
 
 | 输入 | 核心处理 |
 |---|---|
-| material | 保留原文和归属，直接提炼或关联工作案例 |
-| work_case | 规范化目标、尝试、结果和缺口，不强制存在完整任务或既有方法 |
+| source | 保留原文和归属；也可提交目标、尝试、结果和缺口，由核心整理内部工作视图 |
 | experience_draft | 校验单一主张、原文和边界，再准入 |
-| method_draft | 拆出步骤中的事实依据，检查条件、分支和完成标准，再组装方法 |
+| playbook_draft | 拆出步骤中的事实依据，检查条件、分支和完成标准，再组装方法 |
 | source_delete | 按连接声明和用户配置撤回或擦除来源，不直接删除所有共享知识 |
 
 标准调用为checkConnection、readPage(checkpoint,limits)、normalize、ingestChanges(connectionId,batch)。返回每项accepted/unchanged/ignored/rejected/retryable，接收成功不表示学会。外部ID、发布状态和用户角色不会直接成为内部受信字段。
@@ -66,7 +65,7 @@ current/pending是每个资源的有限状态，不是整任务的事件数组�
 
 source_superseded表示一个旧修订被替代，source_withdrawn表示来源不再支持建议，source_erased表示清除副本，user_forget表示明确永久拒收。状态、引用和所有工作Agent输出均检查当前来源控制。
 
-删除一个来源时按剩余独立支持重评Experience与Method，不无差别清空知识。用户纠正独立保存，普通重复同步不覆盖持续要求、不启用disabled、不延长复评期限。
+删除一个来源时按剩余独立支持重评Experience与Playbook，不无差别清空知识。用户纠正独立保存，普通重复同步不覆盖持续要求、不启用disabled、不延长复评期限。
 
 忘记整任务或源对象时，父资源标excluded，完整清点子资源及保留的旧修订标记并拒收未来追加。无法列出子资源的Connector不能声明支持完整父对象忘记；需先补清单能力或仅提供明确有限范围删除。
 

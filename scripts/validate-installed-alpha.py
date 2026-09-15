@@ -37,7 +37,7 @@ try:
     material={"scopeId":scope,"context":{"taskRef":task["taskRef"]},"segments":[
         {"role":"user","text":"Add customerId to the generated client and verify regeneration preserves it."},
         {"role":"tool","text":"Executed the isolated fixture: schema.json was copied to client.json. Editing client.json directly then regenerating lost customerId. Editing schema.json then regenerating produced fields [id, customerId]. Python equality assertions checked the actual files after both attempts."}]}
-    receipt=rpc("submitMaterial",material,"host","alpha-synthetic-case-"+task["taskRef"])
+    receipt=rpc("submitSource",material,"host","alpha-synthetic-case-"+task["taskRef"])
     report["receipt"]=receipt
     deadline=time.monotonic()+900;last=None
     while time.monotonic()<deadline:
@@ -48,12 +48,12 @@ try:
         if job["status"]=="completed" and job["receipt"]["replacement"]["status"]=="effective":break
         time.sleep(2)
     else:raise RuntimeError("Learning or publication deadline exceeded")
-    methods=rpc("searchMethods",{"query":"generated client regeneration"})
+    methods=rpc("searchPlaybooks",{"query":"generated client regeneration"})
     report["methods"]=methods
     if not methods["results"]:raise RuntimeError("No usable method produced")
-    method=methods["results"][0]["method"]
+    method=methods["results"][0]["playbook"]
     fresh=rpc("startTask",{"scopeId":scope},"host")
-    prepared=rpc("prepareMethod",{"methodId":method["id"],"revision":method["revision"],"taskRef":fresh["taskRef"]},"host")
+    prepared=rpc("preparePlaybook",{"playbookId":method["id"],"revision":method["revision"],"taskRef":fresh["taskRef"]},"host")
     report["prepared"]=prepared
     if prepared["status"] != "guidance":raise RuntimeError("Method preparation unavailable")
     report["status"]="passed"

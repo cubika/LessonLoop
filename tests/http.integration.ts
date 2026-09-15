@@ -63,7 +63,7 @@ test("HTTP rejects unauthenticated and cross-origin requests; accepted input is 
       ).status,
       200,
     );
-    const accepted = await rpc("submitMaterial", {
+    const accepted = await rpc("submitSource", {
       scopeId: scope,
       segments: [
         {
