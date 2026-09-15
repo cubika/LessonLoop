@@ -18,7 +18,7 @@ export async function startUiFixture() {
     review: { question: "核对最新版本是否仍保留扩展", reviewBy: createdAt },
   };
   const base = {
-    id: "method-ui",
+    id: "playbook-ui",
     revision: 2,
     scopeId: "ui-check",
     title: "核对生成文件",
@@ -38,19 +38,18 @@ export async function startUiFixture() {
     change: {
       kind: "create",
       summary: "用于界面检查的独立样例",
-      caseRefs: [],
       predecessors: [],
     },
     createdAt,
     updatedAt: createdAt,
     pinned: false,
   };
-  const methods = Array.from({ length: 14 }, (_, i) => ({
+  const playbooks = Array.from({ length: 14 }, (_, i) => ({
     ...structuredClone(base),
-    id: i ? "method-ui-" + i : base.id,
+    id: i ? "playbook-ui-" + i : base.id,
     title: base.title + (i ? " " + i : ""),
   }));
-  const workCase = {
+  const workView = {
     id: "case-ui",
     revision: 1,
     scopeId: "ui-check",
@@ -72,7 +71,7 @@ export async function startUiFixture() {
       {
         taskRef: "task-ui",
         playbookUseRef: "use-ui",
-        method: { id: base.id, revision: 2 },
+        playbook: { id: base.id, revision: 2 },
       },
     ],
     evidence: experience.evidence,
@@ -102,7 +101,7 @@ export async function startUiFixture() {
           ];
           break;
         case "browsePlaybooks": {
-          const rows = methods.filter(
+          const rows = playbooks.filter(
             (m) =>
               (!input.pinnedOnly || m.pinned) &&
               (!input.query || m.title.includes(input.query)) &&
@@ -121,11 +120,11 @@ export async function startUiFixture() {
           break;
         }
         case "pinPlaybook":
-          methods.find((m) => m.id === input.id).pinned = input.pinned;
+          playbooks.find((m) => m.id === input.id).pinned = input.pinned;
           result = { pinned: input.pinned };
           break;
         case "inspectPlaybook":
-          result = methods.find((m) => m.id === input.id);
+          result = playbooks.find((m) => m.id === input.id);
           break;
         case "playbookHistory":
           result = [{ ...base, revision: 1, title: "旧版生成文件检查" }];
@@ -153,7 +152,7 @@ export async function startUiFixture() {
             target: input,
             items: [
               {
-                ...workCase,
+                ...workView,
                 sources: [{ kind: "source", id: "source-ui", revision: 1 }],
               },
             ],

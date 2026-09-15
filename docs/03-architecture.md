@@ -26,9 +26,9 @@ flowchart LR
 | 模块 | 责任 |
 |---|---|
 | CoreService / ProductStore | 认证、范围、类型化对象、版本、用户控制和写协调 |
-| CaseBuilder | 组装 WorkCase，关联动作与结果，识别共同来源和缺口 |
+| CaseBuilder | 组装 WorkView，关联动作与结果，识别共同来源和缺口 |
 | LearningService | 选择主题和案例，调用原生提取/归纳，校验 L1–L5 候选 |
-| MethodService | 组装步骤与分支、修订方法、保存变化和同步发布投影 |
+| PlaybookService | 组装步骤与分支、修订方法、保存变化和同步发布投影 |
 | RetrievalService | 检索已发布对象、检查资格、返回完整方法指导 |
 | MemoryEngine | 提供提取、综合、候选/来源读取、索引能力和作业确认 |
 | AgentAdapter | 复用官方采集、事件解析与回填模块，转换产品调用和回传结果 |
@@ -52,13 +52,13 @@ flowchart LR
 
 ## 可替换边界
 
-工作代理、模型 provider 和 MemoryEngine 分开适配。产品持有 WorkCase、Experience、Playbook、用户控制和版本；Hindsight 持有原文、事实、图与内部归纳。原生 ID、bank 和 score 不成为公开产品身份或可信度。
+工作代理、模型 provider 和 MemoryEngine 分开适配。产品持有 WorkView、Experience、Playbook、用户控制和版本；Hindsight 持有原文、事实、图与内部归纳。原生 ID、bank 和 score 不成为公开产品身份或可信度。
 
 更换 Agent 只替换宿主接入；更换引擎需要新适配、来源/索引映射、数据迁移和相同合同验收。首期只实现 Hindsight，不为将来替换提前建设第二后端或实时双写。模型 provider 可复用现有 Copilot 登录，与前台工作会话隔离，避免递归采集学习模型自己的输出。
 
 ## 学习管线
 
-核心先确认来源、范围、大小和脱敏，再保存材料与 LearningJob。CaseBuilder 整理一次工作，资料也可直接提炼 Experience。LearningService 在限定主题中复用引擎提取和综合，MethodService 将合格经验组织成方法或修改既有步骤。
+核心先确认来源、范围、大小和脱敏，再保存材料与 LearningJob。CaseBuilder 整理一次工作，资料也可直接提炼 Experience。LearningService 在限定主题中复用引擎提取和综合，PlaybookService 将合格经验组织成方法或修改既有步骤。
 
 同一基础提取不重复运行。引擎接收、事实可查、归纳完成、方法发布分别确认；一次复盘正常完成可以没有新方法。原生生成内容全部先作为候选，不因存在于引擎就自动发布。
 

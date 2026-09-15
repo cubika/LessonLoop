@@ -149,7 +149,7 @@ export class ProductStore {
         await this.owner.query(`BEGIN;
         CREATE SCHEMA IF NOT EXISTS lessonloop;
         CREATE TABLE lessonloop.schema_version(version integer PRIMARY KEY);
-        INSERT INTO lessonloop.schema_version VALUES(1);
+        INSERT INTO lessonloop.schema_version VALUES(2);
         CREATE TABLE lessonloop.objects(kind text NOT NULL,id text NOT NULL,scope_id text NOT NULL,revision bigint NOT NULL CHECK(revision>0),value jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(kind,id));
         CREATE INDEX objects_scope_kind ON lessonloop.objects(scope_id,kind);
         CREATE TABLE lessonloop.history(kind text NOT NULL,id text NOT NULL,revision bigint NOT NULL,value jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(kind,id,revision));
@@ -158,7 +158,7 @@ export class ProductStore {
       const versions = await this.owner.query(
         "SELECT version FROM lessonloop.schema_version",
       );
-      if (versions.rows.length !== 1 || versions.rows[0].version !== 1)
+      if (versions.rows.length !== 1 || versions.rows[0].version !== 2)
         throw new Error("incompatible_product_schema");
       this.ready = true;
     } catch (error) {

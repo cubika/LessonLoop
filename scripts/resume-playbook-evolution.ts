@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import type { Method } from "../src/domain/schema.js";
+import type { Playbook } from "../src/domain/schema.js";
 const root = ".local-validation/",
   prior = JSON.parse(
-    await readFile(root + "results/method-evolution-validation.json", "utf8"),
+    await readFile(root + "results/playbook-evolution-validation.json", "utf8"),
   );
 if (prior.classification !== "real_provider_executed_synthetic_fixture")
   throw new Error("synthetic_fixture_required");
@@ -36,7 +36,7 @@ const report: Record<string, unknown> = {
   fixture: prior.fixture,
   previousJobId: prior.receipt.jobId,
 };
-const path = root + "results/method-evolution-resume-" + Date.now() + ".json";
+const path = root + "results/playbook-evolution-resume-" + Date.now() + ".json";
 try {
   await core.tick([prior.scope]);
   const original = await core.getJob(p, prior.receipt.jobId);
@@ -60,14 +60,14 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   }
   await core.syncProjections([prior.scope]);
-  report.after = await core.browse(p, "method");
+  report.after = await core.browse(p, "playbook");
   report.experiences = await core.browse(p, "experience");
-  const methods = report.after as Method[];
+  const playbooks = report.after as Playbook[];
   report.status =
-    methods.some(
+    playbooks.some(
       (m) => m.id === prior.before.id && m.revision > prior.before.revision,
     ) ||
-    methods.some((m) =>
+    playbooks.some((m) =>
       m.change.predecessors.some((r) => r.id === prior.before.id),
     )
       ? "evolution_produced_requires_semantic_review"

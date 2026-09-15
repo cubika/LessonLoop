@@ -2,7 +2,6 @@ import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
 import type { Principal } from "./service.js";
-import { publicValue } from "./public-contract.js";
 import { feedbackSummary, taskFeedback } from "./feedback.js";
 import { Effects } from "./effects.js";
 const DAY = 86400000;
@@ -13,7 +12,7 @@ type Review = Stored & {
   createdAt: string;
   mergedPeriods: number;
   coverage: string;
-  methodRefs: ObjectRef[];
+  playbookRefs: ObjectRef[];
 };
 type Schedule = Stored & { days: number; through: string };
 type Notification = Stored & {
@@ -28,7 +27,7 @@ type Event = {
   outcome?: string;
   rating?: string;
   text: string;
-  method?: ObjectRef;
+  playbook?: ObjectRef;
 };
 type Task = Stored & { taskRef: string; createdAt: string; events: Event[] };
 const entry = <T extends Stored>(kind: string, value: T) => ({
@@ -40,7 +39,7 @@ const entry = <T extends Stored>(kind: string, value: T) => ({
 });
 type Issue = Stored & {
   category:
-    | "stale_method"
+    | "stale_playbook"
     | "wrong_scope"
     | "wrong_branch"
     | "incorrect_guidance";
@@ -63,7 +62,7 @@ export class Reviews {
         reconfirm: z.boolean().optional(),
         expectedRevision: z.number().int().nonnegative(),
         category: z.enum([
-          "stale_method",
+          "stale_playbook",
           "wrong_scope",
           "wrong_branch",
           "incorrect_guidance",
@@ -250,7 +249,7 @@ export class Reviews {
             { ...task, events },
             (feedbackCases.find((c) => c.id === task.id)?.feedback ?? []).map(
               (f) => ({
-                kind: "method",
+                kind: "playbook",
                 id: f.playbookId,
                 revision: f.revision,
               }),
@@ -263,7 +262,7 @@ export class Reviews {
             executionTrace: observations.length
               ? "retained_host_observations"
               : "not_included_or_unavailable",
-            methodSnapshots: "not_included",
+            playbookSnapshots: "not_included",
           },
         });
       }
@@ -289,7 +288,7 @@ export class Reviews {
           "Incomplete retained evidence; not an independent evaluation dataset or proof of benefit.",
         cases,
       });
-      const content = JSON.stringify(publicValue(data), null, 2);
+      const content = JSON.stringify(data, null, 2);
       if (Buffer.byteLength(content) > 262144)
         throw new Error("export_budget_exceeded");
       return {
@@ -357,21 +356,21 @@ export class Reviews {
             Date.parse(t.createdAt) < end &&
             t.events.length > 0,
         );
-        const methods = (
+        const playbooks = (
           await tx.list<{
             id: string;
             revision: number;
             scopeId: string;
             updatedAt: string;
             change?: { kind: string };
-          }>("method", [scope])
+          }>("playbook", [scope])
         )
           .filter(
             (m) =>
               Date.parse(m.updatedAt) >= start && Date.parse(m.updatedAt) < end,
           )
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        if (tasks.length || methods.length) {
+        if (tasks.length || playbooks.length) {
           const id = digest([
             scope,
             schedule.through,
@@ -391,9 +390,11 @@ export class Reviews {
               Date.parse(schedule.through) < start
                 ? "older_observations_expired"
                 : "retained_observations_only",
-            methodRefs: methods
-              .slice(0, 3)
-              .map((m) => ({ kind: "method", id: m.id, revision: m.revision })),
+            playbookRefs: playbooks.slice(0, 3).map((m) => ({
+              kind: "playbook",
+              id: m.id,
+              revision: m.revision,
+            })),
           };
           await tx.put(entry("effect_review", review), null);
           created.push(id);
@@ -437,12 +438,12 @@ export class Reviews {
   async list(p: Principal, transaction?: Transaction) {
     const read = async (tx: Transaction) => {
       const tasks = await tx.list<Task>("effect_task", p.scopes),
-        methods = await tx.list<{
+        playbooks = await tx.list<{
           id: string;
           revision: number;
           scopeId: string;
           title: string;
-        }>("method", p.scopes);
+        }>("playbook", p.scopes);
       const histories: Array<{
         id: string;
         revision: number;
@@ -456,7 +457,7 @@ export class Reviews {
             revision: number;
             scopeId: string;
             title: string;
-          }>("method", scope)),
+          }>("playbook", scope)),
         );
       const result = [];
       for (const review of (await tx.list<Review>("effect_review", p.scopes))
@@ -502,11 +503,11 @@ export class Reviews {
             .filter((t) => t.taskOutcome === "unknown")
             .slice(0, 2)
             .map((t) => ({ id: t.id, taskRef: t.taskRef })),
-          methods: review.methodRefs.flatMap((r) => {
-            const current = methods.find(
+          playbooks: review.playbookRefs.flatMap((r) => {
+            const current = playbooks.find(
               (m) => m.id === r.id && m.scopeId === review.scopeId,
             );
-            const method =
+            const playbook =
               current?.revision === r.revision
                 ? current
                 : current
@@ -517,11 +518,11 @@ export class Reviews {
                         m.scopeId === review.scopeId,
                     )
                   : undefined;
-            return method
+            return playbook
               ? [
                   {
                     ...r,
-                    title: method.title,
+                    title: playbook.title,
                     currentRevision: current!.revision,
                   },
                 ]
@@ -560,7 +561,7 @@ export class Reviews {
               : reviews.some(
                   (r) =>
                     r.id === n.reviewId &&
-                    (r.summary.tasks || r.methods.length),
+                    (r.summary.tasks || r.playbooks.length),
                 )),
         )
         .map((n) => ({

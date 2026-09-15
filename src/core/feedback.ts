@@ -3,7 +3,7 @@ import type { ObjectRef } from "../domain/schema.js";
 export interface FeedbackEvent {
   kind: string;
   occurredAt: string;
-  method?: ObjectRef | undefined;
+  playbook?: ObjectRef | undefined;
   outcome?: string | undefined;
   rating?: string | undefined;
 }
@@ -27,27 +27,27 @@ export function taskFeedback(task: FeedbackTask, prepared: ObjectRef[] = []) {
       userRating: string | null;
     }
   >();
-  const association = (method: ObjectRef) => ({
+  const association = (playbook: ObjectRef) => ({
     taskRef: task.taskRef,
-    playbookId: method.id,
-    revision: method.revision,
+    playbookId: playbook.id,
+    revision: playbook.revision,
     delivered: null,
     userRating: null,
   });
-  for (const method of prepared)
+  for (const playbook of prepared)
     methods.set(
-      JSON.stringify([method.id, method.revision]),
-      association(method),
+      JSON.stringify([playbook.id, playbook.revision]),
+      association(playbook),
     );
   // Stable sorting lets the later received correction win at the same timestamp.
   for (const event of [...task.events].sort(
     (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt),
   )) {
     if (event.kind === "outcome") taskOutcome = event.outcome ?? "unknown";
-    if (!["delivery", "user_rating"].includes(event.kind) || !event.method)
+    if (!["delivery", "user_rating"].includes(event.kind) || !event.playbook)
       continue;
-    const key = JSON.stringify([event.method.id, event.method.revision]);
-    const record = methods.get(key) ?? association(event.method);
+    const key = JSON.stringify([event.playbook.id, event.playbook.revision]);
+    const record = methods.get(key) ?? association(event.playbook);
     if (event.kind === "delivery") record.delivered = true;
     if (event.kind === "user_rating") record.userRating = event.rating ?? null;
     methods.set(key, record);

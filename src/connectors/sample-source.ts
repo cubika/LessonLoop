@@ -2,28 +2,28 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { z } from "zod";
 import { ApiError } from "../core/service.js";
 import { Conflict } from "../store/postgres.js";
-import { byteSize, id, materialInputSchema } from "../domain/schema.js";
+import { byteSize, id, sourceInputSchema } from "../domain/schema.js";
 import {
   CONNECTOR_LIMITS,
   connectorInputSchema,
-  connectorMaterialSchema,
+  connectorSourceSchema,
   normalizeInput,
-  type MaterialPart,
+  type SourcePart,
 } from "./input.js";
 
 const partSchema = z
   .object({
     partKey: id,
-    source: materialInputSchema
+    source: sourceInputSchema
       .innerType()
-      .omit({ caseFor: true })
+
       .refine(
         (value) => byteSize(value) <= 32768,
         "Source part exceeds 32 KiB",
       ),
   })
   .strict()
-  .transform(({ partKey, source }) => ({ partKey, material: source }));
+  .transform(({ partKey, source }) => ({ partKey, inputSource: source }));
 const changeSchema = z
   .object({
     sourceKey: id,
@@ -34,7 +34,7 @@ const changeSchema = z
       .object({ bindingId: id, sourceRevision: z.number().int().positive() })
       .strict()
       .optional(),
-    source: connectorMaterialSchema.optional(),
+    source: connectorSourceSchema.optional(),
     input: connectorInputSchema.optional(),
     parts: z.array(partSchema).min(1).max(CONNECTOR_LIMITS.parts).optional(),
     partKeys: z.array(id).min(1).max(CONNECTOR_LIMITS.parts).optional(),
@@ -44,7 +44,7 @@ const changeSchema = z
 export type SourceChange = Omit<
   z.infer<typeof changeSchema>,
   "input" | "source" | "parts" | "partKeys" | "complete"
-> & { parts: MaterialPart[]; partKeys: string[]; complete: true };
+> & { parts: SourcePart[]; partKeys: string[]; complete: true };
 export interface SampleSnapshot {
   file: string;
   changes: SourceChange[];
@@ -82,10 +82,10 @@ export async function readSampleFile(
       ).length;
       const contentChange = !["withdraw", "erase"].includes(change.mutation);
       if (payloads !== (contentChange ? 1 : 0))
-        throw new ApiError("material_required_only_for_content_changes");
+        throw new ApiError("source_required_only_for_content_changes");
       if (!suppliedParts && (partKeys !== undefined || complete !== undefined))
         throw new ApiError("unexpected_part_manifest");
-      let parts: MaterialPart[] = [];
+      let parts: SourcePart[] = [];
       if (suppliedParts) {
         if (
           !complete ||
@@ -105,7 +105,7 @@ export async function readSampleFile(
       } else if (input || source) {
         parts = normalizeInput(input ?? { kind: "source", ...source! });
       }
-      if (parts.some((part) => part.material.scopeId !== scopeId))
+      if (parts.some((part) => part.inputSource.scopeId !== scopeId))
         throw new ApiError("scope_mismatch");
       const normalized: SourceChange = {
         ...change,

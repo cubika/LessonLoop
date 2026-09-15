@@ -59,14 +59,14 @@ class RetainCancellation(BaseModel):
 class ProjectionWrite(BaseModel):
     model_config=ConfigDict(extra="forbid")
     scope_id:str=Field(min_length=1,max_length=128)
-    object_kind:Literal["method","experience"]
+    object_kind:Literal["playbook","experience"]
     object_id:str=Field(min_length=1,max_length=128)
     revision:int=Field(ge=1)
     text:str=Field(min_length=1,max_length=32768)
 class ProjectionErasure(BaseModel):
     model_config=ConfigDict(extra="forbid")
     scope_id:str=Field(min_length=1,max_length=128)
-    object_kind:Literal["method","experience"]
+    object_kind:Literal["playbook","experience"]
     object_id:str=Field(min_length=1,max_length=128)
 class BankDrain(BaseModel):
     model_config=ConfigDict(extra="forbid")

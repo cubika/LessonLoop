@@ -8,6 +8,7 @@ const secret = JSON.parse(
 // These files share one database. Run sequentially on every supported Node.
 const files = [
   "tests/postgres.integration.ts",
+  "tests/pure-storage.integration.ts",
   "tests/http.integration.ts",
   "tests/public-contract.integration.ts",
   "tests/guidance.integration.ts",
@@ -15,7 +16,7 @@ const files = [
   "tests/source-control.integration.ts",
   "tests/task-learning.integration.ts",
   "tests/reviews.integration.ts",
-  "tests/method-evolution.integration.ts",
+  "tests/playbook-evolution.integration.ts",
   "tests/cross-case.integration.ts",
   "tests/recall.integration.ts",
   "tests/verification.integration.ts",
@@ -30,7 +31,9 @@ for (const file of files) {
       windowsHide: true,
       env: {
         ...process.env,
-        LESSONLOOP_TEST_DATABASE_URL: `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
+        LESSONLOOP_TEST_DATABASE_URL:
+          process.env.LESSONLOOP_TEST_DATABASE_URL ??
+          `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
       },
     },
   );

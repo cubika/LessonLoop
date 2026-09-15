@@ -6,8 +6,8 @@ import {
   type FeedbackEvent,
 } from "../src/core/feedback.js";
 
-const method = {
-  kind: "method" as const,
+const playbook = {
+  kind: "playbook" as const,
   id: "generated-file-editing",
   revision: 3,
 };
@@ -25,14 +25,14 @@ test("Preparation, legacy step usage and task end never infer delivery or a resu
   const task = {
     taskRef: "task",
     events: [
-      event("usage", 1, { method, outcome: "succeeded" }),
+      event("usage", 1, { playbook, outcome: "succeeded" }),
       event("task_ended", 2),
     ],
   };
-  assert.deepEqual(taskFeedback(task, [method]).feedback, [
+  assert.deepEqual(taskFeedback(task, [playbook]).feedback, [
     {
       taskRef: "task",
-      playbookId: method.id,
+      playbookId: playbook.id,
       revision: 3,
       delivered: null,
       taskOutcome: "unknown",
@@ -43,24 +43,24 @@ test("Preparation, legacy step usage and task end never infer delivery or a resu
   assert.equal(feedbackSummary([task]).unknownOutcome, 1);
 });
 
-test("Independent feedback folds repeated deliveries, ordered corrections and method revisions", () => {
+test("Independent feedback folds repeated deliveries, ordered corrections and playbook revisions", () => {
   const task = {
     taskRef: "task",
     events: [
-      event("delivery", 1, { method }),
-      event("delivery", 2, { method }),
+      event("delivery", 1, { playbook }),
+      event("delivery", 2, { playbook }),
       event("outcome", 6, { outcome: "failed" }),
       event("outcome", 3, { outcome: "succeeded" }),
-      event("user_rating", 5, { method, rating: "helpful" }),
-      event("user_rating", 4, { method, rating: "incorrect" }),
-      event("delivery", 7, { method: { ...method, revision: 4 } }),
+      event("user_rating", 5, { playbook, rating: "helpful" }),
+      event("user_rating", 4, { playbook, rating: "incorrect" }),
+      event("delivery", 7, { playbook: { ...playbook, revision: 4 } }),
     ],
   };
   const records = taskFeedback(task).feedback;
   assert.equal(records.length, 2);
   assert.deepEqual(records[0], {
     taskRef: "task",
-    playbookId: method.id,
+    playbookId: playbook.id,
     revision: 3,
     delivered: true,
     taskOutcome: "failed",
@@ -81,15 +81,15 @@ test("Rating needs no delivery or result and equal-time corrections use receipt 
   const task = {
     taskRef: "task",
     events: [
-      event("user_rating", 1, { method, rating: "incorrect" }),
-      event("user_rating", 1, { method, rating: "helpful" }),
+      event("user_rating", 1, { playbook, rating: "incorrect" }),
+      event("user_rating", 1, { playbook, rating: "helpful" }),
       event("outcome", 2, { outcome: "succeeded" }),
       event("outcome", 3, { outcome: "unknown" }),
     ],
   };
   assert.deepEqual(taskFeedback(task).feedback[0], {
     taskRef: "task",
-    playbookId: method.id,
+    playbookId: playbook.id,
     revision: 3,
     delivered: null,
     taskOutcome: "unknown",

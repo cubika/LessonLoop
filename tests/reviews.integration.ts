@@ -30,12 +30,12 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
       notifications: true,
     });
     const otherTask = await core.startTask(host, scope);
-    const reference = { kind: "method", id: randomUUID(), revision: 1 };
+    const reference = { kind: "playbook", id: randomUUID(), revision: 1 };
     await store.transaction(async (tx) => {
       const id = randomUUID();
       await tx.put(
         {
-          kind: "method_use",
+          kind: "playbook_use",
           id,
           scopeId: scope,
           revision: 1,
@@ -45,8 +45,8 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
             scopeId: scope,
             taskRef: otherTask.taskRef,
             callerId: host.id,
-            method: reference,
-            methodUseRef: "use-1",
+            playbook: reference,
+            playbookUseRef: "use-1",
             returnedAt: new Date(Date.now() - 1000).toISOString(),
           },
         },
@@ -100,8 +100,8 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
         taskRef: task.taskRef,
         scopeId: scope,
         kind: "delivery",
-        method: reference,
-        methodUseRef: "use-1",
+        playbook: reference,
+        playbookUseRef: "use-1",
         text: "Wrong task use",
         occurredAt: new Date().toISOString(),
       },
@@ -328,11 +328,15 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
       notifications: false,
     });
     const task = await core.startTask(host, scope);
-    const method = { kind: "method" as const, id: randomUUID(), revision: 3 };
+    const playbook = {
+      kind: "playbook" as const,
+      id: randomUUID(),
+      revision: 3,
+    };
     await store.transaction(async (tx) => {
       await tx.put(
         {
-          kind: "method_use",
+          kind: "playbook_use",
           id: "use-" + scope,
           scopeId: scope,
           revision: 1,
@@ -342,8 +346,8 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
             revision: 1,
             taskRef: task.taskRef,
             callerId: host.id,
-            method,
-            methodUseRef: "use-" + scope,
+            playbook,
+            playbookUseRef: "use-" + scope,
             stepIds: ["legacy"],
             returnedAt: new Date(Date.now() - 1000).toISOString(),
           },
@@ -361,8 +365,8 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
       ...base,
       eventId: "delivery",
       kind: "delivery",
-      method,
-      methodUseRef: "use-" + scope,
+      playbook,
+      playbookUseRef: "use-" + scope,
     };
     assert.equal(
       (
@@ -379,14 +383,14 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
     );
     const rate = {
       taskRef: task.taskRef,
-      methodUseRef: "use-" + scope,
+      playbookUseRef: "use-" + scope,
       rating: "helpful",
     };
-    await core.rateMethodUse(user, rate, "rating");
+    await core.ratePlaybookUse(user, rate, "rating");
     let record = (await effects.cases([scope]))[0]!.feedback[0]!;
     assert.deepEqual(record, {
       taskRef: task.taskRef,
-      playbookId: method.id,
+      playbookId: playbook.id,
       revision: 3,
       delivered: null,
       taskOutcome: "succeeded",
@@ -408,7 +412,7 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
         outcome: "failed",
       },
     ]);
-    await core.rateMethodUse(
+    await core.ratePlaybookUse(
       user,
       { ...rate, rating: "incorrect" },
       "rating-correction",
@@ -460,7 +464,7 @@ test("Simple feedback keeps delivery, corrected task outcomes and ratings indepe
       "ignored",
     );
     assert.equal(
-      (await core.rateMethodUse(user, rate, "rating")).results[0]!.status,
+      (await core.ratePlaybookUse(user, rate, "rating")).results[0]!.status,
       "ignored",
     );
     assert.deepEqual(await effects.cases([scope]), []);

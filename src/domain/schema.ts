@@ -13,7 +13,7 @@ export const text = (bytes: number) =>
 export const id = text(128);
 export const revision = z.number().int().positive().safe();
 export const refSchema = z
-  .object({ kind: z.enum(["work_case", "experience", "method"]), id, revision })
+  .object({ kind: z.enum(["source", "experience", "playbook"]), id, revision })
   .strict();
 export type ObjectRef = z.infer<typeof refSchema>;
 export const matchText = (match: { key: string; values: string[] }) =>
@@ -83,28 +83,36 @@ export const segmentSchema = z
     observedAt: z.string().datetime().optional(),
   })
   .strict();
-export const materialInputSchema = z
+export const sourceInputSchema = z
   .object({
     scopeId: id,
     segments: z.array(segmentSchema).min(1).max(16),
     context: contextSchema.optional(),
-    caseFor: refSchema.extend({ kind: z.literal("work_case") }).optional(),
     verificationFor: refSchema
       .extend({ kind: z.literal("experience") })
       .optional(),
     sourceFor: z.object({ id, revision }).strict().optional(),
   })
   .strict()
-  .refine((v) => byteSize(v) <= 32768, "Material exceeds 32 KiB");
-export type MaterialInput = z.infer<typeof materialInputSchema>;
-export type Material = MaterialInput & {
+  .refine((v) => byteSize(v) <= 32768, "Source exceeds 32 KiB");
+export type SourceInput = z.infer<typeof sourceInputSchema>;
+export type Source = {
   id: string;
+  revision: number;
+  scopeId: string;
   createdAt: string;
-  fingerprints: string[];
+  updatedAt: string;
+  segment?: z.infer<typeof segmentSchema>;
+  context?: z.infer<typeof contextSchema>;
   sourceIdentity: string;
-  sourceFamily?: string;
+  sourceFamily: string;
+  workKey: string;
   taskRef?: string;
-  taskSequence?: number;
+  taskSequence: number;
+  ordinal: number;
+  blocked: boolean;
+  erased: boolean;
+  excluded: boolean;
 };
 const stepSchema = z
   .object({
@@ -122,7 +130,7 @@ const stepSchema = z
 const checkSchema = z
   .object({ text: text(512), stepIds: z.array(id).min(1).max(12).optional() })
   .strict();
-export const methodBodySchema = z
+export const playbookBodySchema = z
   .object({
     title: text(256),
     goal: text(1024),
@@ -146,22 +154,20 @@ export const methodBodySchema = z
           "correction",
         ]),
         summary: text(1024),
-        caseRefs: z
-          .array(refSchema.extend({ kind: z.literal("work_case") }))
-          .max(8),
+
         predecessors: z
-          .array(refSchema.extend({ kind: z.literal("method") }))
+          .array(refSchema.extend({ kind: z.literal("playbook") }))
           .max(4),
       })
       .strict(),
   })
   .strict();
-export const methodSchema = methodBodySchema
+export const playbookSchema = playbookBodySchema
   .extend(common)
   .superRefine((m, ctx) => {
     const fail = (message: string) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, message });
-    if (byteSize(m) > 32768) fail("Method exceeds 32 KiB");
+    if (byteSize(m) > 32768) fail("Playbook exceeds 32 KiB");
     usageErrors(m).forEach(fail);
     const positions = new Map(m.steps.map((s, i) => [s.stepId, i]));
     if (positions.size !== m.steps.length || positions.has("stop"))
@@ -181,79 +187,7 @@ export const methodSchema = methodBodySchema
         fail("Check references an unknown step");
     });
   });
-export type Method = z.infer<typeof methodSchema>;
-export const workCaseSchema = z
-  .object({
-    ...common,
-    taskRef: id.optional(),
-    sourceFamily: id.optional(),
-    topic: text(256),
-    goal: text(1024),
-    context: contextSchema,
-    attempts: z
-      .array(
-        z
-          .object({
-            stepId: id,
-            action: text(1024),
-            observation: text(1024),
-            outcome: z.enum([
-              "partial",
-              "succeeded",
-              "failed",
-              "abandoned",
-              "unknown",
-            ]),
-            evidenceIndexes: z.array(z.number().int().nonnegative()).max(16),
-          })
-          .strict()
-          .refine((v) => byteSize(v) <= 2048),
-      )
-      .max(16),
-    result: z
-      .object({
-        status: z.enum([
-          "partial",
-          "succeeded",
-          "failed",
-          "abandoned",
-          "unknown",
-        ]),
-        summary: text(1024),
-        evidenceIndexes: z.array(z.number().int().nonnegative()).max(16),
-      })
-      .strict(),
-    evidence: z.array(evidenceSchema).max(16),
-    unresolved: z.array(text(512)).max(8),
-    coverage: z.array(text(512)).max(8),
-    methodUses: z
-      .array(
-        z
-          .object({
-            methodUseRef: id,
-            taskRef: id,
-            callerId: id,
-            method: refSchema.extend({ kind: z.literal("method") }),
-            returnedAt: z.string().datetime(),
-          })
-          // Strip obsolete returned-step snapshots from historical cases.
-          .strip(),
-      )
-      .max(8),
-  })
-  .strict()
-  .superRefine((v, ctx) => {
-    if (byteSize(v) > 65536)
-      ctx.addIssue({ code: "custom", message: "WorkCase exceeds 64 KiB" });
-    if (
-      [
-        ...v.attempts.flatMap((a) => a.evidenceIndexes),
-        ...v.result.evidenceIndexes,
-      ].some((n) => n >= v.evidence.length)
-    )
-      ctx.addIssue({ code: "custom", message: "Unbound case evidence" });
-  });
-export type WorkCase = z.infer<typeof workCaseSchema>;
+export type Playbook = z.infer<typeof playbookSchema>;
 export function byteSize(value: unknown) {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
@@ -300,7 +234,9 @@ export function canonical(value: unknown): string {
 export function digest(value: unknown) {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
-export function usageErrors(item: z.infer<typeof methodBodySchema>): string[] {
+export function usageErrors(
+  item: z.infer<typeof playbookBodySchema>,
+): string[] {
   const errors: string[] = [];
   if (item.state === "held" && !item.review)
     errors.push("Held object requires review");

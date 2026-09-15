@@ -22,8 +22,8 @@ const eventSchema = z
       "collection_gap",
     ]),
     occurredAt: z.string().datetime(),
-    method: refSchema.extend({ kind: z.literal("method") }).optional(),
-    methodUseRef: z.string().max(128).optional(),
+    playbook: refSchema.extend({ kind: z.literal("playbook") }).optional(),
+    playbookUseRef: z.string().max(128).optional(),
     text: z.string().min(1).max(512),
     outcome: z.enum(["succeeded", "failed", "abandoned", "unknown"]).optional(),
     rating: z.enum(["helpful", "incorrect", "irrelevant"]).optional(),
@@ -160,32 +160,32 @@ export class Effects {
             Date.parse(actual.createdAt) < Date.now() - 31 * 86400000
           )
             throw new Error("event_outside_window");
-          if (event.method || event.methodUseRef) {
+          if (event.playbook || event.playbookUseRef) {
             const uses = await tx.list<{
               taskRef: string;
               callerId: string;
-              method: ObjectRef;
-              methodUseRef: string;
+              playbook: ObjectRef;
+              playbookUseRef: string;
               returnedAt: string;
-            }>("method_use", [event.scopeId]);
+            }>("playbook_use", [event.scopeId]);
             if (
-              !event.method ||
-              !event.methodUseRef ||
+              !event.playbook ||
+              !event.playbookUseRef ||
               !uses.some(
                 (use) =>
                   use.taskRef === event.taskRef &&
-                  use.method.id === event.method!.id &&
-                  use.method.revision === event.method!.revision &&
-                  use.methodUseRef === event.methodUseRef &&
+                  use.playbook.id === event.playbook!.id &&
+                  use.playbook.revision === event.playbook!.revision &&
+                  use.playbookUseRef === event.playbookUseRef &&
                   (!boundary ||
                     Date.parse(use.returnedAt) >
                       Date.parse(boundary.clearedAt)) &&
                   Date.parse(use.returnedAt) <= Date.parse(event.occurredAt),
               )
             )
-              throw new Error("method_use_mismatch");
+              throw new Error("playbook_use_mismatch");
           } else if (["delivery", "user_rating"].includes(event.kind))
-            throw new Error("method_use_mismatch");
+            throw new Error("playbook_use_mismatch");
           if (actual.erasedObservationHashes?.includes(digest(event.text)))
             return {
               eventId: event.eventId,
@@ -241,7 +241,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
-                    "method_use_mismatch",
+                    "playbook_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)
@@ -254,7 +254,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
-                    "method_use_mismatch",
+                    "playbook_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)
@@ -289,9 +289,9 @@ export class Effects {
         await tx.list<{
           scopeId: string;
           taskRef: string;
-          method: ObjectRef;
+          playbook: ObjectRef;
           returnedAt: string;
-        }>("method_use", scopes)
+        }>("playbook_use", scopes)
       ).filter(
         (use) =>
           Date.parse(use.returnedAt) > cutoff &&
@@ -308,7 +308,7 @@ export class Effects {
             t,
             uses
               .filter((u) => u.scopeId === t.scopeId && u.taskRef === t.taskRef)
-              .map((u) => u.method),
+              .map((u) => u.playbook),
           );
           return {
             id: t.id,

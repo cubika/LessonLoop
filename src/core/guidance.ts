@@ -17,15 +17,15 @@ export async function getGuidance(
       : input.target
         ? []
         : (await core.search(caller, input.query!)).results.map(
-            (row) => row.method,
+            (row) => row.playbook,
           );
   const prepare = async (target: {
     id: string;
     revision: number;
   }): Promise<Record<string, unknown>> => ({
-    method: { kind: "method", id: target.id, revision: target.revision },
+    playbook: { kind: "playbook", id: target.id, revision: target.revision },
     ...(await core.prepare(caller, {
-      methodId: target.id,
+      playbookId: target.id,
       revision: target.revision,
       taskRef: task.taskRef,
       ...(input.viewMode ? { viewMode: input.viewMode } : {}),

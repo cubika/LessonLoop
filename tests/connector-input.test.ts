@@ -27,14 +27,14 @@ test("Connector splits full UTF-8 content deterministically without losing sourc
   assert.deepEqual(normalizeInput(JSON.parse(JSON.stringify(input))), parts);
   assert.equal(
     parts
-      .flatMap((part) => part.material.segments)
+      .flatMap((part) => part.inputSource.segments)
       .map((segment) => segment.text)
       .join(""),
     original,
   );
   for (const part of parts) {
-    assert.ok(byteSize(part.material) <= 32768);
-    for (const segment of part.material.segments) {
+    assert.ok(byteSize(part.inputSource) <= 32768);
+    for (const segment of part.inputSource.segments) {
       assert.equal(segment.locator, input.segments[0]!.locator);
       assert.equal(segment.author, "Original author");
       assert.equal(segment.observedAt, "2026-09-15T00:00:00.000Z");
@@ -78,8 +78,8 @@ test("Source drafts retain claims, gaps and evidence without accepting publicati
   for (const input of inputs) {
     const parts = normalizeInput(input);
     assert.equal(parts.length, 1);
-    assert.deepEqual(parts[0]!.material.segments[1], evidence[0]);
-    const document = JSON.parse(parts[0]!.material.segments[0]!.text);
+    assert.deepEqual(parts[0]!.inputSource.segments[1], evidence[0]);
+    const document = JSON.parse(parts[0]!.inputSource.segments[0]!.text);
     assert.equal(document.kind, input.kind);
     assert.equal(document.state, undefined);
     assert.equal(document.assessment, undefined);
@@ -87,15 +87,15 @@ test("Source drafts retain claims, gaps and evidence without accepting publicati
     assert.throws(() => normalizeInput({ ...input, assessment: "supported" }));
     assert.throws(() => normalizeInput({ ...input, id: "external-id" }));
   }
-  const workCase = JSON.parse(
-    normalizeInput(inputs[0])[0]!.material.segments[0]!.text,
+  const workView = JSON.parse(
+    normalizeInput(inputs[0])[0]!.inputSource.segments[0]!.text,
   );
-  assert.equal(workCase.attempts[0].outcome, "unknown");
-  assert.equal(workCase.result, undefined);
-  assert.deepEqual(workCase.unresolved, ["Deployment result unknown"]);
+  assert.equal(workView.attempts[0].outcome, "unknown");
+  assert.equal(workView.result, undefined);
+  assert.deepEqual(workView.unresolved, ["Deployment result unknown"]);
 });
 
-test("Method source draft requires evidence and valid forward branches", () => {
+test("Playbook source draft requires evidence and valid forward branches", () => {
   const draft = {
     kind: "playbook_draft",
     scopeId: "scope",
@@ -113,7 +113,7 @@ test("Method source draft requires evidence and valid forward branches", () => {
         ...draft,
         steps: [{ ...draft.steps[0], evidenceIndexes: [1] }],
       }),
-    /unbound_method_evidence/,
+    /unbound_playbook_evidence/,
   );
   assert.throws(
     () =>
@@ -126,7 +126,7 @@ test("Method source draft requires evidence and valid forward branches", () => {
           },
         ],
       }),
-    /invalid_method_branch/,
+    /invalid_playbook_branch/,
   );
   assert.throws(() => normalizeInput({ ...draft, evidence: [] }));
   assert.throws(() => normalizeInput({ ...draft, completionChecks: [] }));
@@ -135,7 +135,7 @@ test("Method source draft requires evidence and valid forward branches", () => {
 test("Sample snapshot rejects missing, duplicate and incomplete parts before accepting content", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lessonloop-connector-"));
   const file = join(directory, "source.json");
-  const material = {
+  const inputSource = {
     scopeId: "scope",
     segments: [{ text: "Full source", role: "external" }],
   };
@@ -145,8 +145,8 @@ test("Sample snapshot rejects missing, duplicate and incomplete parts before acc
     complete: true,
     partKeys: ["intro", "body"],
     parts: [
-      { partKey: "body", source: material },
-      { partKey: "intro", source: material },
+      { partKey: "body", source: inputSource },
+      { partKey: "intro", source: inputSource },
     ],
   };
   try {
@@ -176,7 +176,7 @@ test("Sample snapshot rejects missing, duplicate and incomplete parts before acc
           parts: [
             {
               partKey: "intro",
-              source: { ...material, scopeId: "elsewhere" },
+              source: { ...inputSource, scopeId: "elsewhere" },
             },
           ],
           partKeys: ["intro"],
@@ -189,7 +189,7 @@ test("Sample snapshot rejects missing, duplicate and incomplete parts before acc
   }
 });
 
-test("Connector read page budgets count material parts and leave complete source changes together", async () => {
+test("Connector read page budgets count inputSource parts and leave complete source changes together", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lessonloop-connector-"));
   const file = join(directory, "source.json");
   try {

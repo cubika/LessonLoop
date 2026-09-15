@@ -66,7 +66,7 @@ export function transcriptEvent(raw: unknown) {
 }
 
 // Adapted from the pinned upstream core/transcript-util.ts. Product guidance
-// is excluded as well, so recalled methods do not become new source evidence.
+// is excluded as well, so recalled playbooks do not become new source evidence.
 const MEMORY_TAG_RE =
   /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh|lessonloop-method|lessonloop-playbook)\b[\s\S]*?<\/\1>/g;
 export function stripInjectedMemory(text: string) {

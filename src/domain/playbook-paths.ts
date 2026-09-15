@@ -1,5 +1,5 @@
-import type { Method } from "./schema.js";
-export function methodPaths(method: Pick<Method, "steps">) {
+import type { Playbook } from "./schema.js";
+export function playbookPaths(playbook: Pick<Playbook, "steps">) {
   const paths: Array<{
     steps: string[];
     decisions: Array<{ stepId: string; condition: string; next: string }>;
@@ -10,7 +10,7 @@ export function methodPaths(method: Pick<Method, "steps">) {
     decisions: Array<{ stepId: string; condition: string; next: string }>,
   ) => {
     if (paths.length > 64) return;
-    const step = method.steps[position];
+    const step = playbook.steps[position];
     if (!step) {
       paths.push({ steps, decisions });
       return;
@@ -30,7 +30,7 @@ export function methodPaths(method: Pick<Method, "steps">) {
         if (choice.next === "stop")
           paths.push({ steps: visited, decisions: next });
         else {
-          const target = method.steps.findIndex(
+          const target = playbook.steps.findIndex(
             (s) => s.stepId === choice.next,
           );
           if (target > position) walk(target, visited, next);
@@ -44,16 +44,16 @@ export function methodPaths(method: Pick<Method, "steps">) {
 
 // Require a verdict for every executable path, including each predecessor path.
 // A blanket approval cannot hide an excluded branch. Reasons remain review evidence,
-// not new support for the method.
+// not new support for the playbook.
 export function pathReviewErrors(
-  methods: Array<
-    Pick<Method, "steps"> & { replaces?: { id: string } | undefined }
+  playbooks: Array<
+    Pick<Playbook, "steps"> & { replaces?: { id: string } | undefined }
   >,
-  previous: Array<Pick<Method, "id" | "steps">>,
+  previous: Array<Pick<Playbook, "id" | "steps">>,
   review: {
     pathChecks?:
       | Array<{
-          methodIndex: number;
+          playbookIndex: number;
           pathIndex: number;
           globalConditionsCompatible: boolean;
           stepsCompatible: boolean;
@@ -62,7 +62,7 @@ export function pathReviewErrors(
       | undefined;
     preservedPaths?:
       | Array<{
-          methodId: string;
+          playbookId: string;
           pathIndex: number;
           preserved: boolean;
           reason: string;
@@ -71,17 +71,17 @@ export function pathReviewErrors(
   },
 ) {
   const errors: string[] = [];
-  methods.forEach((method, methodIndex) => {
-    const audit = methodPaths(method);
+  playbooks.forEach((playbook, playbookIndex) => {
+    const audit = playbookPaths(playbook);
     if (audit.truncated) errors.push("Executable path budget exceeded");
     audit.paths.forEach((_, pathIndex) => {
       const checks =
         review.pathChecks?.filter(
-          (c) => c.methodIndex === methodIndex && c.pathIndex === pathIndex,
+          (c) => c.playbookIndex === playbookIndex && c.pathIndex === pathIndex,
         ) ?? [];
       if (checks.length !== 1)
         errors.push(
-          `Missing or duplicate path review: ${methodIndex}/${pathIndex}`,
+          `Missing or duplicate path review: ${playbookIndex}/${pathIndex}`,
         );
       else if (
         !checks[0]!.globalConditionsCompatible ||
@@ -91,19 +91,19 @@ export function pathReviewErrors(
     });
   });
   const replaced = new Set(
-    methods.flatMap((m) => (m.replaces ? [m.replaces.id] : [])),
+    playbooks.flatMap((m) => (m.replaces ? [m.replaces.id] : [])),
   );
   previous
     .filter((m) => replaced.has(m.id))
-    .forEach((method) => {
-      methodPaths(method).paths.forEach((_, pathIndex) => {
+    .forEach((playbook) => {
+      playbookPaths(playbook).paths.forEach((_, pathIndex) => {
         const checks =
           review.preservedPaths?.filter(
-            (c) => c.methodId === method.id && c.pathIndex === pathIndex,
+            (c) => c.playbookId === playbook.id && c.pathIndex === pathIndex,
           ) ?? [];
         if (checks.length !== 1)
           errors.push(
-            `Missing or duplicate prior path review: ${method.id}/${pathIndex}`,
+            `Missing or duplicate prior path review: ${playbook.id}/${pathIndex}`,
           );
         else if (!checks[0]!.preserved) errors.push(checks[0]!.reason);
       });
