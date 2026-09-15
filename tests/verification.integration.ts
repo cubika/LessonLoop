@@ -161,7 +161,6 @@ async function setup(store: ProductStore, controlled = false) {
         experiences: [
           {
             conclusion: e.conclusion,
-            level: e.level,
             purpose: e.purpose,
             applicability: e.applicability,
             conditions: e.conditions,

@@ -11,7 +11,7 @@ flowchart LR
     UI[方法库 UI / CLI] --> Core[LessonLoop 核心 API]
     Adapter --> Core
     Connector --> Core
-    Core --> Learning[案例复盘 / L1–L5 / 方法组装]
+    Core --> Learning[案例复盘 / 经验提炼 / 方法组装]
     Core --> Store[产品记录与用户控制]
     Learning --> Engine[MemoryEngine]
     Engine --> H[Hindsight 适配器]
@@ -27,7 +27,7 @@ flowchart LR
 |---|---|
 | CoreService / ProductStore | 认证、范围、类型化对象、版本、用户控制和写协调 |
 | CaseBuilder | 组装 WorkView，关联动作与结果，识别共同来源和缺口 |
-| LearningService | 选择主题和案例，调用原生提取/归纳，校验 L1–L5 候选 |
+| LearningService | 选择主题和案例，调用原生提取/归纳，校验候选的用途、依据与范围 |
 | PlaybookService | 组装步骤与分支、修订方法、保存变化和同步发布投影 |
 | RetrievalService | 检索已发布对象、检查资格、返回完整方法指导 |
 | MemoryEngine | 提供提取、综合、候选/来源读取、索引能力和作业确认 |
@@ -39,7 +39,7 @@ flowchart LR
 
 | 官方能力 | 使用方式 | 产品仍负责什么 |
 |---|---|---|
-| facts、因果提取、observations | 原生学习管线，读取有来源的候选 | 组织案例与分层目标、准入和方法内容 |
+| facts、因果提取、observations | 原生学习管线，读取有来源的候选 | 组织案例、按需分析、准入和方法内容 |
 | reflect、mental models | 复用结构化输出、playbook、自动/delta刷新及历史，生成并维护方法候选 | 定义方法Schema，核对结构、依据和范围，持有已发布的独立Playbook版本 |
 | 索引、实体和原生存储 | 通过 HindsightAdapter 调用 | 发布资格、产品检索投影和迁移合同 |
 | 持久异步作业、取消和重试 | 直接使用官方原生处理队列和状态接口 | LearningJob关联原生操作，协调产品取消意图、写屏障及发布结果 |

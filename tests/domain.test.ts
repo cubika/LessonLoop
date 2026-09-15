@@ -13,6 +13,9 @@ import {
   type Eligibility,
 } from "../src/domain/prepare.js";
 import { experienceSchema } from "../src/domain/experience.js";
+import { experienceSchema as evaluationSchema } from "../evals/lib/experience.js";
+import { outputJsonSchema } from "../src/core/learning.js";
+import { exportPlaybook } from "../src/domain/export.js";
 
 const source = {
   text: "Regeneration removed direct edits. Editing the source preserved the change.",
@@ -22,7 +25,6 @@ const fp = fingerprint(source, "trusted:test");
 const experience = experienceSchema.parse({
   ...identity("test"),
   conclusion: source.text,
-  level: "L1",
   purpose: "fact",
   applicability: "general",
   conditions: [],
@@ -43,6 +45,29 @@ const experience = experienceSchema.parse({
   sourceFingerprints: [fp],
   state: "active",
 });
+test("analysis labels are optional and existing labels remain compatible", () => {
+  for (const schema of [experienceSchema, evaluationSchema]) {
+    assert.equal(schema.safeParse(experience).success, true);
+    for (const level of ["L1", "L2", "L3", "L4", "L5"])
+      assert.equal(schema.safeParse({ ...experience, level }).success, true);
+    assert.equal(
+      schema.safeParse({ ...experience, level: "L6" }).success,
+      false,
+    );
+    assert.equal(
+      schema.safeParse({ ...experience, evidence: [] }).success,
+      false,
+    );
+  }
+  const properties = outputJsonSchema.properties as Record<string, any>;
+  assert.equal(properties.experiences.items.required.includes("level"), false);
+  for (const support of [experience, { ...experience, level: "L4" as const }]) {
+    const exported = exportPlaybook(fixture(), [support], "markdown", true);
+    assert.ok(exported.includes("supported: " + experience.conclusion));
+    assert.doesNotMatch(exported, /undefined|L[1-5]/);
+  }
+});
+
 function fixture() {
   const match = (value: string) => {
     const match = { key: "kind", values: [value] };
