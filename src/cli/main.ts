@@ -30,6 +30,17 @@ async function main() {
     for await (const chunk of process.stdin) configText += chunk;
   } else configText = await readFile(configPath, "utf8");
   const config = JSON.parse(configText) as Config;
+  if (command === "check") {
+    const store = new ProductStore(config.databaseUrl);
+    try {
+      await store.open();
+      await store.transaction((tx) => tx.list("settings"));
+    } finally {
+      await store.close();
+    }
+    console.log("Existing product schema is readable");
+    return;
+  }
   if (command === "initialize") {
     const store = new ProductStore(config.databaseUrl);
     try {

@@ -86,3 +86,6 @@ Windows 管理器可恢复单独退出的核心进程，并保留正在运行的
 
 
 干净基线的后续实测：P0 在一次有界方法修正后生成 1 个方法。自动新增版本 2 扩展分支时，执行分支已有明确停止，但自审仍发现扩展专用全局条件使原字段任务不可用；已保存 clean-evolution-self-review.json 并反馈暂停。此项仍是自动方法质量失败，不能标 MTH06/09 已通过。
+
+
+Windows兼容升级/回滚实测：中文空格 DataRoot 从开发bundle切换到摘要版本目录，新核心与引擎均ready；激活后写入设置revision 1，再回滚旧程序，仍保持同一设置。流程生成整库dump及配置/DPAPI副本，数据库没有恢复旧快照。首轮失败暴露备份连接未关闭导致单写锁自阻塞，已修复并保留日志；中文pg_dump使用系统短路径。稳定launcher、只读兼容检查、包路径/哈希/复制中断重试已有检查。故障中断矩阵、卸载/自启/永久清理及最终发行包仍未完成。报告：compatible-update-validation.json、compatible-rollback-validation.json。
