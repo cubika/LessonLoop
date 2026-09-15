@@ -1305,6 +1305,72 @@ export class CoreService {
     )
       throw new JobPromptError("job_source_changed");
     const inputSources = j.inputSources ?? liveSources;
+    const runModel = async (stage: "compose" | "assess") => {
+      const compose = stage === "compose";
+      const operationField = compose ? "operationId" : "assessmentOperationId";
+      const modelId = compose ? j.modelId : j.assessmentId;
+      if (!modelId)
+        throw new ApiError(
+          compose
+            ? "native_model_identity_unconfirmed"
+            : "assessment_identity_unconfirmed",
+        );
+      const sourceRefs = compose ? j.modelSourceRefs : j.assessmentSourceRefs;
+      const query = compose ? j.modelQuery : j.assessmentQuery;
+      const result = await advanceNativeModel(
+        engine,
+        {
+          scopeId: j.scopeId,
+          modelId,
+          // Legacy compose records may still contain the retain operation ID.
+          operationId: compose && !sourceRefs ? undefined : j[operationField],
+          query:
+            j.promptVersion || query !== undefined
+              ? () => jobQuery(j, stage)
+              : undefined,
+          sourceRefs:
+            sourceRefs ??
+            (compose && j.playbookRepairCount && !j.promptVersion
+              ? j.sourceRefs
+              : undefined) ??
+            inputSources.map((s) => s.id),
+          schema: compose
+            ? (j.modelSchema ?? outputJsonSchema)
+            : (j.assessmentSchema ?? learningAssessmentJsonSchema),
+        },
+        async (operationId) => {
+          if (operationId !== j[operationField])
+            j = await this.updateJob(j.id, {
+              [operationField]: operationId,
+              engineOperations: [
+                ...new Set([...(j.engineOperations ?? []), operationId]),
+              ],
+            });
+        },
+      );
+      if (result.status === "failed")
+        await this.updateJob(j.id, {
+          status: "failed",
+          error:
+            result.reason === "native_request_unavailable"
+              ? result.reason
+              : compose
+                ? "native_model_failed"
+                : "native_assessment_failed",
+        });
+      if (result.status !== "completed") return;
+      return {
+        output: result.output,
+        usageUpdate: result.usage
+          ? {
+              operationUsage: {
+                ...j.operationUsage,
+                [j[operationField]!]: result.usage,
+              },
+            }
+          : undefined,
+      };
+    };
     if (!inputSources.length) {
       await this.updateJob(j.id, {
         status: "completed",
@@ -1471,49 +1537,9 @@ export class CoreService {
       });
     }
     if (j.stage === "compose") {
-      if (!j.modelId) throw new ApiError("native_model_identity_unconfirmed");
-      const result = await advanceNativeModel(
-        engine,
-        {
-          scopeId: j.scopeId,
-          modelId: j.modelId,
-          // Older compose records can still contain the retain operation ID.
-          operationId: j.modelSourceRefs ? j.operationId : undefined,
-          query:
-            j.promptVersion || j.modelQuery !== undefined
-              ? () => jobQuery(j, "compose")
-              : undefined,
-          sourceRefs:
-            j.modelSourceRefs ??
-            (j.playbookRepairCount && !j.promptVersion
-              ? j.sourceRefs
-              : undefined) ??
-            inputSources.map((m) => m.id),
-          schema: j.modelSchema ?? outputJsonSchema,
-        },
-        async (operationId) => {
-          if (operationId !== j.operationId)
-            j = await this.updateJob(j.id, {
-              operationId,
-              engineOperations: [
-                ...new Set([...(j.engineOperations ?? []), operationId]),
-              ],
-            });
-        },
-      );
-      if (result.status === "failed") {
-        await this.updateJob(j.id, {
-          status: "failed",
-          error:
-            result.reason === "native_request_unavailable"
-              ? result.reason
-              : "native_model_failed",
-        });
-        return;
-      }
-      if (result.status !== "completed") return;
+      const result = await runModel("compose");
+      if (!result) return;
       const output = learningOutputSchema.parse(result.output);
-      const usage = result.usage;
       j = await this.updateJob(
         j.id,
         {
@@ -1521,14 +1547,7 @@ export class CoreService {
           candidate: output,
           repairReasons: undefined,
           status: "running",
-          ...(usage
-            ? {
-                operationUsage: {
-                  ...j.operationUsage,
-                  [j.operationId!]: usage,
-                },
-              }
-            : {}),
+          ...result.usageUpdate,
         },
         true,
       );
@@ -1554,53 +1573,11 @@ export class CoreService {
       );
     }
     if (j.stage === "assess") {
-      if (!j.assessmentId)
-        throw new ApiError("assessment_identity_unconfirmed");
-      const result = await advanceNativeModel(
-        engine,
-        {
-          scopeId: j.scopeId,
-          modelId: j.assessmentId,
-          operationId: j.assessmentOperationId,
-          query:
-            j.promptVersion || j.assessmentQuery !== undefined
-              ? () => jobQuery(j, "assess")
-              : undefined,
-          sourceRefs: j.assessmentSourceRefs ?? inputSources.map((m) => m.id),
-          schema: j.assessmentSchema ?? learningAssessmentJsonSchema,
-        },
-        async (assessmentOperationId) => {
-          j = await this.updateJob(j.id, {
-            assessmentOperationId,
-            engineOperations: [
-              ...new Set([
-                ...(j.engineOperations ?? []),
-                assessmentOperationId,
-              ]),
-            ],
-          });
-        },
-      );
-      if (result.status === "failed") {
-        await this.updateJob(j.id, {
-          status: "failed",
-          error:
-            result.reason === "native_request_unavailable"
-              ? result.reason
-              : "native_assessment_failed",
-        });
-        return;
-      }
-      if (result.status !== "completed") return;
+      const result = await runModel("assess");
+      if (!result) return;
       const verdict = learningAssessmentSchema.parse(result.output);
-      const usage = result.usage;
-      if (usage)
-        j = await this.updateJob(j.id, {
-          operationUsage: {
-            ...j.operationUsage,
-            [j.assessmentOperationId!]: usage,
-          },
-        });
+      if (result.usageUpdate)
+        j = await this.updateJob(j.id, result.usageUpdate);
       const hasPlaybook =
         !!j.candidate?.playbook || !!j.candidate?.splitPlaybooks?.length;
       if (hasPlaybook) {

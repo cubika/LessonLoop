@@ -50,18 +50,22 @@ function fixture() {
     calls.push("save");
     remembered.push(id);
   };
-  return { engine, request, calls, remembered, remember };
+  const run = (
+    overrides: Partial<Parameters<typeof advanceNativeModel>[1]> = {},
+    save = remember,
+  ) => advanceNativeModel(engine, { ...request, ...overrides }, save);
+  return { engine, request, calls, remembered, run };
 }
 
 test("A lost operation-ID write recovers the accepted submission before polling", async () => {
   const f = fixture();
   await assert.rejects(
-    advanceNativeModel(f.engine, f.request, async () => {
+    f.run({}, async () => {
       throw new Error("storage unavailable");
     }),
     /storage unavailable/,
   );
-  assert.deepEqual(await advanceNativeModel(f.engine, f.request, f.remember), {
+  assert.deepEqual(await f.run(), {
     status: "waiting",
   });
   assert.deepEqual(f.calls, ["lookup", "submit", "lookup", "save", "poll"]);
@@ -75,11 +79,8 @@ test("A lost native reply recovers the operation without submitting again", asyn
     await submit();
     throw new Error("reply lost");
   };
-  await assert.rejects(
-    advanceNativeModel(f.engine, f.request, f.remember),
-    /reply lost/,
-  );
-  await advanceNativeModel(f.engine, f.request, f.remember);
+  await assert.rejects(f.run(), /reply lost/);
+  await f.run();
   assert.equal(f.calls.filter((call) => call === "submit").length, 1);
   assert.deepEqual(f.remembered, ["op"]);
 });
@@ -100,12 +101,7 @@ for (const status of [
         f.calls.push("poll");
         return { operation_id: "op", status };
       };
-      const run = () =>
-        advanceNativeModel(
-          f.engine,
-          { ...f.request, operationId: "op" },
-          f.remember,
-        );
+      const run = () => f.run({ operationId: "op" });
       if (status === "not_found")
         await assert.rejects(run(), /native_operation_unconfirmed/);
       else {
@@ -140,10 +136,7 @@ test("Transient lookup and result failures propagate without creating a replacem
   f.engine.findModelOperation = async () => {
     throw new Error("lookup timeout");
   };
-  await assert.rejects(
-    advanceNativeModel(f.engine, f.request, f.remember),
-    /lookup timeout/,
-  );
+  await assert.rejects(f.run(), /lookup timeout/);
   f.engine.operation = async () => ({
     operation_id: "op",
     status: "completed",
@@ -151,27 +144,16 @@ test("Transient lookup and result failures propagate without creating a replacem
   f.engine.model = async () => {
     throw new Error("read timeout");
   };
-  await assert.rejects(
-    advanceNativeModel(
-      f.engine,
-      { ...f.request, operationId: "op" },
-      f.remember,
-    ),
-    /read timeout/,
-  );
+  await assert.rejects(f.run({ operationId: "op" }), /read timeout/);
   assert.deepEqual(f.calls, []);
 });
 
 test("Legacy missing requests fail only after the native submission is closed", async () => {
   const f = fixture();
-  assert.deepEqual(
-    await advanceNativeModel(
-      f.engine,
-      { ...f.request, query: undefined },
-      f.remember,
-    ),
-    { status: "failed", reason: "native_request_unavailable" },
-  );
+  assert.deepEqual(await f.run({ query: undefined }), {
+    status: "failed",
+    reason: "native_request_unavailable",
+  });
   assert.deepEqual(f.calls, ["lookup", "close"]);
 });
 
@@ -181,14 +163,7 @@ test("Closing a legacy submission recovers a concurrently accepted operation", a
     submission_canceled: true,
     operation_id: "late-op",
   });
-  assert.deepEqual(
-    await advanceNativeModel(
-      f.engine,
-      { ...f.request, query: undefined },
-      f.remember,
-    ),
-    { status: "waiting" },
-  );
+  assert.deepEqual(await f.run({ query: undefined }), { status: "waiting" });
   assert.deepEqual(f.remembered, ["late-op"]);
   assert.deepEqual(f.calls, ["lookup", "save", "poll"]);
 });
@@ -198,14 +173,7 @@ test("An unconfirmed legacy submission closure remains retryable", async () => {
   f.engine.cancelModelSubmission = async () => {
     throw new Error("close timeout");
   };
-  await assert.rejects(
-    advanceNativeModel(
-      f.engine,
-      { ...f.request, query: undefined },
-      f.remember,
-    ),
-    /close timeout/,
-  );
+  await assert.rejects(f.run({ query: undefined }), /close timeout/);
   assert.deepEqual(f.remembered, []);
 });
 
@@ -216,28 +184,18 @@ test("Frozen prompts are rebuilt only when an operation needs submission", async
     builds++;
     return f.request.query;
   };
-  await advanceNativeModel(f.engine, { ...f.request, query }, f.remember);
+  await f.run({ query });
   assert.equal(builds, 1);
-  await advanceNativeModel(
-    f.engine,
-    {
-      ...f.request,
-      query: () => {
-        throw new Error("must not rebuild while recovering");
-      },
+  await f.run({
+    query: () => {
+      throw new Error("must not rebuild while recovering");
     },
-    f.remember,
-  );
-  await advanceNativeModel(
-    f.engine,
-    {
-      ...f.request,
-      operationId: "op",
-      query: () => {
-        throw new Error("must not rebuild while polling");
-      },
+  });
+  await f.run({
+    operationId: "op",
+    query: () => {
+      throw new Error("must not rebuild while polling");
     },
-    f.remember,
-  );
+  });
   assert.equal(f.calls.filter((call) => call === "submit").length, 1);
 });

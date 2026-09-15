@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
@@ -460,199 +460,160 @@ test("Unknown successful writes retain every possibly stored source until deleti
   }
 });
 
+async function reviewFixture(t: TestContext) {
+  const f = await fixture();
+  t.after(() => f.store.close());
+  return {
+    ...f,
+    revise: (title: string) =>
+      f.core.revise(f.owner, f.playbook.id, 1, { title }),
+    advance: (core = f.core) => (core as any).advanceRevisionReviews([f.scope]),
+    review: (id: string) =>
+      f.store.transaction((tx) => tx.get<any>("revision_review", id)),
+    published: () =>
+      f.core.inspect(f.owner, "playbook", f.playbook.id) as Promise<Playbook>,
+  };
+}
+
 for (const failure of ["before", "after"] as const) {
   test(
     "Revision review recovers a submission failure " +
       failure +
       " acceptance with frozen input",
-    async () => {
-      const f = await fixture();
-      try {
-        const accepted = await f.core.revise(f.owner, f.playbook.id, 1, {
-          title: "Reviewed title",
-        });
-        f.engine.failSubmission = failure;
-        await (f.core as any).advanceRevisionReviews([f.scope]);
-        let review = await f.store.transaction((tx) =>
-          tx.get<any>("revision_review", accepted.reviewId),
+    async (t) => {
+      const f = await reviewFixture(t);
+      const accepted = await f.revise("Reviewed title");
+      f.engine.failSubmission = failure;
+      await f.advance();
+      let review = await f.review(accepted.reviewId);
+      assert.equal(review.status, "uncertain");
+      assert.ok(
+        review.modelQuery.includes(
+          "Editing the template survives regeneration.",
+        ),
+      );
+      assert.deepEqual(review.sourceRefs, [f.source.id]);
+      assert.equal(review.operationId, undefined);
+      const frozen = f.engine.submissions[0]!;
+      // Current support may change while the native request is being recovered.
+      await f.store.transaction(async (tx) => {
+        const old = await tx.get<any>("experience", f.exp.id);
+        await tx.put(
+          entry("experience", {
+            ...old,
+            revision: old.revision + 1,
+            conclusion: "Changed after submission",
+          }),
+          old.revision,
         );
-        assert.equal(review.status, "uncertain");
-        assert.ok(
-          review.modelQuery.includes(
-            "Editing the template survives regeneration.",
-          ),
-        );
-        assert.deepEqual(review.sourceRefs, [f.source.id]);
-        assert.equal(review.operationId, undefined);
-        const frozen = f.engine.submissions[0]!;
-        // Current support may change while the native request is being recovered.
-        await f.store.transaction(async (tx) => {
-          const old = await tx.get<any>("experience", f.exp.id);
-          await tx.put(
-            entry("experience", {
-              ...old,
-              revision: old.revision + 1,
-              conclusion: "Changed after submission",
-            }),
-            old.revision,
-          );
-        });
-        f.engine.failSubmission = undefined;
-        f.engine.nativeStatus = "pending";
-        const restarted = new CoreService(f.store, f.engine);
-        await (restarted as any).advanceRevisionReviews([f.scope]);
-        review = await f.store.transaction((tx) =>
-          tx.get<any>("revision_review", accepted.reviewId),
-        );
-        assert.equal(review.operationId, "review-op");
-        assert.equal(f.engine.submissions.length, failure === "before" ? 2 : 1);
-        for (const request of f.engine.submissions)
-          assert.deepEqual(request, frozen);
-        assert.equal(f.engine.reads, 0);
-        f.engine.nativeStatus = "cancelled";
-        await (restarted as any).advanceRevisionReviews([f.scope]);
-        review = await f.store.transaction((tx) =>
-          tx.get<any>("revision_review", accepted.reviewId),
-        );
-        assert.equal(review.status, "failed");
-        assert.equal(review.reason, "native_assessment_failed");
-        assert.equal(review.modelQuery, undefined);
-        assert.equal(review.candidate, undefined);
-        assert.equal(f.engine.reads, 0);
-      } finally {
-        await f.store.close();
-      }
+      });
+      f.engine.failSubmission = undefined;
+      f.engine.nativeStatus = "pending";
+      const restarted = new CoreService(f.store, f.engine);
+      await f.advance(restarted);
+      review = await f.review(accepted.reviewId);
+      assert.equal(review.operationId, "review-op");
+      assert.equal(f.engine.submissions.length, failure === "before" ? 2 : 1);
+      for (const request of f.engine.submissions)
+        assert.deepEqual(request, frozen);
+      assert.equal(f.engine.reads, 0);
+      f.engine.nativeStatus = "cancelled";
+      await f.advance(restarted);
+      review = await f.review(accepted.reviewId);
+      assert.equal(review.status, "failed");
+      assert.equal(review.reason, "native_assessment_failed");
+      assert.equal(review.modelQuery, undefined);
+      assert.equal(review.candidate, undefined);
+      assert.equal(f.engine.reads, 0);
     },
   );
 }
 
-test("Revision review persists a recovered ID, survives result-read failure, and then publishes", async () => {
-  const f = await fixture();
-  try {
-    const accepted = await f.core.revise(f.owner, f.playbook.id, 1, {
-      title: "Recovered title",
-    });
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    await f.store.transaction(async (tx) => {
-      const old = await tx.get<any>("revision_review", accepted.reviewId);
-      const next = { ...old, revision: old.revision + 1 };
-      delete next.operationId;
-      await tx.put(entry("revision_review", next), old.revision);
-    });
-    const model = f.engine.model.bind(f.engine);
-    f.engine.model = async () => {
-      throw new Error("result unavailable");
-    };
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    let review = await f.store.transaction((tx) =>
-      tx.get<any>("revision_review", accepted.reviewId),
-    );
-    assert.equal(review.status, "uncertain");
-    assert.equal(review.operationId, "review-op");
-    f.engine.model = model;
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    review = await f.store.transaction((tx) =>
-      tx.get<any>("revision_review", accepted.reviewId),
-    );
-    assert.equal(review.status, "completed");
-    assert.equal(review.modelQuery, undefined);
-    assert.equal(f.engine.submissions.length, 1);
-    assert.equal(
-      ((await f.core.inspect(f.owner, "playbook", f.playbook.id)) as Playbook)
-        .title,
-      "Recovered title",
-    );
-  } finally {
-    await f.store.close();
-  }
+test("Revision review persists a recovered ID, survives result-read failure, and then publishes", async (t) => {
+  const f = await reviewFixture(t);
+  const accepted = await f.revise("Recovered title");
+  await f.advance();
+  await f.store.transaction(async (tx) => {
+    const old = await tx.get<any>("revision_review", accepted.reviewId);
+    const next = { ...old, revision: old.revision + 1 };
+    delete next.operationId;
+    await tx.put(entry("revision_review", next), old.revision);
+  });
+  const model = f.engine.model.bind(f.engine);
+  f.engine.model = async () => {
+    throw new Error("result unavailable");
+  };
+  await f.advance();
+  let review = await f.review(accepted.reviewId);
+  assert.equal(review.status, "uncertain");
+  assert.equal(review.operationId, "review-op");
+  f.engine.model = model;
+  await f.advance();
+  review = await f.review(accepted.reviewId);
+  assert.equal(review.status, "completed");
+  assert.equal(review.modelQuery, undefined);
+  assert.equal(f.engine.submissions.length, 1);
+  assert.equal((await f.published()).title, "Recovered title");
 });
 
 for (const hasOperation of [false, true]) {
   test(
     "Legacy revision review without frozen request " +
       (hasOperation ? "recovers its operation" : "closes before failing"),
-    async () => {
-      const f = await fixture();
-      try {
-        const accepted = await f.core.revise(f.owner, f.playbook.id, 1, {
-          title: "Legacy title",
-        });
-        await f.store.transaction(async (tx) => {
-          const old = await tx.get<any>("revision_review", accepted.reviewId);
-          await tx.put(
-            entry("revision_review", {
-              ...old,
-              revision: old.revision + 1,
-              status: "running",
-            }),
-            old.revision,
-          );
-          if (hasOperation) f.engine.operations.set(old.modelId, "legacy-op");
-        });
-        await (f.core as any).advanceRevisionReviews([f.scope]);
-        const review = await f.store.transaction((tx) =>
-          tx.get<any>("revision_review", accepted.reviewId),
+    async (t) => {
+      const f = await reviewFixture(t);
+      const accepted = await f.revise("Legacy title");
+      await f.store.transaction(async (tx) => {
+        const old = await tx.get<any>("revision_review", accepted.reviewId);
+        await tx.put(
+          entry("revision_review", {
+            ...old,
+            revision: old.revision + 1,
+            status: "running",
+          }),
+          old.revision,
         );
-        assert.equal(review.status, hasOperation ? "completed" : "failed");
-        if (!hasOperation)
-          assert.equal(review.reason, "native_request_unavailable");
-        assert.equal(f.engine.submissions.length, 0);
-        assert.equal(review.candidate, undefined);
-      } finally {
-        await f.store.close();
-      }
+        if (hasOperation) f.engine.operations.set(old.modelId, "legacy-op");
+      });
+      await f.advance();
+      const review = await f.review(accepted.reviewId);
+      assert.equal(review.status, hasOperation ? "completed" : "failed");
+      if (!hasOperation)
+        assert.equal(review.reason, "native_request_unavailable");
+      assert.equal(f.engine.submissions.length, 0);
+      assert.equal(review.candidate, undefined);
     },
   );
 }
 
-test("A queued revision invalidated before submission needs no native operation", async () => {
-  const f = await fixture();
-  try {
-    const accepted = await f.core.revise(f.owner, f.playbook.id, 1, {
-      title: "Obsolete",
-    });
-    await f.core.setState(f.owner, "playbook", f.playbook.id, 1, "disabled");
-    let closes = 0;
-    f.engine.cancelModelSubmission = async () => {
-      closes++;
-      throw new Error("native offline");
-    };
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    const review = await f.store.transaction((tx) =>
-      tx.get<any>("revision_review", accepted.reviewId),
-    );
-    assert.equal(review.status, "failed");
-    assert.equal(review.reason, "target_changed");
-    assert.equal(closes, 0);
-    assert.equal(f.engine.submissions.length, 0);
-  } finally {
-    await f.store.close();
-  }
+test("A queued revision invalidated before submission needs no native operation", async (t) => {
+  const f = await reviewFixture(t);
+  const accepted = await f.revise("Obsolete");
+  await f.core.setState(f.owner, "playbook", f.playbook.id, 1, "disabled");
+  let closes = 0;
+  f.engine.cancelModelSubmission = async () => {
+    closes++;
+    throw new Error("native offline");
+  };
+  await f.advance();
+  const review = await f.review(accepted.reviewId);
+  assert.equal(review.status, "failed");
+  assert.equal(review.reason, "target_changed");
+  assert.equal(closes, 0);
+  assert.equal(f.engine.submissions.length, 0);
 });
 
-test("Malformed revision verdict fails without replacing the published playbook", async () => {
-  const f = await fixture();
-  try {
-    const accepted = await f.core.revise(f.owner, f.playbook.id, 1, {
-      title: "Malformed verdict",
-    });
-    f.engine.invalidOutput = true;
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    await (f.core as any).advanceRevisionReviews([f.scope]);
-    const review = await f.store.transaction((tx) =>
-      tx.get<any>("revision_review", accepted.reviewId),
-    );
-    assert.equal(review.status, "failed");
-    assert.equal(review.reason, "invalid_model_output");
-    assert.equal(review.modelQuery, undefined);
-    assert.equal(
-      ((await f.core.inspect(f.owner, "playbook", f.playbook.id)) as Playbook)
-        .title,
-      f.playbook.title,
-    );
-  } finally {
-    await f.store.close();
-  }
+test("Malformed revision verdict fails without replacing the published playbook", async (t) => {
+  const f = await reviewFixture(t);
+  const accepted = await f.revise("Malformed verdict");
+  f.engine.invalidOutput = true;
+  await f.advance();
+  await f.advance();
+  const review = await f.review(accepted.reviewId);
+  assert.equal(review.status, "failed");
+  assert.equal(review.reason, "invalid_model_output");
+  assert.equal(review.modelQuery, undefined);
+  assert.equal((await f.published()).title, f.playbook.title);
 });
 
 for (const stage of ["compose", "assess"] as const) {
@@ -660,53 +621,47 @@ for (const stage of ["compose", "assess"] as const) {
     "Automatic " +
       stage +
       " recovers model identity and terminates native cancellation",
-    async () => {
-      const f = await fixture();
-      try {
-        const job = {
-          ...identity(f.scope),
-          kind: "case_review",
-          stage,
-          status: "running",
-          sourceIds: [f.source.id],
-          sourceRefs: [f.source.id, "extra-support"],
-          operationId: "retain-op",
-          modelId: "legacy-model",
-          modelQuery: "Frozen compose request",
-          assessmentId: "legacy-assessment",
-          assessmentQuery: "Frozen assessment request",
-          engineOperations: ["retain-op"],
-          results: [],
-          decisions: [],
-        };
-        await f.store.transaction((tx) => tx.put(entry("job", job), null));
-        let current: any = job;
-        await (f.core as any).advance(current);
-        current = await f.store.transaction((tx) => tx.get<any>("job", job.id));
-        assert.equal(
-          current[
-            stage === "compose" ? "operationId" : "assessmentOperationId"
-          ],
-          "review-op",
-        );
-        assert.deepEqual(f.engine.submissions[0]![3], [f.source.id]);
-        assert.deepEqual(current.engineOperations, ["retain-op", "review-op"]);
-        assert.equal(f.engine.reads, 0);
-        f.engine.nativeStatus = "cancelled";
-        await (f.core as any).advance(current);
-        current = await f.store.transaction((tx) => tx.get<any>("job", job.id));
-        assert.equal(current.status, "failed");
-        assert.equal(
-          current.error,
-          stage === "compose"
-            ? "native_model_failed"
-            : "native_assessment_failed",
-        );
-        assert.equal(f.engine.submissions.length, 1);
-        assert.equal(f.engine.reads, 0);
-      } finally {
-        await f.store.close();
-      }
+    async (t) => {
+      const f = await reviewFixture(t);
+      const job = {
+        ...identity(f.scope),
+        kind: "case_review",
+        stage,
+        status: "running",
+        sourceIds: [f.source.id],
+        sourceRefs: [f.source.id, "extra-support"],
+        operationId: "retain-op",
+        modelId: "legacy-model",
+        modelQuery: "Frozen compose request",
+        assessmentId: "legacy-assessment",
+        assessmentQuery: "Frozen assessment request",
+        engineOperations: ["retain-op"],
+        results: [],
+        decisions: [],
+      };
+      await f.store.transaction((tx) => tx.put(entry("job", job), null));
+      let current: any = job;
+      await (f.core as any).advance(current);
+      current = await f.store.transaction((tx) => tx.get<any>("job", job.id));
+      assert.equal(
+        current[stage === "compose" ? "operationId" : "assessmentOperationId"],
+        "review-op",
+      );
+      assert.deepEqual(f.engine.submissions[0]![3], [f.source.id]);
+      assert.deepEqual(current.engineOperations, ["retain-op", "review-op"]);
+      assert.equal(f.engine.reads, 0);
+      f.engine.nativeStatus = "cancelled";
+      await (f.core as any).advance(current);
+      current = await f.store.transaction((tx) => tx.get<any>("job", job.id));
+      assert.equal(current.status, "failed");
+      assert.equal(
+        current.error,
+        stage === "compose"
+          ? "native_model_failed"
+          : "native_assessment_failed",
+      );
+      assert.equal(f.engine.submissions.length, 1);
+      assert.equal(f.engine.reads, 0);
     },
   );
 }
