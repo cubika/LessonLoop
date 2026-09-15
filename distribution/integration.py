@@ -58,7 +58,7 @@ def entries(record):
     launcher = program / "lessonloop.ps1"
     common = [powershell(), "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(launcher)]
     hooks = {"version": 1, "hooks": {}}
-    for event in ["sessionStart", "userPromptTransformed", "postToolUse", "agentStop", "sessionEnd"]:
+    for event in ["userPromptTransformed", "agentStop", "sessionEnd"]:
         hooks["hooks"][event] = [{"type": "command", "command": subprocess.list2cmdline(common + ["agent-hook", event]), "timeoutSec": 60}]
     mcp = {"type": "stdio", "command": common[0], "args": common[1:] + ["mcp"], "tools": ["*"]}
     return hooks, mcp

@@ -103,13 +103,7 @@ try {
       description: "Local product playbook integration validation",
     }),
   );
-  const events = [
-    "sessionStart",
-    "userPromptTransformed",
-    "postToolUse",
-    "agentStop",
-    "sessionEnd",
-  ];
+  const events = ["userPromptTransformed", "agentStop", "sessionEnd"];
   await writeFile(
     join(plugin, "com.github.copilot/hooks/hooks.json"),
     JSON.stringify({
@@ -319,10 +313,7 @@ try {
   for (const name of await readdir(join(folder, "state")).catch(() => []))
     if (name.endsWith(".json"))
       stateTasks.push(
-        ...Object.keys(
-          JSON.parse(await readFile(join(folder, "state", name), "utf8"))
-            .captures,
-        ).map((taskRef) => ({ taskRef })),
+        JSON.parse(await readFile(join(folder, "state", name), "utf8")),
       );
   const taskRefs = new Set(stateTasks.map((t) => t.taskRef));
   const evidence = await store.transaction(async (tx) => {
@@ -356,9 +347,23 @@ try {
     evidence.roles.includes("user") &&
     evidence.roles.includes("tool") &&
     traces.some((e) => e.hook === "agentStop" && e.success) &&
-    effectEvents.some((e) => e.kind === "delivery") &&
-    effectEvents.some((e) => e.kind === "task_ended") &&
-    !effectEvents.some((e) => e.kind === "outcome")
+    cases.some((c) =>
+      c.feedback.some(
+        (f) =>
+          f.delivered &&
+          guidanceReceipts.some(
+            (r) =>
+              r.taskRef === c.taskRef &&
+              r.playbooks.some(
+                (p) =>
+                  p.playbook.id === f.playbookId &&
+                  p.playbook.revision === f.revision,
+              ),
+          ),
+      ),
+    ) &&
+    traces.some((e) => e.hook === "sessionEnd" && e.success) &&
+    cases.every((c) => c.taskOutcome === "unknown")
       ? "host_loop_observed"
       : "failed";
 } catch (error) {

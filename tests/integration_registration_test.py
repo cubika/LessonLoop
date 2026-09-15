@@ -37,6 +37,7 @@ class RegistrationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "configuration changed"):
                 integration.agent_action("remove", record, root / "runtime", data, home)
             hooks, mcp = integration.entries(record); config["mcpServers"]["lessonloop"] = mcp
+            self.assertEqual(set(hooks["hooks"]), {"userPromptTransformed", "agentStop", "sessionEnd"})
             config_path.write_text(json.dumps(config))
             integration.agent_action("remove", record, root / "runtime", data, home)
             remaining = json.loads(config_path.read_text())

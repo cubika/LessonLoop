@@ -1,19 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { ProductStore, Transaction } from "../src/store/postgres.js";
+import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { Effects } from "../src/core/effects.js";
 import { dispatch } from "../src/core/server.js";
-import { handleHook } from "../src/adapters/copilot/hook.js";
-import { mkdtemp, realpath, writeFile, appendFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { byteSize } from "../src/domain/schema.js";
 
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
-test("host boundaries register direct feedback, survive retries and enforce ownership", async () => {
+test("session binding survives idle expiry; long capture retains all sources with bounded learning and replaceable summaries", async () => {
   const store = new ProductStore(url);
   await store.open(true);
   try {
@@ -23,203 +20,192 @@ test("host boundaries register direct feedback, survive retries and enforce owne
       channel: "host" as const,
       scopes: [scopeId],
     };
+    const owner = { ...host, channel: "user" as const };
     const core = new CoreService(
       store,
       new HindsightEngine("http://127.0.0.1:19888", "unused"),
     );
-    await core.configure(
-      { ...host, channel: "user" },
-      {
-        scopeId,
-        expectedRevision: 0,
-        learning: true,
-        recommendation: false,
-        review: true,
-        notifications: false,
-      },
-    );
-    const time = (n: number) =>
-      new Date(Date.now() - 60000 + n * 1000).toISOString();
-    const epoch = time(0);
-    const at = (n: number) =>
-      new Date(Date.parse(epoch) + n * 1000).toISOString();
-    const input = (action: string, n: number, extra = {}) => ({
+    await core.configure(owner, {
       scopeId,
-      sessionKey: "session",
-      action,
-      occurredAt: at(n),
-      ...extra,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: true,
+      notifications: false,
     });
-    const rpc = (value: unknown, p = host) =>
-      dispatch(
-        core,
-        p,
-        "hostTaskBoundary",
-        value,
-        "host-boundary",
-      ) as Promise<any>;
-    const first = await rpc(input("prompt", 1, { promptKey: "first" }));
+    const eventId = "copilot-session:fixture";
+    const first = await core.startTask(host, scopeId, eventId);
     assert.equal(
-      (await rpc(input("prompt", 1, { promptKey: "first" }))).taskRef,
+      (await core.startTask(host, scopeId, eventId)).taskRef,
+      first.taskRef,
+    );
+    assert.notEqual(
+      (await core.startTask({ ...host, id: randomUUID() }, scopeId, eventId))
+        .taskRef,
       first.taskRef,
     );
     await assert.rejects(
-      dispatch(
-        core,
-        { ...host, channel: "agent" },
-        "hostTaskBoundary",
-        input("end", 2),
-        "x",
-      ),
-      /trusted_host_required/,
+      dispatch(core, host, "hostTaskBoundary", {}, "retired"),
+      /unknown_operation/,
     );
-    await assert.rejects(
-      rpc({ ...input("read", 2), scopeId: "other" }),
-      /not_found/,
-    );
-    assert.deepEqual(
-      (await rpc(input("read", 2), { ...host, id: randomUUID() })).tasks,
-      [],
-    );
-
-    // A failed task closure rolls back; retry closes the same task once.
-    const put = Transaction.prototype.put;
-    Transaction.prototype.put = async function (entry, expected) {
-      if (
-        entry.kind === "task" &&
-        entry.id === first.taskRef &&
-        entry.value.ended
-      )
-        throw new Error("injected_storage_failure");
-      return put.call(this, entry, expected);
-    };
-    try {
-      await assert.rejects(
-        rpc(input("end", 3, { reason: "timeout" })),
-        /injected_storage_failure/,
+    const old = new Date(Date.now() - 3 * 86400000).toISOString();
+    await store.transaction(async (tx) => {
+      const task = await tx.get<any>("task", first.taskRef);
+      await tx.put(
+        {
+          kind: "task",
+          id: task.id,
+          scopeId,
+          revision: task.revision + 1,
+          value: {
+            ...task,
+            revision: task.revision + 1,
+            createdAt: old,
+            updatedAt: old,
+          },
+        },
+        task.revision,
       );
-    } finally {
-      Transaction.prototype.put = put;
-    }
-    assert.equal((await rpc(input("read", 3))).tasks[0].endedAt, undefined);
+    });
+    await assert.rejects(
+      core.guidanceTask(host, { taskRef: first.taskRef }, "expired"),
+      /task_unavailable/,
+    );
+    await core.startTask(host, scopeId, eventId);
     assert.equal(
-      (await new Effects(store).cases([scopeId]))[0]!.taskOutcome,
-      "unknown",
+      (await core.guidanceTask(host, { taskRef: first.taskRef }, "resumed"))
+        .taskRef,
+      first.taskRef,
     );
-    await rpc(input("end", 3, { reason: "timeout" }));
-    await rpc(input("end", 3, { reason: "timeout" }));
-    assert.equal(
-      (await new Effects(store).cases([scopeId]))[0]!.taskOutcome,
-      "unknown",
+    assert.ok(
+      (await core.listTasks(owner)).some((t) => t.taskRef === first.taskRef),
     );
-    const second = await rpc(
-      input("prompt", 4, { promptKey: "second", boundary: "continue" }),
-    );
-    assert.notEqual(second.taskRef, first.taskRef);
-    await rpc(input("stop", 5));
     assert.equal(
       (
-        await rpc(
-          input("prompt", 6, {
-            promptKey: "clarification",
-            boundary: "continue",
-          }),
-        )
-      ).taskRef,
-      second.taskRef,
+        await core.prepare(host, {
+          taskRef: first.taskRef,
+          playbookId: "missing",
+          revision: 1,
+        })
+      ).status,
+      "target_unavailable",
     );
-    assert.equal((await rpc(input("read", 2))).taskRef, first.taskRef);
-    await rpc(input("stop", 7));
-    const third = await rpc(input("prompt", 8, { promptKey: "third" }));
-    assert.notEqual(third.taskRef, second.taskRef);
-    assert.equal(
-      (await rpc(input("prompt", 4, { promptKey: "second" }))).taskRef,
-      second.taskRef,
-    );
-    assert.equal((await rpc(input("read", 9))).tasks.length, 3);
-
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "lessonloop-host-db-")),
-    );
-    try {
-      const path = join(root, "events.jsonl");
-      await writeFile(
-        path,
-        JSON.stringify({
-          type: "session.start",
-          data: { sessionId: "capture", context: { cwd: root } },
-        }) + "\n",
+    const submit = (text: string, key: string) =>
+      core.submitSource(
+        host,
+        {
+          scopeId,
+          context: { taskRef: first.taskRef },
+          segments: [{ text, role: "tool" }],
+        },
+        key,
       );
-      const config = {
-        baseUrl: "http://127.0.0.1:1",
-        token: "unused",
+    let latest: Awaited<ReturnType<typeof submit>>;
+    for (let i = 0; i < 200; i++)
+      latest = await submit("Observed result " + i, "record-" + i);
+    const sources = () =>
+      store.transaction((tx) => tx.list<any>("source", [scopeId]));
+    const job = (id: string) =>
+      store.transaction((tx) => tx.get<any>("job", id));
+    assert.equal((await sources()).length, 200);
+    assert.ok((await job(latest!.jobId)).sourceIds.length <= 192);
+    const firstSource = (await sources()).find((s) => s.taskSequence === 1);
+    const supplement = await core.submitSource(
+      owner,
+      {
         scopeId,
-        allowedRoots: [root],
-        stateRoot: join(root, "state"),
-      };
-      const hook = (type: string, n: number, extra = {}) =>
-        handleHook(
-          config,
+        sourceFor: { id: firstSource.id, revision: 1 },
+        segments: [{ text: "User supplement", role: "user" }],
+      },
+      "supplement",
+    );
+    assert.ok((await job(supplement.jobId)).sourceIds.length <= 192);
+    assert.ok((await job(supplement.jobId)).sourceIds.includes(firstSource.id));
+    for (let i = 0; i < 8; i++)
+      latest = await submit("Large " + i + "x".repeat(20000), "large-" + i);
+    const all = await sources();
+    assert.equal(all.length, 209);
+    assert.equal(new Set(all.map((s) => s.sourceFamily)).size, 1);
+    assert.equal(new Set(all.map((s) => s.workKey)).size, 1);
+    const latestJob = await job(latest!.jobId);
+    const window = all.filter((s) => latestJob.sourceIds.includes(s.id));
+    assert.ok(byteSize(window) <= 131072);
+    assert.ok(window.length < 192);
+
+    const publish = async (
+      receipt: typeof latest,
+      count: number,
+      topic: string,
+    ) => {
+      const j = await job(receipt.jobId);
+      await store.transaction((tx) =>
+        tx.put(
           {
-            sessionId: "capture",
-            cwd: root,
-            transcriptPath: path,
-            timestamp: at(n),
-            ...extra,
+            kind: "job",
+            id: j.id,
+            scopeId,
+            revision: j.revision + 1,
+            value: { ...j, revision: j.revision + 1, status: "running" },
           },
-          type,
-          (operation, value, key) =>
-            dispatch(core, host, operation, value, key),
-        );
-      await hook("userPromptTransformed", 10, {
-        prompt: "Inspect generated source",
-      });
-      await appendFile(
-        path,
-        JSON.stringify({
-          id: "start",
-          type: "tool.execution_start",
-          timestamp: at(11),
-          data: { toolCallId: "view-1", toolName: "view" },
-        }) + "\n",
+          j.revision,
+        ),
       );
-      await hook("postToolUse", 12, {
-        toolCallId: "view-1",
-        toolName: "view",
-        toolResult: { content: "source verified", success: true },
-      });
-      await appendFile(
-        path,
-        JSON.stringify({
-          id: "complete",
-          type: "tool.execution_complete",
-          timestamp: at(13),
-          data: {
-            toolCallId: "view-1",
-            result: { content: "source verified" },
-            success: true,
-          },
-        }) + "\n",
+      const input = await store.transaction(async (tx) =>
+        Promise.all(j.sourceIds.map((id: string) => tx.get<any>("source", id))),
       );
-      await hook("agentStop", 14);
-      await hook("sessionEnd", 15, { reason: "complete" });
-      const stored = await store.transaction((tx) =>
-        tx.list<any>("task", [scopeId]),
-      );
-      const captured = stored.find((task) => task.hostStartedAt === at(10));
-      assert.equal(captured.rawObservations.length, 1);
-      assert.equal(captured.rawObservations[0].occurredAt, at(12));
-      assert.equal(captured.ended, true);
-      const sources = await store.transaction((tx) =>
-        tx.list<any>("source", [scopeId]),
-      );
-      assert.equal(
-        sources.filter((s) => s.taskRef === captured.id && s.segment).length,
-        2,
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      const selected = input.slice(-count);
+      const candidate = {
+        workView: {
+          topic,
+          goal: "Review recent session material",
+          context: {},
+          attempts: selected.map((s: any, i: number) => ({
+            stepId: "s" + i,
+            action: "Observed",
+            observation: s.segment.text.slice(0, 100),
+            outcome: "unknown",
+            evidenceIndexes: [i],
+          })),
+          result: { status: "unknown", summary: topic, evidenceIndexes: [0] },
+          evidence: selected.map((s: any) => ({
+            sourceIndex: input.indexOf(s),
+            excerpt: s.segment.text.slice(0, 100),
+            relation: "supports",
+          })),
+          unresolved: [],
+          coverage: [],
+        },
+        experiences: [],
+        playbook: null,
+        decisions: [],
+      };
+      const verdict = {
+        acceptedExperienceIndexes: [],
+        playbookSupported: false,
+        reasons: [],
+      };
+      await (core as any).publish(j, input, candidate, verdict);
+    };
+    await publish(supplement, 16, "Earlier topic");
+    let view = (await core.browse(host, "work_view"))[0]!;
+    assert.equal((view.evidence as unknown[]).length, 16);
+    const viewId = view.id;
+    await publish(latest!, 1, "Current topic");
+    view = (await core.browse(host, "work_view"))[0]!;
+    assert.equal(view.id, viewId);
+    assert.equal(view.topic, "Current topic");
+    assert.equal((view.evidence as unknown[]).length, 1);
+    await publish(supplement, 16, "Old replay");
+    assert.equal(
+      (await core.browse(host, "work_view"))[0]!.topic,
+      "Current topic",
+    );
+    assert.equal((await sources()).length, 209);
+    const feedback = (await new Effects(store).cases([scopeId])).filter(
+      (c) => c.taskRef === first.taskRef,
+    );
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0]!.taskOutcome, "unknown");
   } finally {
     await store.close();
   }

@@ -106,6 +106,8 @@ Hindsight 原生字段包括 id/text/type/context、字符串 metadata、tags、
 
 LearningJob 保存 id、scopeId、kind、stage、status、sourceIds、sourceRefs、results、decisions、engineOperations 和 cancelRequestedAt。kind=case_review/synthesis/playbook_update；stage=queued/extract/compose/assess/publish/done。作业固定使用独立引擎空间，单一当前学习 Schema；不保留旧 profile 的兼容分支。
 
+Copilot 会话来源全部保留，学习作业使用最近至多192段、128 KiB的窗口，超出窗口的历史来源不删除。WorkView 可按新窗口替换当前摘要；同一会话不维护多个主题案例，已发布经验仍保留。来源族、workKey与发布序号跨窗口保持一致。
+
 取消先持久化cancelRequestedAt并停止新步骤；已发原生操作继续核对或使用真实取消能力，结果未知保持uncertain且不发布新的产品结果。已发操作均有明确处置后才转canceled，原生迟到候选按材料策略清理；取消前已确认发布的对象保留，不隐式回滚。重启先读取消意图，不重新调度；已终结作业的取消请求幂等返回当前状态。
 
 results 使用 ObjectRef。decisions 记录未来用途、范围、支持判定和 reject/merge/retain_active/retain_held 处置，不保存模型长推理。engineOperation 绑定实例、产品作业身份、原生 operation ID、处理配置、来源修订和最近核对状态；提交前保存关联，超时先核对而非重提。
@@ -137,7 +139,7 @@ task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOut
 | Playbook 旧版 | 不保留；产品历史恢复入口与原生 mental model 历史均关闭 |
 | task_feedback、使用视图 | 任务创建后30天，评价、更正和重新准备不延期 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
-| 方法获取所关联的Task | 创建后最长24小时；结束即停止获取，核心重启不额外缩短期限 |
+| 方法获取所关联的Task | 普通任务创建后最长24小时；Copilot会话按最后宿主回调后的24小时空闲时间检查，恢复会话沿用原引用 |
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 

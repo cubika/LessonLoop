@@ -20,7 +20,6 @@ import {
   type HookEvent,
 } from "./protocol.js";
 import { readTranscript, type TranscriptCursor } from "./transcript.js";
-import type { HostTaskBinding } from "../../core/host-tasks.js";
 
 export type Config = {
   baseUrl: string;
@@ -31,32 +30,17 @@ export type Config = {
 };
 type Call = (operation: string, input: any, key: string) => Promise<any>;
 type Playbook = { kind: "playbook"; id: string; revision: number };
-type Capture = {
-  eventTimes: Record<string, string>;
+type State = {
+  taskRef?: string;
   collectionGap?: string;
-  playbook?: Playbook;
-  feedbackRevision?: number | undefined;
+  cursor?: TranscriptCursor;
+  tools: Record<string, string>;
   prompts: Array<{
     key: string;
-    digest: string;
     responseDigest?: string;
-    done?: boolean;
     playbook?: Playbook;
     feedbackRevision?: number | undefined;
   }>;
-  lastAgentDigest?: string;
-};
-type Task = Capture & HostTaskBinding;
-type State = {
-  captures: Record<string, Capture>;
-  pendingBoundary?: {
-    action: "stop" | "end";
-    occurredAt: string;
-    reason?: string;
-    capturePending?: boolean;
-  };
-  cursor?: TranscriptCursor;
-  tools: Record<string, { name: unknown; eventId?: string }>;
 };
 const api =
   (config: Config): Call =>
@@ -84,9 +68,13 @@ export async function handleHook(
   event: HookEvent,
   type: string,
   call: Call = api(config),
-) {
-  if (event.agentId || event.parentToolCallId) return {};
+): Promise<Record<string, unknown>> {
+  // Official prompt/stop hooks are sufficient. Tool and user material comes
+  // only from the transcript, avoiding a second ingestion/reconciliation path.
   if (
+    !["userPromptTransformed", "agentStop", "sessionEnd"].includes(type) ||
+    event.agentId ||
+    event.parentToolCallId ||
     !event.sessionId ||
     !/^[a-zA-Z0-9_-]{1,128}$/.test(event.sessionId) ||
     !event.cwd
@@ -99,41 +87,39 @@ export async function handleHook(
     if (!rel || (!rel.startsWith("..") && !isAbsolute(rel))) allowed = true;
   }
   if (!allowed) return {};
+  const settings = (await call("settings.get", {}, "settings")) as Array<{
+    scopeId: string;
+    learning: boolean;
+    recommendation: boolean;
+    review: boolean;
+  }>;
+  const setting = settings.find((v) => v.scopeId === config.scopeId);
+  if (!setting) return {};
   await mkdir(config.stateRoot, { recursive: true });
   const sessionKey = digest([cwd, event.sessionId, config.scopeId]);
   const path = join(config.stateRoot, `${sessionKey}.json`);
   const lock = `${path}.lock`;
-  // A busy hook fails open; the next transcript read recovers missed events.
   let locked = false;
-  let recoveredLock = false;
   for (let retry = 0; retry < 20 && !locked; retry++) {
     try {
       await mkdir(lock);
       locked = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() - (await stat(lock)).mtimeMs > 120000) {
-        try {
-          await rmdir(lock);
-          recoveredLock = true;
-        } catch {
-          /* Another callback may already have recovered it. */
-        }
-      }
+      if (Date.now() - (await stat(lock)).mtimeMs > 120000)
+        await rmdir(lock).catch(() => {});
       await new Promise((done) => setTimeout(done, 50));
     }
   }
   if (!locked) throw new Error("hook_state_busy");
   try {
-    let state: State = { captures: {}, tools: {} };
+    let state: State = { tools: {}, prompts: [] };
     try {
       state = JSON.parse(await readFile(path, "utf8"));
-      if (!state.captures || !state.tools)
-        throw new Error("hook_state_invalid");
+      if (!Array.isArray(state.prompts) || !state.tools)
+        throw new Error("host_session_restart_required");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // Existing alpha sessions used a different task protocol. Do not replay
-      // their transcript under new task identities during a rolling upgrade.
       const legacy = join(
         config.stateRoot,
         `${digest([cwd, event.sessionId])}.json`,
@@ -141,9 +127,9 @@ export async function handleHook(
       if (
         await stat(legacy).then(
           () => true,
-          (error) => {
-            if (error.code === "ENOENT") return false;
-            throw error;
+          (e) => {
+            if (e.code === "ENOENT") return false;
+            throw e;
           },
         )
       )
@@ -153,251 +139,54 @@ export async function handleHook(
       await writeFile(`${path}.tmp`, JSON.stringify(state));
       await rename(`${path}.tmp`, path);
     };
-    const flushBoundary = async () => {
-      if (!state.pendingBoundary) return;
-      const { capturePending, ...pending } = state.pendingBoundary;
-      const result = await call(
-        "hostTaskBoundary",
-        { scopeId: config.scopeId, sessionKey, ...pending },
-        digest([sessionKey, pending]),
-      );
-      if (capturePending && result.taskRef) {
-        const capture = state.captures[result.taskRef] ?? {
-          eventTimes: {},
-          prompts: [],
-        };
-        capture.collectionGap =
-          "Host capture was interrupted; later reads recover available material.";
-        state.captures[result.taskRef] = capture;
-      }
-      delete state.pendingBoundary;
-      await save();
-    };
-    await flushBoundary();
-    const now = eventTime(event.timestamp) ?? new Date().toISOString();
-    if (["agentStop", "sessionEnd"].includes(type)) {
-      state.pendingBoundary = {
-        action: type === "agentStop" ? "stop" : "end",
-        occurredAt: now,
-        capturePending: true,
-        ...(type === "sessionEnd"
-          ? { reason: event.reason ?? "session_end" }
-          : {}),
-      };
-      await save();
-    }
-    const settings = (await call("settings.get", {}, "settings")) as Array<{
-      scopeId: string;
-      learning: boolean;
-      recommendation: boolean;
-      review: boolean;
-    }>;
-    const setting = settings.find((v) => v.scopeId === config.scopeId);
-    if (!setting) return {};
-    const prompt = stripInjectedMemory(
-      event.prompt ?? event.transformedPrompt ?? "",
+    // Reuse the existing durable task binding. Stops and resumed sessions
+    // never create another LessonLoop task or require boundary synchronization.
+    const { taskRef } = await call(
+      "startTask",
+      { scopeId: config.scopeId, eventId: `copilot-session:${sessionKey}` },
+      sessionKey,
     );
-    const promptKey = digest([event.sessionId, event.timestamp ?? "", prompt]);
-    const marker = /^\s*\/lessonloop\s+(new|continue)\b/i
-      .exec(prompt)?.[1]
-      ?.toLowerCase();
-    const boundary = (action: string) =>
-      call(
-        "hostTaskBoundary",
-        {
-          scopeId: config.scopeId,
-          sessionKey,
-          occurredAt: now,
-          action,
-          ...(action === "prompt"
-            ? { promptKey, ...(marker ? { boundary: marker } : {}) }
-            : {}),
-          ...(action === "end"
-            ? { reason: event.reason ?? "session_end" }
-            : {}),
-        },
-        digest([sessionKey, action, now, promptKey]),
-      );
-    const binding = await boundary(
-      type === "userPromptTransformed" ? "prompt" : "read",
-    );
-    const tasks: Task[] = binding.tasks.map((task: HostTaskBinding) => ({
-      ...(state.captures[task.taskRef] ?? {
-        eventTimes: {},
-        prompts: [],
-      }),
-      ...task,
-    }));
-    // Task lifecycle is authoritative in the core; only collection receipts
-    // and the transcript checkpoint are persisted by the adapter.
-    const saveCapture = async () => {
-      state.captures = Object.fromEntries(
-        tasks.map(({ taskRef, startedAt, endedAt, ...capture }) => [
-          taskRef,
-          capture,
-        ]),
-      );
-      await save();
-    };
-    const taskAt = (time: string) =>
-      [...tasks].reverse().find((t) => t.startedAt <= time);
-    // Hooks and the later transcript can describe one event at different
-    // times. Persist its first observed time before sending any product call.
-    const receiptTime = async (task: Task, id: string, at: string) => {
-      if (task.eventTimes[id]) return task.eventTimes[id];
-      if (Object.keys(task.eventTimes).length >= 128) return;
-      task.eventTimes[id] = at;
-      await saveCapture();
-      return at;
-    };
-    const gap = async (task: Task, reason: string, _at = now) => {
-      task.collectionGap = reason;
-      await saveCapture();
-    };
-    const inputSource = async (
-      task: Task,
-      text: string,
-      role: "user" | "agent" | "tool",
-      id: string,
-      at: string,
-    ) => {
-      if (!setting.learning || !text.trim()) return;
-      if (Buffer.byteLength(text) > 28000) {
-        await gap(task, "source_input_budget", at);
-        return;
-      }
-      const observedAt = await receiptTime(task, id, at);
-      if (!observedAt) return;
-      try {
-        await call(
-          "submitSource",
-          {
-            scopeId: config.scopeId,
-            segments: [
-              {
-                text,
-                role,
-                locator: `copilot:${event.sessionId}:${task.taskRef}`,
-                observedAt,
-              },
-            ],
-            context: { taskRef: task.taskRef },
-          },
-          id,
-        );
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          ![
-            "source_input_budget",
-            "source_erased_from_task",
-            "source_forgotten",
-            "learning_disabled",
-          ].includes(error.message)
-        )
-          throw error;
-        await gap(task, error.message, at);
-      }
-      if (role === "agent") task.lastAgentDigest = digest(text);
-    };
-    const observeTool = async (
-      task: Task,
-      text: string,
-      id: string,
-      at: string,
-    ) => {
-      if (task.endedAt) {
-        await gap(task, "late_tool_after_end", at);
-        return;
-      }
-      if (Buffer.byteLength(text) > 16000) {
-        await gap(task, "observation_budget", at);
-        return;
-      }
-      const occurredAt = await receiptTime(task, id, at);
-      if (!occurredAt) return;
-      try {
-        await call(
-          "recordHostObservation",
-          { taskRef: task.taskRef, eventId: id, text, occurredAt },
-          id,
-        );
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          !["task_observations_too_large", "observation_erased"].includes(
-            error.message,
-          )
-        )
-          throw error;
-        await gap(task, error.message, at);
-      }
-    };
-    const active = tasks.at(-1);
-    if (!active) return {};
-    if (type === "userPromptTransformed") {
-      if (binding.late) {
-        await gap(active, "late_prompt");
-        return {};
-      }
-      if (
-        tasks.some((t) => t.prompts.some((p) => p.key === promptKey && p.done))
-      )
-        return {};
-    }
-    if (recoveredLock) await gap(active, "interrupted_hook");
+    state.taskRef = taskRef;
     const transcript = await readTranscript(event, cwd, state.cursor);
-    let toolCallId = event.toolCallId;
+    const gaps = new Set(transcript.gaps);
     for (const record of transcript.records) {
       if (record.agentId || record.data.parentToolCallId) continue;
-      const at = eventTime(record.timestamp) ?? now;
-      const task = taskAt(at);
-      if (!task) continue;
+      const at = eventTime(record.timestamp);
       const data = record.data;
       if (
         record.type === "tool.execution_start" &&
-        typeof data.toolCallId === "string"
+        typeof data.toolCallId === "string" &&
+        typeof data.toolName === "string"
       ) {
-        state.tools[data.toolCallId] = {
-          name: data.toolName,
-          ...(record.id ? { eventId: record.id } : {}),
-        };
-        if (Object.keys(state.tools).length > 32)
+        state.tools[data.toolCallId] = data.toolName;
+        if (Object.keys(state.tools).length > 128)
           delete state.tools[Object.keys(state.tools)[0]!];
       }
       if (
-        record.type === "hook.start" &&
-        data.hookType === "postToolUse" &&
-        data.input?.timestamp === event.timestamp &&
-        record.parentId
-      )
-        toolCallId ??= Object.entries(state.tools).find(
-          ([, t]) => t.eventId === record.parentId,
-        )?.[0];
-      if (
         record.type === "hook.end" &&
         data.hookType === "userPromptTransformed" &&
-        data.success === true
+        data.success &&
+        at
       ) {
         const output = data.output?.modifiedTransformedPrompt;
-        const returned =
+        const receipt =
           typeof output === "string"
-            ? task.prompts.find((p) => p.responseDigest === digest(output))
+            ? state.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
         if (
           setting.review &&
-          returned?.playbook &&
-          returned.feedbackRevision !== undefined
+          receipt?.playbook &&
+          receipt.feedbackRevision !== undefined
         ) {
           try {
             await call(
               "updateTaskFeedback",
               {
-                taskRef: task.taskRef,
+                taskRef,
                 field: "delivered",
-                playbookId: returned.playbook.id,
-                revision: returned.playbook.revision,
-                expectedRevision: returned.feedbackRevision,
+                playbookId: receipt.playbook.id,
+                revision: receipt.playbook.revision,
+                expectedRevision: receipt.feedbackRevision,
               },
               "delivery",
             );
@@ -414,163 +203,100 @@ export async function handleHook(
           }
         }
       }
+      let segment = transcriptEvent(record);
       if (record.type === "tool.execution_complete") {
-        const start = state.tools[data.toolCallId];
-        // Product guidance is not independent evidence of execution.
-        if (isProductTool(start?.name)) continue;
+        const name = state.tools[data.toolCallId];
+        if (!name) {
+          gaps.add("tool_identity_unavailable");
+          continue;
+        }
+        if (isProductTool(name)) continue;
         const result =
           data.result && typeof data.result === "object"
             ? { ...data.result, success: data.success }
             : { content: data.result ?? data.error, success: data.success };
-        const text = toolText(start?.name, undefined, result);
-        const id = digest([
-          task.taskRef,
-          "tool",
-          data.toolCallId ?? record.id,
-          text,
-        ]);
-        await observeTool(task, text, id, at);
-        await inputSource(task, text, "tool", id, at);
-      } else {
-        const segment = transcriptEvent(record);
-        if (segment) {
-          if (
-            segment.role === "user" &&
-            task.prompts.some((p) => p.digest === digest(segment.text))
-          )
-            continue;
-          await inputSource(
-            task,
-            segment.text,
-            segment.role,
-            digest([
-              task.taskRef,
-              record.id ?? [segment.role, segment.text, at],
-            ]),
-            at,
-          );
-        }
+        segment = {
+          role: "tool",
+          text: toolText(name, undefined, result),
+          eventId: record.id,
+        };
       }
-    }
-    if (transcript.cursor) state.cursor = transcript.cursor;
-    if (["agentStop", "sessionEnd"].includes(type))
-      for (const reason of transcript.gaps) await gap(active, reason);
-    await saveCapture();
-    const task = taskAt(now);
-    if (!task) return {};
-    if (
-      type === "postToolUse" &&
-      event.toolResult !== undefined &&
-      !isProductTool(event.toolName)
-    ) {
-      const text = toolText(event.toolName, event.toolArgs, event.toolResult);
-      const id = digest([
-        task.taskRef,
-        "tool",
-        toolCallId ?? event.timestamp,
-        text,
-      ]);
-      await observeTool(task, text, id, now);
-      await inputSource(task, text, "tool", id, now);
-    }
-    if (type === "userPromptTransformed") {
-      let output: Record<string, unknown> = {};
-      const promptRecord: Task["prompts"][number] = task.prompts.find(
-        (p) => p.key === promptKey,
-      ) ?? {
-        key: promptKey,
-        digest: digest(prompt),
-        done: false,
-      };
-      if (!task.prompts.includes(promptRecord)) task.prompts.push(promptRecord);
-      task.prompts = task.prompts.slice(-32);
-      await inputSource(
-        task,
-        prompt,
-        "user",
-        digest([task.taskRef, "prompt", promptKey]),
-        now,
-      );
-      if (setting.recommendation && prompt.trim()) {
-        if (!task.playbook) {
-          const search = await call(
-            "searchPlaybooks",
-            {
-              query:
-                prompt
-                  .replace(/^\s*\/lessonloop\s+(new|continue)\s*/i, "")
-                  .slice(0, 2048) || prompt.slice(0, 2048),
-            },
-            "search",
-          );
-          task.playbook = search.results[0]?.playbook;
-        }
-        if (task.playbook) {
-          const prepared = await call(
-            "preparePlaybook",
-            {
-              playbookId: task.playbook.id,
-              revision: task.playbook.revision,
-              taskRef: task.taskRef,
-              requestId: promptKey,
-            },
-            promptKey,
-          );
-          if (prepared.status === "guidance") {
-            task.feedbackRevision = prepared.feedbackRevision;
-            promptRecord.playbook = task.playbook;
-            promptRecord.feedbackRevision = task.feedbackRevision;
-            output = promptEnvelope(
-              event,
-              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify({ taskRef: task.taskRef, ...prepared })}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. Reuse this taskRef for getGuidance. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
-            );
-            promptRecord.responseDigest = digest(
-              output.modifiedTransformedPrompt,
-            );
-          } else if (prepared.status === "requires_expansion") {
-            output = promptEnvelope(
-              event,
-              "<lessonloop-playbook>" +
-                JSON.stringify({
-                  ...prepared,
-                  taskRef: task.taskRef,
-                  playbook: task.playbook,
-                }) +
-                " Full guidance exceeds the automatic budget. Call getGuidance with input {taskRef, target: playbook, viewMode: 'expanded'} using these references (viewMode=expanded).</lessonloop-playbook>",
-            );
-          } else {
-            if (prepared.reason) await gap(task, prepared.reason);
-          }
-        }
+      if (!setting.learning || !segment?.text.trim()) continue;
+      if (Buffer.byteLength(segment.text) > 28000) {
+        gaps.add("source_input_budget");
+        continue;
       }
-      promptRecord.done = true;
-      await saveCapture();
-      return output;
-    }
-    const finishCapture = async () => {
-      if (state.pendingBoundary) state.pendingBoundary.capturePending = false;
-      await saveCapture();
-      await flushBoundary();
-    };
-    if (type === "agentStop") await finishCapture();
-    if (type === "sessionEnd") {
-      if (
-        event.finalMessage &&
-        task.lastAgentDigest !==
-          digest(stripInjectedMemory(event.finalMessage).trim())
-      )
-        await inputSource(
-          task,
-          stripInjectedMemory(event.finalMessage).trim(),
-          "agent",
-          digest([task.taskRef, "final", event.finalMessage]),
-          now,
+      try {
+        await call(
+          "submitSource",
+          {
+            scopeId: config.scopeId,
+            context: { taskRef },
+            segments: [
+              {
+                text: segment.text,
+                role: segment.role,
+                locator: `copilot:${event.sessionId}`,
+                ...(at ? { observedAt: at } : {}),
+              },
+            ],
+          },
+          digest([sessionKey, record.id ?? record]),
         );
-      await finishCapture();
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          ![
+            "source_input_budget",
+            "source_erased_from_task",
+            "source_forgotten",
+            "source_unavailable",
+            "learning_disabled",
+          ].includes(error.message)
+        )
+          throw error;
+        gaps.add(error.message);
+      }
     }
-    // Copilot can dispatch sessionStart after userPromptTransformed. A new
-    // session has its own sessionId; this notification must not close its task.
-    return {};
+    if (gaps.size) {
+      state.collectionGap = [...gaps].join(", ");
+      process.stderr.write(
+        "LessonLoop collection incomplete: " +
+          state.collectionGap +
+          "." +
+          String.fromCharCode(10),
+      );
+    }
+    // Failed submissions leave the previous checkpoint intact. Replays use
+    // transcript identities and timestamps, not callback receipt times.
+    if (transcript.cursor) state.cursor = transcript.cursor;
+    await save();
+    if (type !== "userPromptTransformed" || !setting.recommendation) return {};
+    const prompt = stripInjectedMemory(
+      event.prompt ?? event.transformedPrompt ?? "",
+    ).trim();
+    const key = digest([sessionKey, event.timestamp, prompt]);
+    if (!prompt || state.prompts.some((p) => p.key === key)) return {};
+    const guidance = await call(
+      "getGuidance",
+      { taskRef, query: prompt.slice(0, 2048) },
+      key,
+    );
+    const prepared = guidance.playbooks?.[0];
+    const receipt: State["prompts"][number] = { key };
+    const output = promptEnvelope(
+      event,
+      `<lessonloop-playbook>\n${JSON.stringify(guidance)}\nUse applicable guidance and choose branches from current observations. Reuse taskRef for getGuidance. For requires_expansion, call getGuidance with the same taskRef, target: playbook and viewMode: expanded.\n</lessonloop-playbook>`,
+    );
+    if (prepared?.status === "guidance")
+      Object.assign(receipt, {
+        playbook: prepared.playbook,
+        feedbackRevision: prepared.feedbackRevision,
+        responseDigest: digest(output.modifiedTransformedPrompt),
+      });
+    state.prompts = [...state.prompts, receipt].slice(-32);
+    await save();
+    return output;
   } finally {
     await rmdir(lock);
   }
