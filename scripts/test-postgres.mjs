@@ -10,6 +10,7 @@ const files = [
   "tests/postgres.integration.ts",
   "tests/feedback-migration.integration.ts",
   "tests/task-feedback.integration.ts",
+  "tests/task-outcomes.integration.ts",
   "tests/pure-storage.integration.ts",
   "tests/job-payload.integration.ts",
   "tests/http.integration.ts",

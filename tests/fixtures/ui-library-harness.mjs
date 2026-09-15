@@ -350,6 +350,238 @@ export async function runUiLibraryChecks() {
     checks.push(
       "feedback renders unknown delivery and result independently from a helpful rating",
     );
+    assert.doesNotMatch($("effect-summary").textContent, /结果来源/);
+    assert.doesNotMatch($("periodic-reviews").textContent, /结果来源/);
+    const taskCard = (taskRef) => {
+      const card = $("effect-cases").children.find((e) =>
+        e.children.some((c) => c._text === taskRef),
+      );
+      assert.ok(card, "task card " + taskRef);
+      return card;
+    };
+    const outcomeWrites = () =>
+      requests.filter(
+        (r) =>
+          r.operation === "updateTaskFeedback" &&
+          r.input.field === "taskOutcome",
+      );
+    const outcomeTask = {
+      id: "session-no-playbook",
+      taskRef: "session-no-playbook",
+      revision: 1,
+      scopeId: "ui-check",
+      taskOutcome: "unknown",
+      outcomeText: "",
+      outcomeScope: "session",
+      outcomeAssessment: "pending",
+      classification: "needs_verification",
+      feedback: [],
+    };
+    fixture.taskFeedback.set(outcomeTask.id, outcomeTask);
+    await run("renderEffects()");
+    let outcomeCard = taskCard(outcomeTask.id);
+    assert.match(outcomeCard.textContent, /Copilot 会话结果：未知/);
+    assert.match(outcomeCard.textContent, /AI 正在判断结果/);
+    assert.equal(
+      walk(outcomeCard).some((e) => e._text === "确认当前结果"),
+      false,
+    );
+    await click(outcomeCard, "填写或纠正结果");
+    assert.deepEqual(
+      field(outcomeCard, "结果").options.map((o) => o.value),
+      ["succeeded", "failed", "abandoned", "unknown"],
+    );
+    assert.equal(field(outcomeCard, "结果说明（可选）").maxLength, 512);
+    await input(outcomeCard, "结果", "failed");
+    await input(outcomeCard, "结果说明（可选）", "构建失败，尚未修复。");
+    await click(outcomeCard, "保存结果");
+    assert.deepEqual(outcomeWrites().at(-1).input, {
+      taskRef: outcomeTask.id,
+      field: "taskOutcome",
+      expectedRevision: 1,
+      taskOutcome: "failed",
+      text: "构建失败，尚未修复。",
+    });
+    assert.match(taskCard(outcomeTask.id).textContent, /人工确认或纠正/);
+    assert.doesNotMatch(taskCard(outcomeTask.id).textContent, /AI 正在判断/);
+    assert.match($("effect-summary").textContent, /失败 1/);
+    assert.match($("periodic-reviews").textContent, /失败 1/);
+    checks.push(
+      "session outcome can be recorded without a playbook while AI is pending",
+    );
+    for (const taskOutcome of ["abandoned", "unknown"]) {
+      outcomeCard = taskCard(outcomeTask.id);
+      const revision = outcomeTask.revision;
+      await click(outcomeCard, "填写或纠正结果");
+      await input(outcomeCard, "结果", taskOutcome);
+      await input(outcomeCard, "结果说明（可选）", "");
+      await click(outcomeCard, "保存结果");
+      assert.equal(outcomeWrites().at(-1).input.expectedRevision, revision);
+      assert.equal(outcomeTask.taskOutcome, taskOutcome);
+      assert.equal(outcomeTask.outcomeText, "");
+    }
+    checks.push(
+      "manual corrections support cancellation and unknown with optional text",
+    );
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "succeeded",
+      outcomeSource: "ai",
+      outcomeAssessment: "completed",
+      outcomeText: "Copilot 报告已完成修改。",
+      outcomeEvidence: [
+        { role: "agent", excerpt: "已完成 <script>修改</script>。" },
+      ],
+    });
+    await run("renderEffects()");
+    outcomeCard = taskCard(outcomeTask.id);
+    assert.match(outcomeCard.textContent, /AI 判断（待人工确认）/);
+    assert.ok(
+      outcomeCard.textContent.includes(
+        "Copilot：已完成 <script>修改</script>。",
+      ),
+    );
+    assert.equal(
+      walk(outcomeCard).some((e) => e.tag === "script"),
+      false,
+    );
+    assert.match($("effect-summary").textContent, /AI 判断 1/);
+    assert.match($("periodic-reviews").textContent, /AI 判断 1/);
+    const confirmRevision = outcomeTask.revision;
+    await click(outcomeCard, "确认当前结果");
+    assert.equal(
+      outcomeWrites().at(-1).input.expectedRevision,
+      confirmRevision,
+    );
+    assert.equal(outcomeWrites().at(-1).input.taskOutcome, "succeeded");
+    assert.equal(outcomeTask.outcomeSource, "user");
+    assert.match(
+      $("effect-summary").textContent,
+      /AI 判断 0 · 人工确认或纠正 1/,
+    );
+    assert.match($("periodic-reviews").textContent, /人工确认或纠正 1/);
+    assert.equal(
+      walk(taskCard(outcomeTask.id)).some((e) => e._text === "确认当前结果"),
+      false,
+    );
+    checks.push(
+      "AI result and literal evidence can be confirmed and refresh review source counts",
+    );
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "succeeded",
+      outcomeSource: "ai",
+    });
+    await run("renderEffects()");
+    const staleCard = taskCard(outcomeTask.id),
+      writesBeforeStale = outcomeWrites().length;
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "failed",
+      outcomeSource: "host",
+      outcomeText: "宿主报告会话异常结束。",
+    });
+    await button(staleCard, "确认当前结果").click();
+    assert.match($("notice").textContent, /结果已更新，请核对最新记录后再确认/);
+    assert.equal(outcomeWrites().length, writesBeforeStale);
+    assert.match(
+      taskCard(outcomeTask.id).textContent,
+      /Copilot 会话结果：失败/,
+    );
+    assert.match(taskCard(outcomeTask.id).textContent, /宿主报告/);
+    checks.push(
+      "confirmation refuses a changed displayed revision without writing",
+    );
+    outcomeCard = taskCard(outcomeTask.id);
+    await click(outcomeCard, "填写或纠正结果");
+    const formRevision = outcomeTask.revision;
+    await input(outcomeCard, "结果", "abandoned");
+    await input(outcomeCard, "结果说明（可选）", "我取消了这次会话。");
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "succeeded",
+      outcomeSource: "user",
+      outcomeText: "另一位用户已确认成功。",
+    });
+    const beforeConflict = outcomeWrites().length;
+    await click(outcomeCard, "保存结果");
+    assert.equal(outcomeWrites().length, beforeConflict + 1);
+    assert.equal(outcomeWrites().at(-1).input.expectedRevision, formRevision);
+    assert.match(outcomeCard.textContent, /草稿尚未保存/);
+    assert.equal(button(outcomeCard, "保存结果").disabled, true);
+    assert.equal(field(outcomeCard, "结果").value, "abandoned");
+    assert.equal(
+      field(outcomeCard, "结果说明（可选）").value,
+      "我取消了这次会话。",
+    );
+    await click(outcomeCard, "加载最新结果");
+    assert.equal(outcomeWrites().length, beforeConflict + 1);
+    assert.match(outcomeCard.textContent, /另一位用户已确认成功/);
+    assert.equal(field(outcomeCard, "结果").value, "abandoned");
+    assert.equal(
+      field(outcomeCard, "结果说明（可选）").value,
+      "我取消了这次会话。",
+    );
+    assert.equal(button(outcomeCard, "保存结果").disabled, false);
+    const retryRevision = outcomeTask.revision;
+    await click(outcomeCard, "保存结果");
+    assert.equal(outcomeWrites().at(-1).input.expectedRevision, retryRevision);
+    assert.equal(outcomeTask.taskOutcome, "abandoned");
+    checks.push(
+      "stale edit preserves draft and requires loading and reviewing before a new save",
+    );
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "succeeded",
+      outcomeSource: "ai",
+    });
+    await run("renderEffects()");
+    const raceFetch = context.fetch;
+    let race = true;
+    context.fetch = async (path, options) => {
+      const { operation, input } = JSON.parse(options.body);
+      if (
+        race &&
+        operation === "updateTaskFeedback" &&
+        input.field === "taskOutcome"
+      ) {
+        race = false;
+        Object.assign(outcomeTask, {
+          revision: outcomeTask.revision + 1,
+          taskOutcome: "abandoned",
+          outcomeSource: "host",
+        });
+      }
+      return raceFetch(path, options);
+    };
+    await button(taskCard(outcomeTask.id), "确认当前结果").click();
+    assert.match($("notice").textContent, /结果已更新，请核对最新记录后再确认/);
+    assert.equal(outcomeTask.outcomeSource, "host");
+    assert.match(taskCard(outcomeTask.id).textContent, /已取消或放弃/);
+    context.fetch = raceFetch;
+    checks.push(
+      "confirmation handles a write-time revision conflict without automatic retry",
+    );
+    Object.assign(outcomeTask, {
+      revision: outcomeTask.revision + 1,
+      taskOutcome: "unknown",
+      outcomeSource: undefined,
+      outcomeAssessment: "unavailable",
+      outcomeText: "",
+    });
+    await run("renderEffects()");
+    assert.match(
+      taskCard(outcomeTask.id).textContent,
+      /Copilot 会话结果：未知/,
+    );
+    assert.match(
+      taskCard(outcomeTask.id).textContent,
+      /自动判断暂不可用，可手动填写结果/,
+    );
+    assert.doesNotMatch(taskCard(outcomeTask.id).textContent, /会话结果：失败/);
+    checks.push(
+      "unavailable assessment remains distinct from a failed task result",
+    );
     return checks;
   } finally {
     await fixture.close();

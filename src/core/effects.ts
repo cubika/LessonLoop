@@ -43,6 +43,15 @@ export interface TaskFeedback {
   createdAt: string;
   taskOutcome: z.infer<typeof outcome>;
   outcomeText: string;
+  outcomeSource?: "ai" | "host" | "user";
+  outcomeScope?: "session";
+  outcomeEvidence?: Array<{
+    role: "user" | "agent" | "tool" | "host";
+    excerpt: string;
+  }>;
+  outcomeAssessment?: "pending" | "completed" | "unavailable";
+  outcomeGeneration?: number;
+  minimumRevision?: number;
   feedback: Array<{
     playbookId: string;
     revision: number;
@@ -59,7 +68,7 @@ const entry = (value: TaskFeedback) => ({
   revision: value.revision,
   value: value as unknown as Record<string, unknown>,
 });
-const retained = (row: TaskFeedback) =>
+export const retained = (row: TaskFeedback) =>
   !row.cleared && Date.parse(row.createdAt) > Date.now() - 30 * DAY;
 
 export class Effects {
@@ -68,7 +77,12 @@ export class Effects {
   // can register feedback, so late writes cannot restore a cleared record.
   async register(
     tx: Transaction,
-    task: { id: string; scopeId: string; createdAt: string },
+    task: {
+      id: string;
+      scopeId: string;
+      createdAt: string;
+      hostSession?: boolean;
+    },
     playbook?: ObjectRef,
   ) {
     if (!(await tx.get<{ review: boolean }>("settings", task.scopeId))?.review)
@@ -82,8 +96,15 @@ export class Effects {
             scopeId: task.scopeId,
             createdAt: task.createdAt,
             revision: old?.revision ?? 0,
+            ...(old?.outcomeGeneration !== undefined
+              ? { outcomeGeneration: old.outcomeGeneration }
+              : {}),
+            ...(old?.minimumRevision !== undefined
+              ? { minimumRevision: old.minimumRevision }
+              : {}),
             taskOutcome: "unknown",
             outcomeText: "",
+            ...(task.hostSession ? { outcomeScope: "session" as const } : {}),
             feedback: [],
           };
     if (
@@ -109,7 +130,11 @@ export class Effects {
   }
   async update(caller: Caller, input: unknown) {
     const v = updateSchema.parse(input);
-    if (caller.channel !== (v.field === "userRating" ? "user" : "host"))
+    if (
+      !(v.field === "taskOutcome"
+        ? ["user", "host"].includes(caller.channel)
+        : caller.channel === (v.field === "userRating" ? "user" : "host"))
+    )
       throw new ApiError("feedback_writer_denied", 403);
     return this.store.transaction(async (tx) => {
       const row = await tx.get<TaskFeedback>("task_feedback", v.taskRef);
@@ -137,8 +162,13 @@ export class Effects {
         throw new ApiError("observation_erased", 409);
       const next = structuredClone(row);
       if (v.field === "taskOutcome") {
+        if (row.outcomeSource === "user" && caller.channel !== "user")
+          throw new ApiError("feedback_user_confirmed", 409);
         next.taskOutcome = v.taskOutcome;
         next.outcomeText = v.text;
+        next.outcomeSource = caller.channel as "user" | "host";
+        next.outcomeAssessment = "completed";
+        delete next.outcomeEvidence;
       } else {
         const f = next.feedback.find(
           (f) => f.playbookId === v.playbookId && f.revision === v.revision,
@@ -155,6 +185,13 @@ export class Effects {
       if (row.revision !== v.expectedRevision) throw new Conflict();
       next.revision++;
       await tx.put(entry(next), row.revision);
+      if (v.field === "taskOutcome") {
+        const pending = await tx.get<{ revision: number }>(
+          "task_outcome",
+          row.id,
+        );
+        if (pending) await tx.remove("task_outcome", row.id, pending.revision);
+      }
       return { accepted: true, revision: next.revision };
     });
   }
@@ -187,6 +224,13 @@ export class Effects {
       failed: result("failed"),
       abandoned: result("abandoned"),
       unknownOutcome: result("unknown"),
+      outcomeSources: Object.fromEntries(
+        ["ai", "host", "user", "unspecified"].map((source) => [
+          source,
+          tasks.filter((t) => (t.outcomeSource ?? "unspecified") === source)
+            .length,
+        ]),
+      ),
       helpful: rated("helpful"),
       reportedIncorrect: rated("incorrect"),
     };
@@ -201,22 +245,28 @@ export class Effects {
   async clear(scopeId: string) {
     return this.store.transaction(async (tx) => {
       for (const row of await tx.list<TaskFeedback>("task_feedback", [scopeId]))
-        if (!row.cleared)
+        if (!row.cleared) {
+          const { outcomeSource, outcomeEvidence, outcomeAssessment, ...rest } =
+            row;
           await tx.put(
             entry({
-              ...row,
+              ...rest,
               revision: row.revision + 1,
               taskOutcome: "unknown",
               outcomeText: "",
+              outcomeGeneration: (row.outcomeGeneration ?? 0) + 1,
+              minimumRevision: row.revision + 1,
               feedback: [],
               cleared: true,
             }),
             row.revision,
           );
+        }
       for (const kind of [
         "effect_review",
         "review_notification",
         "review_issue",
+        "task_outcome",
       ])
         for (const row of await tx.list<{ id: string; revision: number }>(
           kind,
@@ -229,8 +279,15 @@ export class Effects {
   async maintain(scopes: string[]) {
     return this.store.transaction(async (tx) => {
       for (const row of await tx.list<TaskFeedback>("task_feedback", scopes))
-        if (Date.parse(row.createdAt) <= Date.now() - 30 * DAY)
+        if (Date.parse(row.createdAt) <= Date.now() - 30 * DAY) {
           await tx.remove("task_feedback", row.id, row.revision);
+          const pending = await tx.get<{ revision: number }>(
+            "task_outcome",
+            row.id,
+          );
+          if (pending)
+            await tx.remove("task_outcome", row.id, pending.revision);
+        }
     });
   }
 }

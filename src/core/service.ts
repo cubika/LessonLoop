@@ -43,6 +43,7 @@ import {
 import { exportPlaybook } from "../domain/export.js";
 import { jobQuery, JobPromptError, type JobPayload } from "./job-prompts.js";
 import { Effects, type TaskFeedback } from "./effects.js";
+import { TaskOutcomes } from "./task-outcomes.js";
 import { Reviews } from "./reviews.js";
 import {
   playbookPlanKey,
@@ -357,6 +358,8 @@ export class CoreService {
         notifications: v.notifications,
       };
       await tx.put(entry("settings", next), old.revision || null);
+      if (old.review && !v.review)
+        await TaskOutcomes.invalidate(tx, v.scopeId, undefined, true);
       if (v.review && !(await tx.get("review_schedule", v.scopeId)))
         await tx.put(
           entry("review_schedule", {
@@ -1153,6 +1156,7 @@ export class CoreService {
       }
       await this.advanceRevisionReviews(scopes);
       await this.processSourceCleanups(scopes);
+      await new TaskOutcomes(this.store).tick(this.engine, scopes);
       await this.syncProjections(scopes);
       await this.scheduleCrossCaseReviews(scopes);
       const all = await this.store.transaction((tx) =>
@@ -3068,6 +3072,8 @@ export class CoreService {
         const taskCopies = new Map<string, string[]>();
         if (source.taskRef && source.segment)
           taskCopies.set(source.taskRef, [source.segment.text]);
+        for (const taskId of taskCopies.keys())
+          await TaskOutcomes.invalidate(tx, cleanup.scopeId, taskId);
         for (const experience of await tx.list<Experience>("experience", [
           cleanup.scopeId,
         ]))
@@ -3487,6 +3493,13 @@ export class CoreService {
         );
         if (old) {
           const previous = await this.owned<Task>(tx, p, "task", old.taskRef);
+          if (
+            hostSession &&
+            previous.hostSession &&
+            !previous.ended &&
+            !(await tx.get("task_feedback", previous.id))
+          )
+            await new Effects(this.store).register(tx, previous);
           if (hostSession && previous.hostSession && !previous.ended)
             await tx.put(
               entry("task", mutate(previous, {})),

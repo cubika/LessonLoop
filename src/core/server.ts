@@ -6,6 +6,7 @@ import { z } from "zod";
 import { ApiError, CoreService, type Principal } from "./service.js";
 import { Conflict } from "../store/postgres.js";
 import { Effects } from "./effects.js";
+import { TaskOutcomes } from "./task-outcomes.js";
 import { Reviews } from "./reviews.js";
 import { SampleConnector } from "../connectors/sample.js";
 import { workView } from "./source-views.js";
@@ -100,6 +101,8 @@ export async function dispatch(
       return new Reviews(core.store).dismiss(p, identifier.parse(input).id);
     case "updateTaskFeedback":
       return new Effects(core.store).update(p, input);
+    case "submitTaskOutcome":
+      return new TaskOutcomes(core.store).capture(p, input);
     case "getTaskFeedback": {
       const { taskRef } = z
         .object({ taskRef: z.string() })

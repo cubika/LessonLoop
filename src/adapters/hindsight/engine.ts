@@ -130,6 +130,24 @@ export class HindsightEngine {
       usage: { input_tokens: number; output_tokens: number };
     }>("check-observations", input);
   }
+  async assessTaskOutcome(input: {
+    observations: Array<{
+      id: string;
+      role: "user" | "agent" | "tool" | "host";
+      text: string;
+      occurredAt?: string | undefined;
+    }>;
+    gaps: string[];
+  }) {
+    return this.productCall<{
+      result: {
+        taskOutcome: "succeeded" | "failed" | "abandoned" | "unknown";
+        text: string;
+        evidence: Array<{ id: string; excerpt: string }>;
+      };
+      usage: { input_tokens: number; output_tokens: number };
+    }>("assess-task-outcome", input);
+  }
   async configure(scopeId: string) {
     if (this.nativeNamespace) {
       await this.productCall("configure-bank", {

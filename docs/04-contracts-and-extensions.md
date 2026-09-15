@@ -94,7 +94,7 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
-采集优先复用官方实现，薄适配负责授权范围、排除 LessonLoop 派生内容、方法注入和产品接口转换。当前固定 coding-agents 0.4.2 的流式读取与消息规范化，来源与差异见[采集复用](../third-party/copilot-collection.md)。每个 Copilot 会话绑定一个 taskRef；停止、退出和恢复不切分任务，也不推断任务结果。仅从 transcript 入库，删除边界 RPC、new/continue 指令和工具回调重复采集。本地仅保存检查点、工具关联与注入回执，升级后重新打开工作会话。
+采集优先复用官方实现，薄适配负责授权范围、排除 LessonLoop 派生内容、方法注入和产品接口转换。当前固定 coding-agents 0.4.2 的流式读取与消息规范化，来源与差异见[采集复用](../third-party/copilot-collection.md)。每个 Copilot 会话绑定一个 taskRef；停止、退出和恢复不切分任务，也不直接决定任务结果。学习材料从 transcript 入库；回顾另接收当前用户提示与宿主停止原因，工具观察仍从 transcript 读取，不重复采集工具回调。学习与回顾分别维护检查点；回顾提交失败时保留待重试的回调材料。
 
 Agent MCP 只公开 getGuidance、submitSource、feedback，三个工具都提供明确的参数结构。工具参数为 input 和可选 eventId；重试同一次请求时复用 eventId。可信事件使用专用宿主入口；对象详情、主题复盘、作业查询、删除、范围、导出和安装管理由 UI/CLI 提供。
 
@@ -126,13 +126,17 @@ Copilot每条提示调用getGuidance，同时检索方法和经验，并沿用�
 
 ## 本地效果回顾接口
 
-listTasks按授权范围列出当前任务。getTaskFeedback({taskRef})读取当前反馈及revision；updateTaskFeedback按expectedRevision更新一个字段。field=delivered需要playbookId/revision，仅可信宿主可确认；field=taskOutcome需要taskOutcome和可选text，仅任务所属宿主可写；field=userRating需要playbookId/revision、rating和可选text，仅用户可写。
+listTasks按授权范围列出当前任务。getTaskFeedback({taskRef})读取当前反馈及revision；updateTaskFeedback按expectedRevision更新一个字段。field=delivered需要playbookId/revision，仅可信宿主可确认；field=taskOutcome需要taskOutcome和可选text，任务所属宿主及有该scope权限的用户可写；field=userRating需要playbookId/revision、rating和可选text，仅用户可写。结果来源由服务绑定，调用者不能自报AI或用户身份。用户确认或纠正后，AI和宿主不能覆盖该结果，包括用户填写的unknown。
 
-字段同值重试不改revision，旧revision不能覆盖新值。清空会保留递增版本的空标记；显式重新准备可恢复登记，旧请求仍不能写入。反馈过期后不可更新。接口不接收事件批次，不重放历史，也不使用迟到窗口。
+字段同值重试不改revision，旧revision不能覆盖新值。清空会保留递增版本的空标记；显式重新准备可恢复登记，旧请求仍不能写入。反馈过期后不可更新。反馈更新不接收事件批次，也不重放历史。
 
-Copilot仅在真实注入回执或MCP工具成功返回完整guidance的回执后写delivered；产品输出仍不进入学习材料。反馈版本已变化时保留未知，后续新回执可再次确认。任务结束只更新任务边界，采集缺口留在宿主诊断状态中，均不推断任务结果。
+Copilot仅在真实注入回执或MCP工具成功返回完整guidance的回执后写delivered；产品输出仍不进入学习材料。反馈版本已变化时，宿主重读记录并最多重试一次，前提是原方法版本仍有登记且回执晚于清空边界；否则保留投递未知。
 
-getUsageView({playbookId?})与getEffectSummary直接读取当前记录。reviews.issue引用caseId和当前revision；记录更正后，问题确认降为待核实。reviews.export导出当前记录及选定的原始观察，clearEffectData清空回顾。导出不自动上传或启动开发Agent。
+可信宿主通过submitTaskOutcome提交taskRef、generation、checkpoint、observations、gaps和trigger。userPromptTransformed收集新材料，agentStop/sessionEnd将结果判断加入持久队列；这些事件本身不是成败结论。该入口只接受所属宿主与获准范围，不在Agent MCP公开。只开回顾也能处理结果材料，不创建学习来源或Hindsight bank；材料范围和保留预算见[07](07-storage-model.md)。
+
+后台AI根据用户目标、原始观察和缺口判断succeeded/failed/abandoned/unknown，引用须与所提交观察的连续原文一致。未恢复且使目标未完成的错误可支持failed；用户明确放弃任务才支持abandoned。暂停生成、退出、超时或一次工具报错都不能直接作为结论，Agent自报完成也不够。模型不可用与任务失败分别记录，处理限制和人工入口见[11](11-post-release-evaluation.md)。
+
+getUsageView({playbookId?})与getEffectSummary直接读取当前记录，返回结果来源，Copilot会话标注session范围。reviews.issue引用caseId和当前revision；记录更正后，问题确认降为待核实。reviews.export导出当前记录及选定的原始观察，clearEffectData清空回顾并使待处理判断失效。导出不自动上传或启动开发Agent。
 
 ## Connector 接口
 
