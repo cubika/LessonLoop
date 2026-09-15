@@ -46,7 +46,7 @@ setup分别配置模型、scope和来源范围、工作学习、自动推荐、�
 | lessonloop update / rollback | 固定版本激活和兼容回退 |
 | lessonloop uninstall / data purge | 移除程序或单独清理指定受控数据 |
 
-方法、案例、复盘和报告命令由[12](12-method-library.md#cli)维护，均为计划接口。普通UI、CLI和Agent访问相同核心，不各自创建独立数据库或后台实例。
+方法、来源、复盘和报告命令由[12](12-method-library.md#cli)维护，当前开发入口以CLI help为准；已安装launcher的命令见[14](14-alpha-release.md)。普通UI、CLI和Agent访问相同核心，不各自创建独立数据库或后台实例。
 
 后台管理器以隐藏窗口和当前用户身份管理数据库、引擎、核心与本地模型。关闭终端或UI继续工作，关机/注销不处理任务；默认不创建高权限系统服务。每个DataRoot只允许一个管理实例。
 

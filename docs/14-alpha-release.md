@@ -26,7 +26,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ## 管理
 
 - 自启：lessonloop.ps1 autostart enable；关闭使用autostart disable。
-- 暂停新学习和推荐：lessonloop.ps1 configure --disable-learning；已有材料不随之删除。
+- 同时暂停新学习和推荐：lessonloop.ps1 configure --disable-learning；--enable-learning同时开启两者。需要单独调整时使用页面设置，已有材料不随之删除。
 - 移除宿主接入：lessonloop.ps1 agent remove。其他插件、MCP与共享账号保留；已修改的同名配置不会被强行覆盖。
 - 卸载程序：lessonloop.ps1 uninstall。保留数据和凭据。卸载前关闭关联Copilot会话。
 - 永久清理：先从doctor读取installationId，然后执行lessonloop.ps1 data purge --confirm <installationId>。只清本产品受控数据和备份，用户另存导出保留。清理后可setup建立空库。

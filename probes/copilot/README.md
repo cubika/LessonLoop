@@ -21,4 +21,4 @@ probe:copilot执行version/help预检；probe:copilot-hooks启动真实CLI但使
 
 报告在.local-validation/copilot/results/，历史范围见[2026-09-13记录](../../docs/research/2026-09-13-p0/README.md)。更换CLI版本需重新准备和验证，移动脚本路径不算重新完成实测。
 
-方法产品仍需真实trustedCapture、searchMethods/prepareMethod回填、可关联步骤刷新、结果回传和异步回执验收。工具前hook不意味着能观察模型内部采用；能力定义见[Agent接入](../../docs/04-contracts-and-extensions.md#copilot-适配)。
+当前产品的getGuidance回填、会话采集、反馈和异步回执按[Agent接入](../../docs/04-contracts-and-extensions.md#copilot-适配)单独验收，结果见实现计划。这里的旧版协议探针不覆盖当前三工具或会话学习流程。

@@ -2,11 +2,11 @@
 
 日期：2026-09-15。状态：当前数据合同，主要对象和存储已有实现，进度见[13](13-implementation-plan.md)。本页是字段、预算和保留期的唯一维护位置；领域规则见[02](02-experience-model.md)，操作语义见[04](04-contracts-and-extensions.md)。
 
-本开发版本采用产品格式 3，按当前格式初始化。格式 1、2 数据库会明确拒绝启动；本分支没有迁移旧数据，合并前需确认采用新库或另做迁移。当前格式的数据、控制和备份仍按本页保留与恢复。
+本开发版本采用产品格式 3，格式 1、2 数据库明确拒绝启动。格式 3 内的旧反馈和作业字段在启动时一次性整理为当前结构；这不提供旧产品格式迁移，也不保留两套日常读写模型。当前格式的数据、控制和备份仍按本页保留与恢复。
 
 ## 数据所有权
 
-核心只有 Source、Experience、Playbook，类型、API 字段与存储 kind 使用同一套名称。Source 一行保存一个片段及其控制状态；批量输入不产生另一个领域实体。WorkView 放在 core 中，是可选工作聚合缓存；使用视图直接读取任务事件。
+核心只有 Source、Experience、Playbook，类型、API 字段与存储 kind 使用同一套名称。Source 一行保存一个片段及其控制状态；批量输入不产生另一个领域实体。WorkView 放在 core 中，是可选工作聚合缓存；使用视图直接读取 task_feedback。
 
 | 数据 | 权威位置 | 用途 |
 |---|---|---|
@@ -16,15 +16,15 @@
 | PublishedProjection | 可重建索引 | 查询当前可投递对象，不决定产品状态 |
 | 原文、chunks、原生 facts/observations、图与向量 | Hindsight 原生存储 | 提取、归纳、候选与依据读取 |
 | LearningJob、WriteOperation | ProductStore | 有限作业、原生操作确认和失败恢复 |
-| 工作缓存、任务事件、周期回顾 | ProductStore，单独授权 | 效果观察、案例与周期回顾 |
+| task_feedback、周期回顾 | ProductStore，按回顾设置保存 | 任务结果、方法投递、用户评价与周期回顾 |
 
-产品和引擎可以使用同一 PostgreSQL 的独立 schema。不能修改厂商内部表或依赖跨服务数据库事务。现有评测 schema 只覆盖 Experience 的部分规则，不是本页模型的实现。
+当前 Hindsight 0.9.2 适配要求产品与引擎使用同一 PostgreSQL 数据库的独立 schema。扩展读取产品控制，并定向取消原生待处理作业、清理诊断副本；不修改厂商表结构。共享锁和分别提交的边界见[03](03-architecture.md#一致性与恢复)。evals 中的 schema 只覆盖 Experience 的部分规则，产品持久化由 src/store 实现。
 
 ## 身份与引用
 
 所有长期产品对象使用服务生成的 id、递增 revision、scopeId、createdAt、updatedAt。scope 表示归属和授权，主题、项目及分支条件不授予访问权限。ID 不由模型提供，不使用原生 Hindsight ID 作为产品身份。
 
-跨对象引用采用 ObjectRef={kind,id,revision}，kind 为 source、experience 或 playbook。只有语义已明确限定单一对象的字段才省略 kind，例如 Experience.derivedFrom 只引用 Experience。作业结果、写操作、纠正回执和历史使用关联必须带 kind。
+跨对象引用采用 ObjectRef={kind,id,revision}，kind 为 source、experience 或 playbook。只有语义已明确限定单一对象的字段才省略 kind，例如 Experience.derivedFrom 只引用 Experience，任务反馈使用 playbookId/revision。作业结果、写操作和纠正回执使用完整 ObjectRef。
 
 引用绑定实际支持修订。revision 改变表示正文、依据、边界或使用状态变化；索引重建本身不改领域修订。方法沿革不是支持引用，引用图禁止循环，首版 Playbook 不递归调用其他 Playbook。
 
@@ -41,11 +41,12 @@ Evidence={excerpt,role,relation,fingerprint,locator?,author?,observedAt?}。rela
 
 ## 工作和使用视图
 
-WorkView 缓存按 scopeId/workKey 定位，包含目标、尝试、结果、短证据、缺口及方法使用关联。它不属于 ObjectRef，不进入学习产出列表，Playbook 不引用缓存修订。缓存缺失时 getWorkView 返回 available=false；读视图不调用模型。
+WorkView 缓存按 scopeId/workKey 定位，包含目标、尝试、结果、短证据和缺口，不保存方法使用关联。它不属于 ObjectRef，不进入学习产出列表，Playbook 不引用缓存修订。缓存缺失时 getWorkView 返回 available=false；读视图不调用模型。
 
 新输入重建工作快照，保留仍有来源的真实观察。source_sequence 同时记录接收顺序与已处理水位；较新作业零产出也推进水位，较旧结果不能覆盖新结果。跨工作复盘只能提炼经验和方法。
 
-使用视图从已保存的任务事件与真实用户评价生成。视图标签和摘要不成为独立学习证据；学习、效果记录和通知仍分别控制。
+使用视图直接读取 task_feedback 的当前投递、任务结果和评价，无需归并事件或推断步骤采用。视图标签和摘要不成为独立学习证据；学习、效果记录和通知仍分别控制。
+
 ## Experience
 
 | 字段 | 内容 |
@@ -104,7 +105,11 @@ Hindsight 原生字段包括 id/text/type/context、字符串 metadata、tags、
 
 ## 作业、写操作与来源绑定
 
-LearningJob 保存 id、scopeId、kind、stage、status、sourceIds、sourceRefs、results、decisions、engineOperations 和 cancelRequestedAt。kind=case_review/synthesis/playbook_update；stage=queued/extract/compose/assess/publish/done。作业固定使用独立引擎空间，单一当前学习 Schema；不保留旧 profile 的兼容分支。
+LearningJob 保存 id、scopeId、kind、stage、status、sourceIds、sourceRefs、results、decisions、engineOperations、cancelRequestedAt 和临时 payload。kind=case_review/synthesis/playbook_update；stage=queued/extract/compose/assess/publish/done。作业固定使用独立引擎空间。
+
+payload 集中保存冻结的 inputSources、comparisonPlaybooks、retainedSupport、补证目标与控制，以及 candidate、verdict、Schema 和提示版本/哈希。服务和存储直接使用同一结构；新作业的生成及审查提示按需重建，重试核对哈希，不能换用最新材料。新的retain提交将原文放在content，context仅保存归属和环境信息，避免重复正文。
+
+启动时将格式 3 内旧作业的平铺字段归入 payload，终态记录删除 payload。已有在途作业若保存过完整提示，重试沿用原请求。缺少可重放请求时，先找回原操作；关闭提交时若发现已接收的操作，继续核对其结果，确认提交已关闭且没有操作后才明确失败。该恢复边界不保留旧领域实体或运行时 pack/unpack 转换。实现见[提示组装](../src/core/job-prompts.ts)、[启动整理](../src/store/job-payload-migration.ts)和[公共原生作业处理](../src/core/native-model.ts)。
 
 Copilot 会话来源全部保留，学习作业使用最近至多192段、128 KiB的窗口，超出窗口的历史来源不删除。WorkView 可按新窗口替换当前摘要；同一会话不维护多个主题案例，已发布经验仍保留。来源族、workKey与发布序号跨窗口保持一致。
 
@@ -130,11 +135,12 @@ task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOut
 
 | 内容 | 默认策略 |
 |---|---|
-| 已完成学习作业的完整材料与未发布提案 | 完成后 7 天清理；不形成永久候选库 |
-| 失败作业材料 | 最多 30 天，保留失败和来源定位 |
-| 已确认取消作业的材料 | 取消确认后 7 天清理；先清点原生迟到副本，已发布对象独立保留 |
-| 未完成或 uncertain 所需材料 | 保留至操作确认或修复，不按完成期限误删 |
-| WorkView | 原始观察后 30 天；追加不重置旧证据期限 |
+| Source 原文 | 保留获准接收的完整片段；学习窗口滚动不删除原文。withdraw停止使用，erase/forget清除对应正文和环境信息，保留必要控制标记 |
+| 学习作业 payload | 写入completed/failed/canceled终态时整份删除；保留状态、来源引用、产出和处置记录 |
+| 修订审查临时内容 | 终态删除候选、模型提示与Schema；受检写入的暂存内容在写入确认后清理 |
+| 原生方法候选 | 终态后由后台清理；先确认相关原生操作已终结，失败继续重试，不形成永久候选库 |
+| 未完成或 uncertain 所需材料 | 保留至操作确认或修复；取消前已发布对象独立保留 |
+| WorkView | 按workKey更新单份当前缓存，Copilot新窗口可替换旧摘要；当前不按时间自动淘汰，来源擦除会清除相关内容 |
 | 当前 Experience、Playbook | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
 | Playbook 旧版 | 不保留；产品历史恢复入口与原生 mental model 历史均关闭 |
 | task_feedback、使用视图 | 任务创建后30天，评价、更正和重新准备不延期 |
@@ -143,9 +149,9 @@ task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOut
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 
-发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkView、Experience、Playbook、临时候选和原生副本。
+发布前将获准的必要短证据保存为 Experience 支持。Source 原文、作业临时内容和长期短证据各自保留，不能因作业完成就删除仍获准保存的来源，也不能把候选清理当成全文擦除。禁止复制或来源到期时停止相关使用。清空效果记录只清统计；忘记或擦除来源须传播到 WorkView、Experience、Playbook、临时候选和原生副本。
 
-Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系。默认发行 profile 必须明确实际副本策略；无法同时满足材料清理和方法依据保留时，按[决策记录](06-review-and-decisions.md)处理，不能只清作业就报告原文已删除。
+Hindsight 的 documents/chunks、基础事实和派生结果有独立保留关系。当前终态候选清理删除作业中的 mental models，不删除整个 bank 的原文与事实；完整来源擦除走独立的受控清理。各副本的实际清理结果按 E06/E07 验收，不能只清作业就报告原文已删除。
 
 ## 预算
 
@@ -156,17 +162,21 @@ Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系
 | Source 提交 | 32 KiB；最多16个片段；context 32 keys，key 64 B、每值128 B或最多4值 |
 | WorkView | 64 KiB；16 attempts，每项2 KiB；16 Evidence |
 | Experience | 16 KiB；conclusion 2 KiB；conditions/exceptions各4；topics8；entities16；derivedFrom8；根指纹32 |
-| Evidence | 单摘录512 B；Experience最多3项且总2 KiB；使用视图同限；WorkView最多16项 |
+| Evidence | 单摘录512 B；Experience最多3项且总2 KiB；WorkView最多16项 |
 | Playbook | 32 KiB；title256 B、goal1 KiB；12 steps，instruction1 KiB、rationale512 B；每步4 choices；16 supportRefs |
 | 检查与变化 | completionChecks/stopConditions各4项，每项text512 B、stepIds最多12；change.summary1 KiB、predecessors4 |
 | Condition / review | text/question512 B；match最多4值；review整体1 KiB，默认30天 |
-| 学习作业 | 64 KiB、8提案；Playbook正文一次最多1份，超限拆关联作业；单次最多192个来源片段、20相关对象，组装最多2次模型调用 |
+| 学习输入与比较 | 来源窗口最多192段、128 KiB；最多20个比较方法，其支持经验最多64条且总128 KiB；生成提示最多512 KiB |
+| 学习候选 | 输出整体64 KiB、最多8条经验；单方法候选或2–3个拆分方法。此限制不表示完整job/payload最多64 KiB |
+| 方法生成与审查 | 生成、审查各一次，方法修正最多一轮；原生提取和结构化转换调用单独计量 |
 | 控制记录 | WriteOperation48 KiB；SourceControl2 KiB；SourceBinding32 KiB；连接配置16 KiB、游标8 KiB |
 | 依赖展开 | 一个方法或经验请求共32个经验、深度5；超限不取得使用资格 |
 | 方法搜索 | 请求16 KiB；最多3个摘要，约800 token；摘要不带执行资格 |
 | 方法准备 | 请求16 KiB；一个方法自动视图2400 token，显式expanded最多8192 token且不超正文容量 |
-| 直接经验召回 | 请求16 KiB；最多3项、约800 token，最多1个lead；不与方法视图默认叠加 |
-| 观察与回顾 | 单任务64 KiB、关联对象64；使用视图8 KiB；每日1000任务/100新效果案例 |
+| 直接经验召回 | 请求16 KiB；最多3项、800 token，最多1个lead；定向expanded最多8192 token；普通getGuidance与方法一起返回 |
+| 任务反馈与回顾 | 每任务最多8个方法修订，outcomeText/ratingText各512字符；使用视图8 KiB，每日1000任务为原回顾设计预算，完整容量验收仍待完成 |
 | Connector批次 | 256 KiB、最多8个Source片段；超长对象使用稳定子资源 |
+
+getGuidance 同时返回方法和经验时，两部分分别沿用上述预算；当前没有合并响应后的额外裁剪。方法自动视图的token上限不代表整个响应的上限，测量还需计入经验、任务引用和响应封装。定向展开只返回目标类型。
 
 字节按 UTF-8 计算，token 单独计量。完整限制放不下则少返回、分片或报错，不截断后声称完整。引擎内部提取/归纳的次数、总 token、期限、取消和费用上限在 P0 冻结；无法精确限制的项标为可计量，并提供总体调度/取消控制。产品预算不等于数据库物理大小。

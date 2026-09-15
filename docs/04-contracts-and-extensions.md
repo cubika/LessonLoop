@@ -100,13 +100,15 @@ Agent MCP 只公开 getGuidance、submitSource、feedback，三个工具都提�
 
 getGuidance 接受 query，或 target={kind:playbook/experience,id,revision}。已有 hook 或上次返回的 taskRef 时复用该任务；首次调用可省略，核心按唯一授权范围或显式 scopeId 创建任务，并按请求幂等键复用。多范围时必须指定 scopeId；已有任务只检索自身范围，校验任务身份、结束状态与24小时时限。Copilot 会话按24小时空闲时间检查，新宿主回调刷新活跃时间；每条提示重新检索，不固定使用首次命中的方法。直接 RPC 首次调用必须携带 Idempotency-Key，MCP 适配器会补齐。
 
-返回 taskRef、scopeId、playbooks 和 experiences；无命中仍返回任务引用。按问题查询时，内部搜索、准备至多一个方法并召回至多三条经验，保留完整步骤、条件、例外及 guidance/lead 区别。Agent 提供的 context 不作为可信执行证据。requires_expansion 返回方法引用；调用方用相同 taskRef、target 和 viewMode=expanded 展开。定向经验展开包含证据，仍检查当前使用资格，不返回已停用的原始对象详情。每次调用重新检查资格，不缓存旧指导正文。
+返回 taskRef、scopeId、playbooks 和 experiences；无命中仍返回任务引用。按问题查询时，同时准备至多一个方法并召回至多三条经验，各自保留条件、例外和使用资格；方法提供完整做法，经验保留可独立使用的主张及 guidance/lead 区别。当前不在两类结果间执行额外的去重或综合。target 为 playbook 时只准备该方法，为 experience 时只召回该经验。Agent 提供的 context 不作为可信执行证据。
+
+requires_expansion 返回方法引用；调用方用相同 taskRef、target 和 viewMode=expanded 展开。定向经验展开包含证据，仍检查当前使用资格，不返回已停用的原始对象详情。每次调用重新检查资格，不缓存旧指导正文；两类内容的预算分别见[07](07-storage-model.md#预算)。
 
 submitSource 接收 agent/external 材料、可选补充来源引用，返回异步接收回执；回执不代表学习或发布完成，作业状态在 UI/CLI 查询。feedback 接收目标引用、修订、评价和纠错说明，记录调用者意见，不作为真实任务完成的证明。旧的分步检索和任务操作继续供核心、UI/CLI 与可信 hook 使用，不再作为 Agent MCP 工具公开。
 
 | 能力 | 验收与限制 |
 |---|---|
-| taskInjection | 新任务首次规划/行动前搜索并准备方法；只配置MCP不算自动路径 |
+| taskInjection | Copilot每条提示处理前获取方法与经验并回填，复用会话taskRef；只配置MCP不算自动路径 |
 | explicitPrepare | 显式获取完整方法与刷新当前版本可运行 |
 | trustedCapture | 实际来源角色、尝试与结果可核对；工具配置存在不等于覆盖完整 |
 | trustedOutcome | 声明能观察哪些检查/产物与任务结束，未观察的结果为unknown |
@@ -116,11 +118,11 @@ submitSource 接收 agent/external 材料、可选补充来源引用，返回异
 
 ## 触发与配置
 
-新任务走searchPlaybooks→preparePlaybook，必要时补直接经验；不默认叠加两份上下文。显式使用或关联工具步骤进行定向准备，关键新信息使旧判定失效；普通澄清、进度和无关工具不创建新任务。迟到、取消或被替代的响应不注入当前上下文。
+Copilot每条提示调用getGuidance，同时检索方法和经验，并沿用该会话的taskRef；追问、停止和恢复不切分新任务。两类结果都为空时不插入指导正文。显式指定引用时定向获取当前内容，工作Agent按新信息判断适用性；方法使用不要求逐步刷新或上报完成。迟到、取消或被替代的响应不注入当前上下文。
 
 任务阶段结果、结束或新资料触发有预算的复盘。后台只处理获准材料，不重复执行用户操作。学习模型调用与工作宿主隔离，避免采集自己的提炼或回顾文本。
 
-学习、自动推荐、效果回顾、提醒以及scope配置分别存储。关闭学习停止新摄取和新自动复盘，已接收作业默认完成，可显式取消；自动推荐关闭仍可显式准备。上游历史导入、git摄取和自行更新默认值按产品配置固定，不隐式扩大范围。
+学习、自动推荐、效果回顾、提醒以及scope配置分别存储，页面和settings接口可单独修改。安装CLI的configure --enable-learning/--disable-learning同时设置学习与推荐，其余设置保留。关闭学习停止新摄取和新自动复盘，已接收作业默认完成，可显式取消；自动推荐关闭仍可显式准备。上游历史导入、git摄取和自行更新默认值按产品配置固定，不隐式扩大范围。
 
 ## 本地效果回顾接口
 
