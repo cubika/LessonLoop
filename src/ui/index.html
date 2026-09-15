@@ -22,7 +22,7 @@
       </section>
       <section id="workspace" hidden>
         <nav>
-          <button data-view="methods" aria-current="page">
+          <button data-view="playbooks" aria-current="page">
             方法库 · Playbook</button
           ><button data-view="records">经验 · Experience</button>
           <button data-view="sources">来源 · Source</button>
@@ -31,20 +31,20 @@
           <button data-view="connections">连接器</button>
         </nav>
         <div id="review-notifications" role="status"></div>
-        <div id="methods">
+        <div id="playbooks">
           <h1>方法库</h1>
           <form id="search" class="filters">
             <label
               >关键词<input id="query" placeholder="名称、目标或内容"
             /></label>
             <label
-              >范围<select id="method-scope">
+              >范围<select id="playbook-scope">
                 <option value="">全部范围</option>
               </select></label
             >
-            <label>主题<input id="method-topic" /></label>
+            <label>主题<input id="playbook-topic" /></label>
             <label
-              >状态<select id="method-state">
+              >状态<select id="playbook-state">
                 <option value="">全部状态</option>
                 <option value="active">可用</option>
                 <option value="held">待核实</option>
@@ -52,14 +52,14 @@
               </select></label
             >
             <label class="checkbox"
-              ><input id="method-pinned" type="checkbox" />只看常用</label
+              ><input id="playbook-pinned" type="checkbox" />只看常用</label
             >
             <button>查找</button>
           </form>
           <div class="columns">
             <div>
               <div id="cards"></div>
-              <div id="method-pages" class="pagination"></div>
+              <div id="playbook-pages" class="pagination"></div>
             </div>
             <article id="detail">
               <p>选择一个方法查看步骤、依据和变化。</p>
@@ -97,7 +97,7 @@
           <label>范围<input id="scope" value="personal" /></label
           ><label
             >原文<textarea
-              id="material"
+              id="source"
               rows="10"
               placeholder="记录尝试、观察、结果和仍不确定的地方。"
             ></textarea></label

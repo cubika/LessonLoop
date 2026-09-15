@@ -12,7 +12,7 @@ if (!["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
   throw new Error("agent_api_must_be_local");
 const server = new McpServer({ name: "lessonloop", version: "0.0.1" });
 const tools = {
-  submitSource: "Submit authorized agent material for learning",
+  submitSource: "Submit authorized agent inputSource for learning",
   getJob: "Read current learning status",
   searchPlaybooks: "Search currently published playbook summaries",
   preparePlaybook:
@@ -25,7 +25,7 @@ const tools = {
   startTask:
     "Create a separate agent-owned task. input: {scopeId, eventId?}. When the LessonLoop hook already supplied a taskRef, continue that task instead.",
 };
-const methodInput = {
+const playbookInput = {
   playbookId: z.string().min(1),
   revision: z.number().int().positive(),
   taskRef: z.string().min(1),
@@ -33,7 +33,7 @@ const methodInput = {
 const inputs: Record<string, z.ZodTypeAny> = {
   preparePlaybook: z
     .object({
-      ...methodInput,
+      ...playbookInput,
       viewMode: z.enum(["auto", "expanded"]).optional(),
       requestId: z.string().max(128).optional(),
     })

@@ -4,7 +4,7 @@
 
 ## 职责
 
-Connector负责外部认证、读取、分页、来源身份和内容转换。ConnectorRuntime负责连接配置、调度、背压、可靠接收与游标。核心将获准输入整理为WorkCase或提炼Experience，再形成Playbook。Connector不直写引擎，不授予active/supported，不替用户运行方法。
+Connector负责外部认证、读取、分页、来源身份和内容转换。ConnectorRuntime负责连接配置、调度、背压、可靠接收与游标。核心将获准输入整理为WorkView或提炼Experience，再形成Playbook。Connector不直写引擎，不授予active/supported，不替用户运行方法。
 
 同一Connector可有多个Connection，各自绑定账号、选择范围和目标scope。凭据在系统凭据设施，模块只保存引用。首期随产品交付显式注册的模块，无插件市场、热加载或公网Webhook要求。
 

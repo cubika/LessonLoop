@@ -4,12 +4,12 @@ import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import type { Method } from "../src/domain/schema.js";
+import type { Playbook } from "../src/domain/schema.js";
 const secret = JSON.parse(
   await readFile(".local-validation/data/development-secret.json", "utf8"),
 );
 const previous = JSON.parse(
-  await readFile(".local-validation/results/p0-method-path.json", "utf8"),
+  await readFile(".local-validation/results/p0-playbook-path.json", "utf8"),
 );
 const store = new ProductStore(
   `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
@@ -32,20 +32,20 @@ const agent = {
 };
 const report: Record<string, unknown> = { startedAt: new Date().toISOString() };
 try {
-  const method = (await core.inspect(
+  const playbook = (await core.inspect(
     host,
-    "method",
-    previous.methods[0].id,
-  )) as Method;
+    "playbook",
+    previous.playbooks[0].id,
+  )) as Playbook;
   const task = await core.startTask(host, previous.scope);
   const guidance = await core.prepare(host, {
-    methodId: method.id,
-    revision: method.revision,
+    playbookId: playbook.id,
+    revision: playbook.revision,
     taskRef: task.taskRef,
   });
   report.guidance = guidance;
   assert.equal(guidance.status, "guidance");
-  assert.deepEqual(guidance.steps, method.steps);
+  assert.deepEqual(guidance.steps, playbook.steps);
   const raw =
     "This current task uses the fixture pipeline that copies schema.json to client.json. The requested generated client contract field must survive regeneration. The pipeline relationship is confirmed by reading the pipeline configuration.";
   await core.recordHostObservation(host, {
@@ -55,8 +55,8 @@ try {
     occurredAt: new Date().toISOString(),
   });
   report.prepared = await core.prepare(agent, {
-    methodId: method.id,
-    revision: method.revision,
+    playbookId: playbook.id,
+    revision: playbook.revision,
     taskRef: task.taskRef,
   });
   assert.deepEqual(report.prepared, guidance);

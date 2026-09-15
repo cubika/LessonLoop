@@ -59,7 +59,7 @@ try {
     review: false,
     notifications: false,
   });
-  const receipt = await core.submitMaterial(
+  const receipt = await core.submitSource(
     host,
     {
       scopeId: scope,
@@ -93,7 +93,7 @@ try {
       });
       previous = state;
       await writeFile(
-        resolve(root, "results/p0-method-path.json"),
+        resolve(root, "results/p0-playbook-path.json"),
         JSON.stringify(report, null, 2),
       );
     }
@@ -104,21 +104,21 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   }
   await core.syncProjections([scope]);
-  const methods = await core.browse(host, "method");
-  report.methods = methods;
+  const playbooks = await core.browse(host, "playbook");
+  report.playbooks = playbooks;
   report.experiences = await core.browse(host, "experience");
-  if (methods.length) {
-    const m = methods[0]!;
+  if (playbooks.length) {
+    const m = playbooks[0]!;
     const task = await core.startTask(host, scope);
     report.prepared = await core.prepare(host, {
-      methodId: m.id,
+      playbookId: m.id,
       revision: m.revision,
       taskRef: task.taskRef,
     });
   }
   report.runStatus = report.job ? "completed" : "timeout";
   report.gateStatus =
-    methods.length &&
+    playbooks.length &&
     (report.prepared as { status?: string } | undefined)?.status === "guidance"
       ? "partial_evidence"
       : "failed";
@@ -130,7 +130,7 @@ try {
 } finally {
   report.finishedAt = new Date().toISOString();
   await writeFile(
-    resolve(root, "results/p0-method-path.json"),
+    resolve(root, "results/p0-playbook-path.json"),
     JSON.stringify(report, null, 2),
   );
   await store.close();
@@ -139,7 +139,7 @@ console.log(
   JSON.stringify({
     runStatus: report.runStatus,
     gateStatus: report.gateStatus,
-    methods: (report.methods as unknown[] | undefined)?.length ?? 0,
+    playbooks: (report.playbooks as unknown[] | undefined)?.length ?? 0,
   }),
 );
 process.exitCode = report.gateStatus === "failed" ? 1 : 2;

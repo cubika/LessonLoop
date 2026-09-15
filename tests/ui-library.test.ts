@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 // The tiny DOM fixture exercises the shipped app.js and RPC payloads; it does
 // not claim browser rendering coverage. Loading by URL also works outside cwd.
 test(
-  "Method library UI preserves evidence, task identity and pagination across 13 workflows",
+  "Playbook library UI preserves evidence, task identity and pagination across 13 workflows",
   { timeout: 15000 },
   async () => {
     const harnessUrl = new URL(

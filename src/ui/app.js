@@ -1,10 +1,10 @@
 let token = "",
   current,
   settings = [],
-  methodCursors = [undefined],
-  methodPage = 0,
-  methodFilterKey = "",
-  methodListRequest = 0,
+  playbookCursors = [undefined],
+  playbookPage = 0,
+  playbookFilterKey = "",
+  playbookListRequest = 0,
   recordPage = 0;
 const pageSize = 12;
 const labels = {
@@ -49,7 +49,7 @@ $("connect").onclick = handle(async () => {
   token = $("token").value;
   settings = await rpc("settings.get");
   $("token").value = "";
-  for (const id of ["method-scope", "record-scope"])
+  for (const id of ["playbook-scope", "record-scope"])
     for (const setting of settings) {
       const option = node("option", setting.scopeId);
       option.value = setting.scopeId;
@@ -77,50 +77,54 @@ if (
 async function list() {
   const filter = {
     query: $("query").value,
-    ...($("method-scope").value ? { scopeIds: [$("method-scope").value] } : {}),
-    ...($("method-topic").value.trim()
-      ? { topic: $("method-topic").value.trim() }
+    ...($("playbook-scope").value
+      ? { scopeIds: [$("playbook-scope").value] }
       : {}),
-    ...($("method-state").value ? { state: $("method-state").value } : {}),
-    ...($("method-pinned").checked ? { pinnedOnly: true } : {}),
+    ...($("playbook-topic").value.trim()
+      ? { topic: $("playbook-topic").value.trim() }
+      : {}),
+    ...($("playbook-state").value ? { state: $("playbook-state").value } : {}),
+    ...($("playbook-pinned").checked ? { pinnedOnly: true } : {}),
   };
   const filterKey = JSON.stringify(filter);
-  if (filterKey !== methodFilterKey) {
-    methodFilterKey = filterKey;
-    methodCursors = [undefined];
-    methodPage = 0;
+  if (filterKey !== playbookFilterKey) {
+    playbookFilterKey = filterKey;
+    playbookCursors = [undefined];
+    playbookPage = 0;
   }
-  const request = ++methodListRequest;
+  const request = ++playbookListRequest;
   const result = await rpc("browsePlaybooks", {
     ...filter,
     limit: pageSize,
-    ...(methodCursors[methodPage] ? { cursor: methodCursors[methodPage] } : {}),
+    ...(playbookCursors[playbookPage]
+      ? { cursor: playbookCursors[playbookPage] }
+      : {}),
   });
-  if (request !== methodListRequest) return;
-  const methods = result.items;
+  if (request !== playbookListRequest) return;
+  const playbooks = result.items;
   $("cards").replaceChildren();
-  if (!methods.length)
+  if (!playbooks.length)
     $("cards").append(
       node("p", "暂无方法。提交有价值的工作片段后，可在这里查看复盘结果。"),
     );
-  for (const method of methods) {
+  for (const playbook of playbooks) {
     const card = node("section", "");
     card.className = "card";
     card.append(
-      node("h2", method.title),
-      node("p", method.goal),
+      node("h2", playbook.title),
+      node("p", playbook.goal),
       node(
         "span",
-        `${labels[method.state]} · ${method.scopeId} · 修订 ${method.revision}`,
+        `${labels[playbook.state]} · ${playbook.scopeId} · 修订 ${playbook.revision}`,
       ),
     );
-    const pin = node("button", method.pinned ? "取消常用" : "设为常用");
-    pin.setAttribute("aria-pressed", String(method.pinned));
+    const pin = node("button", playbook.pinned ? "取消常用" : "设为常用");
+    pin.setAttribute("aria-pressed", String(playbook.pinned));
     pin.onclick = handle(async (event) => {
       event.stopPropagation();
-      await rpc("pinPlaybook", { id: method.id, pinned: !method.pinned });
-      methodPage = 0;
-      methodCursors = [undefined];
+      await rpc("pinPlaybook", { id: playbook.id, pinned: !playbook.pinned });
+      playbookPage = 0;
+      playbookCursors = [undefined];
       await list();
     });
     card.append(pin);
@@ -131,31 +135,31 @@ async function list() {
         card.click();
       }
     };
-    card.onclick = handle(() => show(method.id));
+    card.onclick = handle(() => show(playbook.id));
     $("cards").append(card);
   }
   const previous = node("button", "上一页"),
     next = node("button", "下一页");
-  previous.disabled = methodPage === 0;
+  previous.disabled = playbookPage === 0;
   next.disabled = !result.nextCursor;
   previous.onclick = handle(async () => {
-    methodPage--;
+    playbookPage--;
     await list();
   });
   next.onclick = handle(async () => {
-    methodCursors[++methodPage] = result.nextCursor;
+    playbookCursors[++playbookPage] = result.nextCursor;
     await list();
   });
-  $("method-pages").replaceChildren(
+  $("playbook-pages").replaceChildren(
     previous,
-    node("span", `第 ${methodPage + 1} 页 · 共 ${result.total} 项`),
+    node("span", `第 ${playbookPage + 1} 页 · 共 ${result.total} 项`),
     next,
   );
 }
 $("search").onsubmit = handle(async (e) => {
   e.preventDefault();
-  methodCursors = [undefined];
-  methodPage = 0;
+  playbookCursors = [undefined];
+  playbookPage = 0;
   await list();
 });
 async function show(id) {
@@ -247,7 +251,7 @@ async function show(id) {
           );
       panel.append(details);
       const restore = node("button", "用这版内容修改并送审");
-      restore.onclick = handle(() => editMethod(d, version));
+      restore.onclick = handle(() => editPlaybook(d, version));
       details.append(restore);
     }
     d.append(panel);
@@ -268,7 +272,7 @@ async function show(id) {
   });
   d.append(usage);
   const edit = node("button", "修改方法");
-  edit.onclick = handle(() => editMethod(d));
+  edit.onclick = handle(() => editPlaybook(d));
   const prepare = node("button", "关联宿主任务");
   prepare.onclick = handle(() => preparePlaybook(d));
   const evidence = node("button", "查看依据");
@@ -389,7 +393,7 @@ document.querySelectorAll("[data-view]").forEach(
           item.setAttribute("aria-current", item === button ? "page" : "false"),
         );
       [
-        "methods",
+        "playbooks",
         "records",
         "settings",
         "effects",
@@ -483,9 +487,9 @@ function selectField(parent, label, options, value) {
   parent.append(wrapper);
   return input;
 }
-async function editMethod(parent, previous) {
+async function editPlaybook(parent, previous) {
   const latest = structuredClone(current),
-    method = structuredClone(previous ?? current),
+    playbook = structuredClone(previous ?? current),
     panel = node("section", "");
   panel.append(
     node(
@@ -495,9 +499,9 @@ async function editMethod(parent, previous) {
     node("p", "提交后暂停旧建议，依据审查通过后再启用新修订。"),
   );
   parent.append(panel);
-  const title = field(panel, "名称", method.title),
-    goal = field(panel, "目标", method.goal, true),
-    topics = field(panel, "主题（每行一项）", method.topics.join("\n"), true);
+  const title = field(panel, "名称", playbook.title),
+    goal = field(panel, "目标", playbook.goal, true),
+    topics = field(panel, "主题（每行一项）", playbook.topics.join("\n"), true);
   const editConditions = (input, original) =>
     input.value
       .split("\n")
@@ -507,20 +511,20 @@ async function editMethod(parent, previous) {
   const conditions = field(
     panel,
     "适用条件（每行一项）",
-    method.conditions.map((c) => c.text).join("\n"),
+    playbook.conditions.map((c) => c.text).join("\n"),
     true,
   );
   const exceptions = field(
     panel,
     "例外（每行一项）",
-    method.exceptions.map((c) => c.text).join("\n"),
+    playbook.exceptions.map((c) => c.text).join("\n"),
     true,
   );
   const loadedSupport = await Promise.allSettled(
-    method.supportRefs.map((ref) => rpc("inspectExperience", { id: ref.id })),
+    playbook.supportRefs.map((ref) => rpc("inspectExperience", { id: ref.id })),
   );
   const missing = loadedSupport.flatMap((result, index) =>
-    result.status === "rejected" ? [method.supportRefs[index].id] : [],
+    result.status === "rejected" ? [playbook.supportRefs[index].id] : [],
   );
   if (missing.length) {
     panel.append(
@@ -534,7 +538,7 @@ async function editMethod(parent, previous) {
   const support = loadedSupport.map((result) => result.value),
     outdated = support.filter(
       (experience, index) =>
-        experience.revision !== method.supportRefs[index].revision,
+        experience.revision !== playbook.supportRefs[index].revision,
     );
   let updateSupport;
   if (outdated.length) {
@@ -566,7 +570,7 @@ async function editMethod(parent, previous) {
     for (const group of checkGroups) {
       const area = node("div", "");
       area.append(node("h4", group.title));
-      method[group.key].forEach((check, index) => {
+      playbook[group.key].forEach((check, index) => {
         const row = node("div", "");
         row.className = "branch-editor";
         const text = field(row, group.title, check.text, true);
@@ -576,7 +580,7 @@ async function editMethod(parent, previous) {
         const targets = selectField(
           row,
           "适用步骤（不选表示整个方法，可多选）",
-          method.steps.map((s, i) => [
+          playbook.steps.map((s, i) => [
             s.stepId,
             `步骤 ${i + 1}：${s.instruction.slice(0, 55)}`,
           ]),
@@ -592,18 +596,18 @@ async function editMethod(parent, previous) {
           else delete check.stepIds;
         };
         const remove = node("button", "移除");
-        remove.disabled = group.required && method[group.key].length === 1;
+        remove.disabled = group.required && playbook[group.key].length === 1;
         remove.onclick = () => {
-          method[group.key].splice(index, 1);
+          playbook[group.key].splice(index, 1);
           renderChecks();
         };
         row.append(remove);
         area.append(row);
       });
       const add = node("button", `添加${group.title}`);
-      add.disabled = method[group.key].length >= 4;
+      add.disabled = playbook[group.key].length >= 4;
       add.onclick = () => {
-        method[group.key].push({ text: "" });
+        playbook[group.key].push({ text: "" });
         renderChecks();
       };
       area.append(add);
@@ -612,7 +616,7 @@ async function editMethod(parent, previous) {
   };
   const renderSteps = () => {
     stepArea.replaceChildren();
-    method.steps.forEach((step, index) => {
+    playbook.steps.forEach((step, index) => {
       const row = node("div", "");
       row.className = "step-editor";
       row.append(node("h4", `步骤 ${index + 1}`));
@@ -630,7 +634,7 @@ async function editMethod(parent, previous) {
         "支持这一步的经验（至少一项，可多选）",
         support.map((e, i) => [
           String(i),
-          `${e.conclusion} · 当前修订 ${e.revision}${e.revision !== method.supportRefs[i].revision ? "（已更新，提交前需确认）" : ""}`,
+          `${e.conclusion} · 当前修订 ${e.revision}${e.revision !== playbook.supportRefs[i].revision ? "（已更新，提交前需确认）" : ""}`,
         ]),
       );
       sources.multiple = true;
@@ -647,11 +651,11 @@ async function editMethod(parent, previous) {
       ]) {
         const move = node("button", label);
         move.disabled =
-          index + offset < 0 || index + offset >= method.steps.length;
+          index + offset < 0 || index + offset >= playbook.steps.length;
         move.onclick = () => {
-          [method.steps[index], method.steps[index + offset]] = [
-            method.steps[index + offset],
-            method.steps[index],
+          [playbook.steps[index], playbook.steps[index + offset]] = [
+            playbook.steps[index + offset],
+            playbook.steps[index],
           ];
           renderSteps();
           renderChecks();
@@ -659,18 +663,18 @@ async function editMethod(parent, previous) {
         row.append(move);
       }
       const remove = node("button", "删除步骤");
-      remove.disabled = method.steps.length === 1;
+      remove.disabled = playbook.steps.length === 1;
       remove.onclick = handle(() => {
         if (
-          method.steps.some(
+          playbook.steps.some(
             (s) => s !== step && s.choices?.some((c) => c.next === step.stepId),
           ) ||
-          [...method.completionChecks, ...method.stopConditions].some((c) =>
+          [...playbook.completionChecks, ...playbook.stopConditions].some((c) =>
             c.stepIds?.includes(step.stepId),
           )
         )
           throw new Error("这个步骤仍被分支或检查引用，请先修改这些引用。");
-        method.steps.splice(index, 1);
+        playbook.steps.splice(index, 1);
         renderSteps();
         renderChecks();
       });
@@ -684,7 +688,7 @@ async function editMethod(parent, previous) {
         };
         const candidates = [
           ["stop", "结束"],
-          ...method.steps
+          ...playbook.steps
             .slice(index + 1)
             .map((s, i) => [
               s.stepId,
@@ -719,9 +723,9 @@ async function editMethod(parent, previous) {
   renderSteps();
   const addStep = node("button", "添加步骤");
   addStep.onclick = handle(() => {
-    if (method.steps.length >= 12)
+    if (playbook.steps.length >= 12)
       throw new Error("一个方法最多 12 步，请拆成独立方法。");
-    method.steps.push({
+    playbook.steps.push({
       stepId: crypto.randomUUID(),
       instruction: "",
       supportIndexes: [],
@@ -746,12 +750,12 @@ async function editMethod(parent, previous) {
     if (updateSupport) {
       if (outdated.some((e) => e.state !== "active"))
         throw new Error("更新后的依据仍未可用，请先完成经验补证审查。");
-      method.supportRefs = method.supportRefs.map((ref, index) => ({
+      playbook.supportRefs = playbook.supportRefs.map((ref, index) => ({
         ...ref,
         revision: support[index].revision,
       }));
     }
-    for (const [index, step] of method.steps.entries()) {
+    for (const [index, step] of playbook.steps.entries()) {
       if (!step.instruction.trim() || !step.supportIndexes.length)
         throw new Error(`请填写步骤 ${index + 1} 的操作并选择依据。`);
       for (const choice of step.choices ?? []) {
@@ -759,7 +763,7 @@ async function editMethod(parent, previous) {
           throw new Error(`请填写步骤 ${index + 1} 的分支条件。`);
         if (
           choice.next !== "stop" &&
-          method.steps.findIndex((s) => s.stepId === choice.next) <= index
+          playbook.steps.findIndex((s) => s.stepId === choice.next) <= index
         )
           throw new Error(`步骤 ${index + 1} 的分支需指向后续步骤或结束。`);
       }
@@ -775,17 +779,21 @@ async function editMethod(parent, previous) {
           .split("\n")
           .map((v) => v.trim())
           .filter(Boolean),
-        conditions: editConditions(conditions, method.conditions),
-        exceptions: editConditions(exceptions, method.exceptions),
+        conditions: editConditions(conditions, playbook.conditions),
+        exceptions: editConditions(exceptions, playbook.exceptions),
         applicability:
           conditions.value.trim() || exceptions.value.trim()
             ? "conditional"
             : "general",
-        steps: method.steps,
-        completionChecks: method.completionChecks,
-        stopConditions: method.stopConditions,
-        supportRefs: method.supportRefs,
-        change: { ...method.change, kind: "correction", summary: reason.value },
+        steps: playbook.steps,
+        completionChecks: playbook.completionChecks,
+        stopConditions: playbook.stopConditions,
+        supportRefs: playbook.supportRefs,
+        change: {
+          ...playbook.change,
+          kind: "correction",
+          summary: reason.value,
+        },
       },
     });
     await show(latest.id);
@@ -802,7 +810,7 @@ async function editMethod(parent, previous) {
   panel.append(save, cancel);
 }
 async function preparePlaybook(parent) {
-  const method = structuredClone(current);
+  const playbook = structuredClone(current);
   const panel = node("section", "");
   panel.append(
     node("h3", "关联宿主任务"),
@@ -812,7 +820,7 @@ async function preparePlaybook(parent) {
     ),
   );
   parent.append(panel);
-  const tasks = (await rpc("listTasks", { scopeId: method.scopeId })).filter(
+  const tasks = (await rpc("listTasks", { scopeId: playbook.scopeId })).filter(
     (t) => !t.ended,
   );
   if (!tasks.length) {
@@ -844,8 +852,8 @@ async function preparePlaybook(parent) {
     const taskRef = task.value,
       request = ++preparationRequest;
     const result = await rpc("preparePlaybook", {
-      playbookId: method.id,
-      revision: method.revision,
+      playbookId: playbook.id,
+      revision: playbook.revision,
       taskRef,
       viewMode,
       requestId: crypto.randomUUID(),
@@ -919,8 +927,8 @@ async function preparePlaybook(parent) {
         "带回宿主的任务引用",
         JSON.stringify({
           taskRef,
-          playbookId: method.id,
-          revision: method.revision,
+          playbookId: playbook.id,
+          revision: playbook.revision,
           playbookUseRef: use,
         }),
       );
@@ -1219,12 +1227,7 @@ async function renderSources() {
     );
     if (source.segment) card.append(node("blockquote", source.segment.text));
     else
-      card.append(
-        node(
-          "p",
-          source.contentStatus === "erased" ? "原文已擦除" : "原文保留期已结束",
-        ),
-      );
+      card.append(node("p", source.erased ? "原文已擦除" : "原文保留期已结束"));
     addWorkView(card, { kind: "source", id: source.id });
     if (!source.blocked && !source.erased) {
       const append = node("button", "补充结果或后续观察");
@@ -1382,7 +1385,7 @@ $("add-connection").onclick = handle(async () => {
 $("submit").onclick = handle(async () => {
   const r = await rpc("submitSource", {
     scopeId: $("scope").value,
-    segments: [{ text: $("material").value, role: "user" }],
+    segments: [{ text: $("source").value, role: "user" }],
   });
   $("job").textContent = `已接收。作业 ${r.jobId}`;
   const poll = async () => {
@@ -1495,7 +1498,7 @@ async function issueForm(parent, caseData) {
     category = node("select", "");
   category.setAttribute("aria-label", "问题类型");
   for (const [value, label] of [
-    ["stale_method", "过期方法"],
+    ["stale_playbook", "过期方法"],
     ["wrong_scope", "范围错误"],
     ["wrong_branch", "分支错误"],
     ["incorrect_guidance", "指导错误"],

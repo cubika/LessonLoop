@@ -57,7 +57,6 @@ test("MCP exposes complete guidance retrieval without completion or reassessment
     assert.ok(listed.tools.some((t) => t.name === "preparePlaybook"));
     for (const name of [
       "submitMaterial",
-      "submitWorkCase",
       "prepareMethod",
       "inspectWorkCase",
       "listEffectCases",
