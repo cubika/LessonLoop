@@ -32,7 +32,7 @@ test("MCP exposes three typed Agent tools and rejects invalid inputs before RPC"
   assert.ok(address && typeof address !== "string");
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--import", "tsx", "src/adapters/copilot/mcp.ts"],
+    args: ["node_modules/tsx/dist/cli.mjs", "src/adapters/copilot/mcp.ts"],
     env: {
       ...Object.fromEntries(
         Object.entries(process.env).filter(
