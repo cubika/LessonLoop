@@ -25,7 +25,7 @@ export async function advanceNativeModel(
     scopeId: string;
     modelId: string;
     operationId?: string | undefined;
-    query?: string | undefined;
+    query?: string | (() => string) | undefined;
     sourceRefs: string[];
     schema: Record<string, unknown>;
   },
@@ -40,7 +40,7 @@ export async function advanceNativeModel(
       const accepted = await engine.createModel(
         scopeId,
         modelId,
-        request.query,
+        typeof request.query === "function" ? request.query() : request.query,
         request.sourceRefs,
         request.schema,
       );

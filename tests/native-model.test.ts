@@ -208,3 +208,36 @@ test("An unconfirmed legacy submission closure remains retryable", async () => {
   );
   assert.deepEqual(f.remembered, []);
 });
+
+test("Frozen prompts are rebuilt only when an operation needs submission", async () => {
+  const f = fixture();
+  let builds = 0;
+  const query = () => {
+    builds++;
+    return f.request.query;
+  };
+  await advanceNativeModel(f.engine, { ...f.request, query }, f.remember);
+  assert.equal(builds, 1);
+  await advanceNativeModel(
+    f.engine,
+    {
+      ...f.request,
+      query: () => {
+        throw new Error("must not rebuild while recovering");
+      },
+    },
+    f.remember,
+  );
+  await advanceNativeModel(
+    f.engine,
+    {
+      ...f.request,
+      operationId: "op",
+      query: () => {
+        throw new Error("must not rebuild while polling");
+      },
+    },
+    f.remember,
+  );
+  assert.equal(f.calls.filter((call) => call === "submit").length, 1);
+});

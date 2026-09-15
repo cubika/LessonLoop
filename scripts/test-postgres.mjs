@@ -11,6 +11,7 @@ const files = [
   "tests/feedback-migration.integration.ts",
   "tests/task-feedback.integration.ts",
   "tests/pure-storage.integration.ts",
+  "tests/job-payload.integration.ts",
   "tests/http.integration.ts",
   "tests/host-tasks.integration.ts",
   "tests/public-contract.integration.ts",

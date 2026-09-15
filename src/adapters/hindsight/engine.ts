@@ -178,12 +178,19 @@ export class HindsightEngine {
         throw new Error("support_readback_failed");
     }
   }
-  async retain(sources: Source[], operationId: string) {
+  async retain(sources: Source[], operationId: string, version = 1) {
     const scopeId = sources[0]!.scopeId;
     const contents = sources.map((source) => ({
       content: source.segment!.text,
       context: JSON.stringify({
-        ...source.segment,
+        ...(version === 0
+          ? source.segment
+          : {
+              role: source.segment!.role,
+              locator: source.segment!.locator,
+              author: source.segment!.author,
+              observedAt: source.segment!.observedAt,
+            }),
         fingerprint: source.id,
         context: source.context,
       }),
