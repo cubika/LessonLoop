@@ -38,10 +38,11 @@ import {
   verificationAssessmentJsonSchema,
   assessmentSchema,
   learningOutputSchema,
-  learningQuery,
   outputJsonSchema,
 } from "./learning.js";
 import { exportPlaybook } from "../domain/export.js";
+import { clearJobPayload } from "../store/job-payload.js";
+import { jobQuery, JobPromptError, type PromptJob } from "./job-prompts.js";
 import { Effects, type TaskFeedback } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import {
@@ -66,7 +67,7 @@ export interface Settings {
   review: boolean;
   notifications: boolean;
 }
-interface Job {
+interface Job extends PromptJob {
   id: string;
   revision: number;
   scopeId: string;
@@ -86,19 +87,12 @@ interface Job {
   modelId?: string;
   assessmentId?: string;
   assessmentOperationId?: string;
-  candidate?: z.infer<typeof learningOutputSchema>;
   verdict?: z.infer<typeof learningAssessmentSchema>;
-  modelSchema?: Record<string, unknown>;
   assessmentSchema?: Record<string, unknown>;
-  retainedSupport?: Experience[];
-  comparisonPlaybooks?: Playbook[];
-  synthesisTopicId?: string;
   inputViewRefs?: WorkViewRef[];
   playbookRepairCount?: number;
-  verificationTarget?: Experience;
   verificationControlRevision?: number;
   verificationByUser?: boolean;
-  verificationControl?: { reason: string; correctionText?: string };
   cancelRequestedAt?: string;
   results: ObjectRef[];
   decisions: unknown[];
@@ -110,8 +104,8 @@ interface Job {
   evidenceStaged?: boolean;
   engineOperations?: string[];
   operationUsage?: Record<string, OperationUsage>;
-  modelQuery?: string;
-  assessmentQuery?: string;
+  retainVersion?: number;
+  verificationRef?: ObjectRef;
 }
 
 interface ScopeBarrier {
@@ -675,6 +669,7 @@ export class CoreService {
         ...(verificationTarget
           ? {
               verificationTarget,
+              verificationRef: ref("experience", verificationTarget),
               verificationControlRevision,
               verificationByUser: p.channel === "user",
               ...(verificationControl ? { verificationControl } : {}),
@@ -866,6 +861,46 @@ export class CoreService {
         ).length >= 4
       )
         throw new ApiError("job_retry_budget", 409);
+      const verificationRef =
+        old.verificationRef ??
+        (old.verificationTarget
+          ? ref("experience", old.verificationTarget)
+          : undefined);
+      if (
+        !verificationRef &&
+        (old.verificationByUser !== undefined ||
+          old.verificationControlRevision !== undefined)
+      )
+        throw new ApiError("source_reassessment_required", 409);
+      if (verificationRef) {
+        const target = await tx.get<Experience>(
+          "experience",
+          verificationRef.id,
+        );
+        const control = await tx.get<{
+          revision: number;
+          reason: string;
+          correctionText?: string;
+        }>("control", verificationRef.id);
+        if (
+          !target ||
+          target.revision !== verificationRef.revision ||
+          target.state !== "held" ||
+          !target.review ||
+          Date.parse(target.review.reviewBy) <= Date.now() ||
+          (target.validUntil && Date.parse(target.validUntil) <= Date.now()) ||
+          (control?.revision ?? 0) !== (old.verificationControlRevision ?? 0)
+        )
+          throw new ApiError("verification_target_changed", 409);
+        old.verificationTarget = target;
+        if (control)
+          old.verificationControl = {
+            reason: control.reason,
+            ...(control.correctionText
+              ? { correctionText: control.correctionText }
+              : {}),
+          };
+      }
       const job: Job = {
         ...identity(old.scopeId),
         kind: old.kind,
@@ -879,6 +914,7 @@ export class CoreService {
         ...(old.verificationTarget
           ? {
               verificationTarget: old.verificationTarget,
+              verificationRef: ref("experience", old.verificationTarget),
               verificationControlRevision: old.verificationControlRevision ?? 0,
               verificationByUser: old.verificationByUser ?? false,
               ...(old.verificationControl
@@ -1137,6 +1173,7 @@ export class CoreService {
           await this.updateJob(j.id, {
             status:
               e instanceof z.ZodError ||
+              e instanceof JobPromptError ||
               (e instanceof ApiError &&
                 [
                   "task_case_observation_omitted",
@@ -1168,11 +1205,13 @@ export class CoreService {
                 ? "failed"
                 : "uncertain",
             error:
-              e instanceof ApiError
-                ? e.code
-                : e instanceof z.ZodError
-                  ? "invalid_model_output"
-                  : "engine_or_storage_unconfirmed",
+              e instanceof JobPromptError
+                ? e.message
+                : e instanceof ApiError
+                  ? e.code
+                  : e instanceof z.ZodError
+                    ? "invalid_model_output"
+                    : "engine_or_storage_unconfirmed",
           }).catch(() => undefined);
         }
       }
@@ -1238,7 +1277,7 @@ export class CoreService {
       !j.cancelRequestedAt
     )
       return;
-    const inputSources = await this.store.transaction(async (tx) => {
+    const liveSources = await this.store.transaction(async (tx) => {
       const rows = [];
       for (const id of j.sourceIds) {
         const m = await tx.get<Source>("source", id);
@@ -1246,6 +1285,21 @@ export class CoreService {
       }
       return rows;
     });
+    if (
+      j.inputSources &&
+      (liveSources.length !== j.inputSources.length ||
+        j.inputSources.some((frozen, index) => {
+          const live = liveSources[index];
+          return (
+            !live ||
+            live.id !== frozen.id ||
+            digest([live.segment, live.context]) !==
+              digest([frozen.segment, frozen.context])
+          );
+        }))
+    )
+      throw new JobPromptError("job_source_changed");
+    const inputSources = j.inputSources ?? liveSources;
     let modelSubmissionClosed = false;
     let assessmentSubmissionClosed = false;
     if (j.modelId && j.stage === "compose") {
@@ -1258,12 +1312,14 @@ export class CoreService {
         found = canceled.operation_id ?? undefined;
         modelSubmissionClosed = canceled.submission_canceled && !found;
       }
-      if (!found && j.modelQuery && !j.cancelRequestedAt) {
+      if (!found && (j.promptVersion || j.modelQuery) && !j.cancelRequestedAt) {
         const accepted = await engine.createModel(
           j.scopeId,
           j.modelId,
-          j.modelQuery,
-          j.sourceRefs ?? inputSources.map((m) => m.id),
+          jobQuery(j, "compose"),
+          j.promptVersion
+            ? inputSources.map((m) => m.id)
+            : (j.sourceRefs ?? inputSources.map((m) => m.id)),
           j.modelSchema ?? outputJsonSchema,
         );
         found = accepted.operation_id;
@@ -1288,12 +1344,18 @@ export class CoreService {
         found = canceled.operation_id ?? undefined;
         assessmentSubmissionClosed = canceled.submission_canceled && !found;
       }
-      if (!found && j.assessmentQuery && !j.cancelRequestedAt) {
+      if (
+        !found &&
+        (j.promptVersion || j.assessmentQuery) &&
+        !j.cancelRequestedAt
+      ) {
         const accepted = await engine.createModel(
           j.scopeId,
           j.assessmentId,
-          j.assessmentQuery,
-          j.sourceRefs ?? inputSources.map((m) => m.id),
+          jobQuery(j, "assess"),
+          j.promptVersion
+            ? inputSources.map((m) => m.id)
+            : (j.sourceRefs ?? inputSources.map((m) => m.id)),
           j.assessmentSchema ?? learningAssessmentJsonSchema,
         );
         found = accepted.operation_id;
@@ -1346,6 +1408,7 @@ export class CoreService {
         j.id,
         {
           stage: "extract",
+          retainVersion: 1,
           status: "running",
           operationId,
           engineOperations: [...(j.engineOperations ?? []), operationId],
@@ -1359,7 +1422,7 @@ export class CoreService {
       if (!j.operationId) throw new ApiError("missing_native_operation");
       const op = await engine.operation(j.scopeId, j.operationId);
       if (op.status === "not_found") {
-        await engine.retain(inputSources, j.operationId);
+        await engine.retain(inputSources, j.operationId, j.retainVersion ?? 0);
         return;
       }
       if (op.status === "failed" || op.status === "cancelled") {
@@ -1446,19 +1509,17 @@ export class CoreService {
           )
             throw new ApiError("verification_target_changed", 409);
         }
-        const query =
-          learningQuery(inputSources, existing, retainedSupport) +
-          (current.verificationTarget
-            ? "\nTARGETED VERIFICATION: return workView=null, playbook=null, splitPlaybooks=null and at most one experience resolving the exact claim and open review question below. The target is a question, NOT additional supporting evidence. Use only SOURCE DATA for evidence; preserve authorized boundaries and original claim identity. Do not replace it with an unrelated claim. TARGET: " +
-              JSON.stringify({
-                claim: current.verificationTarget,
-                userControl: current.verificationControl ?? null,
-              })
-            : "") +
-          (current.synthesisTopicId ||
-          new Set(inputSources.map((s) => s.workKey)).size > 1
-            ? "\nThis is a cross-case synthesis. Keep workView=null: distinct cases are not one task. Compare the supplied independent source families for useful new rules, conflicts, conditions or justified scope changes. Stop when the evidence supports the stated scope; no broader explanation is required."
-            : "");
+        const query = jobQuery(
+          {
+            ...current,
+            promptVersion: 1,
+            inputSources,
+            comparisonPlaybooks: existing,
+            retainedSupport,
+            modelSchema: outputJsonSchema,
+          },
+          "compose",
+        );
         if (byteSize(query) > 524288)
           throw new ApiError("learning_query_budget", 413);
         if (bank)
@@ -1487,7 +1548,9 @@ export class CoreService {
           retainedSupport,
           comparisonPlaybooks: existing,
           comparedPlaybookRefs: existing.map((m) => ref("playbook", m)),
-          modelQuery: query,
+          promptVersion: 1,
+          inputSources,
+          modelQueryHash: digest(query),
         });
         await tx.put(entry("job", next), current.revision);
         return next;
@@ -1495,7 +1558,7 @@ export class CoreService {
       const model = await engine.createModel(
         j.scopeId,
         modelId,
-        j.modelQuery!,
+        jobQuery(j, "compose"),
         inputSources.map((m) => m.id),
         j.modelSchema!,
       );
@@ -1529,6 +1592,7 @@ export class CoreService {
         {
           stage: "assess",
           candidate: output,
+          repairReasons: undefined,
           status: "running",
           ...(usage
             ? {
@@ -1541,29 +1605,20 @@ export class CoreService {
     }
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = "assess-" + randomUUID();
-      const assessmentQuery =
-        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each claim for future usefulness, sufficient support and explicit scope. A supported local rule can stand on its own; do not require analysis labels, a fixed case count or broader generalization. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. For verificationTarget, verifiedTarget must be true only if the single proposed experience resolves that exact claim using authorized source evidence and preserves its boundaries; the old target itself is not evidence. Otherwise verifiedTarget=false. Retained support is not another independent case. Return acceptedExperienceIndexes, playbookSupported, substantiveChange, supportedEvidenceChange, acceptedPlaybookIndexes, splitCoherent and reasons. Playbook indexes follow splitPlaybooks or the single playbook at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Evaluate a task for EACH branch: assume that branch condition true and other branches false, and verify every global condition is compatible. Reject a global condition specific to another branch, or exceptions that are past observations rather than current task exclusion predicates. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing playbook. Changing IDs or repeating the same source is false. Data: " +
-        " Before the overall verdict, fill pathChecks for EVERY indexed executable path. Describe in reason a concrete task taking this path and test ALL global conditions/exceptions against that task. globalConditionsCompatible=false if any global requirement belongs only to a different branch or is a historical outcome posing as an exclusion. stepsCompatible=false for contradictory steps or fallthrough. Fill preservedPaths for EVERY path of each replaced playbook: preserved=true only when a task that previously used that path still has a valid path in the proposal. New evidence invalidating an old path needs a separate correction; do not silently retire it during additive evolution. Return empty arrays when there is no proposed playbook." +
-        JSON.stringify({
-          inputSources,
-          retainedSupport: j.retainedSupport ?? [],
-          existingPlaybooks: j.comparisonPlaybooks ?? [],
-          previousPaths: (j.comparisonPlaybooks ?? []).map((m) => ({
-            id: m.id,
-            ...playbookPaths(m),
-          })),
-          verificationTarget: j.verificationTarget ?? null,
-          verificationControl: j.verificationControl ?? null,
-          proposal: j.candidate,
-          executablePaths: (
-            j.candidate?.splitPlaybooks ??
-            (j.candidate?.playbook ? [j.candidate.playbook] : [])
-          ).map(playbookPaths),
-        });
+      const assessmentQuery = jobQuery(
+        j.promptVersion ? j : { ...j, promptVersion: 1, inputSources },
+        "assess",
+      );
       const reviewSchema = j.assessmentSchema ?? learningAssessmentJsonSchema;
       j = await this.updateJob(
         j.id,
-        { assessmentId, assessmentQuery, assessmentSchema: reviewSchema },
+        {
+          assessmentId,
+          ...(j.promptVersion
+            ? { assessmentQueryHash: digest(assessmentQuery) }
+            : { assessmentQuery }),
+          assessmentSchema: reviewSchema,
+        },
         true,
       );
       const assessment = await engine.createModel(
@@ -1633,19 +1688,27 @@ export class CoreService {
           const old = await tx.get<Job>("job", j.id);
           if (!old || old.cancelRequestedAt || old.revision !== j.revision)
             throw new Conflict();
-          const query =
-            (old.modelQuery ?? "") +
-            "\nONE BOUNDED REVISION: the proposal below was rejected by independent support/path review. Correct only the cited problems using the same authorized evidence; do not weaken scope or invent facts. If no supported playbook is possible return playbook=null.\nREJECTED PROPOSAL (not evidence):\n" +
-            JSON.stringify(old.candidate) +
-            "\nREVIEW FINDINGS (not evidence):\n" +
-            JSON.stringify(verdict.reasons);
+          const repairJob = { ...old, repairReasons: verdict.reasons };
+          delete repairJob.modelQueryHash;
+          const query = old.promptVersion
+            ? jobQuery(repairJob, "compose")
+            : (old.modelQuery ?? "") +
+              "\nONE BOUNDED REVISION: the proposal below was rejected by independent support/path review. Correct only the cited problems using the same authorized evidence; do not weaken scope or invent facts. If no supported playbook is possible return playbook=null.\nREJECTED PROPOSAL (not evidence):\n" +
+              JSON.stringify(old.candidate) +
+              "\nREVIEW FINDINGS (not evidence):\n" +
+              JSON.stringify(verdict.reasons);
           if (byteSize(query) > 524288)
             throw new ApiError("learning_query_budget", 413);
           const next = mutate(old, {
             stage: "compose",
             status: "running",
             modelId: "job-" + randomUUID(),
-            modelQuery: query,
+            ...(old.promptVersion
+              ? {
+                  repairReasons: verdict.reasons,
+                  modelQueryHash: digest(query),
+                }
+              : { modelQuery: query }),
             playbookRepairCount: 1,
             decisions: [
               ...old.decisions,
@@ -1656,7 +1719,8 @@ export class CoreService {
           delete next.assessmentId;
           delete next.assessmentOperationId;
           delete next.assessmentQuery;
-          delete next.candidate;
+          delete next.assessmentQueryHash;
+          if (!old.promptVersion) delete next.candidate;
           delete next.verdict;
           await tx.put(entry("job", next), old.revision);
           return next;
@@ -3158,15 +3222,7 @@ export class CoreService {
             job.sourceIds.some((id) => sourceIds.has(id)) ||
             banks.some((b) => b.jobId === job.id)
           ) {
-            const next = mutate(job, { decisions: [] });
-            delete next.candidate;
-            delete next.verdict;
-            delete next.modelQuery;
-            delete next.assessmentQuery;
-            delete next.retainedSupport;
-            delete next.comparisonPlaybooks;
-            delete next.verificationTarget;
-            delete next.verificationControl;
+            const next = clearJobPayload(mutate(job, { decisions: [] }));
             await tx.put(entry("job", next), job.revision);
           }
         for (const review of await tx.list<RevisionReview>("revision_review", [

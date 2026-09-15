@@ -300,3 +300,63 @@ test("Rejected verification leaves the same pending claim and no unasked product
     await store.close();
   }
 });
+
+test("Failed verification retries preserve the target after payload cleanup", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    const f = await setup(store, true);
+    const receipt = await f.core.submitSource(f.p, f.input, "retry-owner");
+    await store.transaction(async (tx) => {
+      const job = await tx.get<any>("job", receipt.jobId);
+      await tx.put(
+        row("job", {
+          ...job,
+          revision: job.revision + 1,
+          status: "failed",
+          stage: "done",
+        }),
+        job.revision,
+      );
+    });
+    const failed = await store.transaction((tx) =>
+      tx.get<any>("job", receipt.jobId),
+    );
+    assert.equal(failed.verificationTarget, undefined);
+    assert.equal(failed.verificationRef.id, f.e.id);
+    const retry = await f.core.retryJob(f.p, receipt.jobId, "retry");
+    const job = await store.transaction((tx) =>
+      tx.get<any>("job", retry.jobId),
+    );
+    assert.equal(job.verificationTarget.id, f.e.id);
+    assert.equal(
+      job.verificationControl.correctionText,
+      "Only version 2 has been observed; keep this boundary.",
+    );
+    await f.core.cancelJob(f.p, retry.jobId);
+    await store.transaction(async (tx) => {
+      const canceled = await tx.get<any>("job", retry.jobId);
+      await tx.put(
+        row("job", {
+          ...canceled,
+          revision: canceled.revision + 1,
+          status: "canceled",
+          stage: "done",
+        }),
+        canceled.revision,
+      );
+      const old = await tx.get<any>("job", receipt.jobId);
+      delete old.verificationRef;
+      await tx.put(
+        row("job", { ...old, revision: old.revision + 1 }),
+        old.revision,
+      );
+    });
+    await assert.rejects(
+      f.core.retryJob(f.p, receipt.jobId, "missing-target"),
+      /source_reassessment_required/,
+    );
+  } finally {
+    await store.close();
+  }
+});

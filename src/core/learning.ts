@@ -215,6 +215,8 @@ export function learningQuery(
   inputSources: Source[],
   existing: unknown[],
   retainedSupport: unknown[] = [],
+  schema: Record<string, unknown> = outputJsonSchema,
+  serialize: (value: unknown) => string = JSON.stringify,
 ) {
   let index = 0;
   const sources = inputSources.map((m) => ({
@@ -230,11 +232,11 @@ If new observations refine an existing playbook, specify replaces with its exact
 New inputSource can refine only part of an existing playbook. Preserve valid prior steps by referencing exact id/revision in existingSupportRefs from RETAINED SUPPORT. Those original excerpts are retained evidence, never additional independent cases. At least one new observation must justify the change. Do not quote old playbooks as new source evidence.
 Draft shape: workView.goal/topic are plain strings; result is {status,summary,evidenceIndexes}; evidence contains only {sourceIndex,excerpt,relation}. Experiences require parentIndexes (empty when none). Playbook uses experienceIndexes/existingSupportRefs, replaces, changeKind, changeSummary; do not emit product supportRefs or change. Omit splitPlaybooks unless splitting.
 SOURCE DATA:
-${JSON.stringify(sources)}
+${serialize(sources)}
 EXISTING PRODUCT METHODS (comparison only, not independent evidence):
-${JSON.stringify(existing)}
+${serialize(existing)}
 RETAINED SUPPORT (original evidence and derivations, not new cases):
-${JSON.stringify(retainedSupport)}
+${serialize(retainedSupport)}
 REQUIRED DRAFT JSON SCHEMA (emit this shape directly; retain required arrays and limits):
-${JSON.stringify(outputJsonSchema)}`;
+${serialize(schema)}`;
 }

@@ -1,3 +1,4 @@
+import { jobQuery } from "../src/core/job-prompts.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -564,7 +565,10 @@ test("Rejected playbooks get one bounded revision while retaining every native o
           stage: "assess",
           assessmentId: "assess-fixture",
           assessmentOperationId: "op-review-1",
-          modelQuery: "Original authorized evidence",
+          promptVersion: 1,
+          inputSources: await Promise.all(
+            j.sourceIds.map((id: string) => tx.get("source", id)),
+          ),
           engineOperations: ["op-compose-1", "op-review-1"],
           assessmentSchema: learningAssessmentJsonSchema,
         }),
@@ -610,11 +614,16 @@ test("Rejected playbooks get one bounded revision while retaining every native o
     );
     assert.equal(j.playbookRepairCount, 1);
     assert.equal(j.stage, "compose");
-    assert.ok(j.modelQuery.includes("not evidence"));
+    assert.equal(j.modelQuery, undefined);
+    assert.equal(j.assessmentQuery, undefined);
+    assert.ok(j.repairReasons.length);
+    const repairQuery = jobQuery(j, "compose");
+    assert.ok(repairQuery.includes("not evidence"));
     assert.deepEqual(j.engineOperations, ["op-compose-1", "op-review-1"]);
     assert.equal((await f.core.browse(f.p, "playbook")).length, 1);
     engine.findModelOperation = async () => undefined;
-    engine.createModel = async () => {
+    engine.createModel = async (_scope: string, _id: string, query: string) => {
+      assert.equal(query, repairQuery);
       calls++;
       return { operation_id: "op-repaired-compose" };
     };
