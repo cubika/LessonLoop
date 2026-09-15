@@ -63,8 +63,7 @@ export const workViewSchema = z
             playbook: refSchema.extend({ kind: z.literal("playbook") }),
             returnedAt: z.string().datetime(),
           })
-          // Strip obsolete returned-step snapshots from historical views.
-          .strip(),
+          .strict(),
       )
       .max(8),
   })

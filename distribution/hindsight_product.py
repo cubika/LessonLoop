@@ -317,4 +317,6 @@ class LessonLoopProduct(HttpExtension):
                         operation_id=result["operation_id"]
                     await conn.execute("INSERT INTO lessonloop_engine.model_submissions(bank_id,model_id,content_hash,operation_id) VALUES($1,$2,$3,$4) ON CONFLICT(bank_id,model_id) DO UPDATE SET operation_id=EXCLUDED.operation_id",body.bank_id,body.model_id,content_hash,str(operation_id))
             return {"operation_id":str(operation_id),"mental_model_id":body.model_id,"duplicate":model is not None}
+        from hindsight_playbooks import install
+        install(router, memory, metadata_pool, key)
         return router

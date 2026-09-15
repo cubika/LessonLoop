@@ -444,21 +444,6 @@ export class Reviews {
           scopeId: string;
           title: string;
         }>("playbook", p.scopes);
-      const histories: Array<{
-        id: string;
-        revision: number;
-        scopeId: string;
-        title: string;
-      }> = [];
-      for (const scope of p.scopes)
-        histories.push(
-          ...(await tx.listHistory<{
-            id: string;
-            revision: number;
-            scopeId: string;
-            title: string;
-          }>("playbook", scope)),
-        );
       const result = [];
       for (const review of (await tx.list<Review>("effect_review", p.scopes))
         .filter((r) => Date.parse(r.createdAt) > Date.now() - 90 * DAY)
@@ -508,16 +493,7 @@ export class Reviews {
               (m) => m.id === r.id && m.scopeId === review.scopeId,
             );
             const playbook =
-              current?.revision === r.revision
-                ? current
-                : current
-                  ? histories.find(
-                      (m) =>
-                        m.id === r.id &&
-                        m.revision === r.revision &&
-                        m.scopeId === review.scopeId,
-                    )
-                  : undefined;
+              current?.revision === r.revision ? current : undefined;
             return playbook
               ? [
                   {

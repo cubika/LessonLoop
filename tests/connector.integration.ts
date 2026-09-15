@@ -5,7 +5,7 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { SampleConnector } from "../src/connectors/sample.js";
 import { dispatch } from "../src/core/server.js";
 import { digest } from "../src/domain/schema.js";

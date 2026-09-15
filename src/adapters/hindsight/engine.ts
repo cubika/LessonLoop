@@ -5,6 +5,10 @@ import {
   type MentalModelTriggerInput,
 } from "@vectorize-io/hindsight-client";
 import { digest, type Source, type ObjectRef } from "../../domain/schema.js";
+import type {
+  PlaybookContent,
+  PlaybookWrite,
+} from "../../store/playbook-content.js";
 
 export const PROFILE_VERSION = "p0-0.1";
 export const LEARNING_MISSION =
@@ -46,6 +50,23 @@ export class HindsightEngine {
   }
   supportBank(scopeId: string, fingerprint: string) {
     return `lessonloop-support-${digest([scopeId, fingerprint]).slice(0, 32)}`;
+  }
+  readPlaybookContent(scopeId: string, id: string, hash: string) {
+    return this.productCall<PlaybookContent>("playbook-content", {
+      scope_id: scopeId,
+      id,
+      hash,
+    });
+  }
+  async writePlaybookContent(write: PlaybookWrite) {
+    await this.productCall(
+      "commit-playbook",
+      { id: write.id, token: write.token },
+      30000,
+    );
+  }
+  async clearPlaybookCandidates(id: string, kind: "job" | "revision_review") {
+    await this.productCall("clear-playbook-candidates", { id, kind });
   }
   private async productCall<T>(
     path: string,

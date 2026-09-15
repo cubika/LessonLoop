@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import {
   identity,
   playbookSchema,
@@ -145,6 +145,7 @@ async function setup(store: ProductStore) {
       job.revision,
     );
   });
+  await core.syncProjections([scope]);
   const newInput = await core.submitSource(
     p,
     {
@@ -274,7 +275,6 @@ test("Split retires one predecessor atomically and exposes no child until every 
       ]);
       assert.equal(child.supportRefs.length, 2);
     }
-    assert.equal((await f.core.history(f.p, original.id)).length, 1);
     await assert.rejects(
       f.core.setState(f.p, "playbook", original.id, 2, "active"),
       /reassessment_required/,
@@ -375,7 +375,6 @@ test("Playbook refinements retain prior support and cosmetic plans do not create
       ((await f.core.inspect(f.p, "playbook", id)) as Playbook).revision,
       1,
     );
-    assert.equal((await f.core.history(f.p, id)).length, 0);
     assert.equal(
       playbookPlanKey(f.playbook),
       playbookPlanKey({
@@ -404,7 +403,6 @@ test("Playbook refinements retain prior support and cosmetic plans do not create
       changed.supportRefs.some((r) => r.id === f.e.id && r.revision === 1),
       true,
     );
-    assert.equal((await f.core.history(f.p, id)).length, 1);
   } finally {
     await store.close();
   }

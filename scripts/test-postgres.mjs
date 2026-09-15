@@ -18,6 +18,7 @@ const files = [
   "tests/task-learning.integration.ts",
   "tests/reviews.integration.ts",
   "tests/playbook-evolution.integration.ts",
+  "tests/native-playbook.integration.ts",
   "tests/cross-case.integration.ts",
   "tests/recall.integration.ts",
   "tests/verification.integration.ts",

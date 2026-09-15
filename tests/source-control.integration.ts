@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 import { dispatch } from "../src/core/server.js";
@@ -103,7 +103,7 @@ const put = (
   },
   expected,
 });
-test("Erasure resumes after native and projection failures, scrubs history and task copies, and rejects replay", async () => {
+test("Erasure resumes after native and projection failures, scrubs transient and task copies, and rejects replay", async () => {
   let store = new ProductStore(url!);
   await store.open(true);
   const scope = randomUUID(),
@@ -195,18 +195,8 @@ test("Erasure resumes after native and projection failures, scrubs history and t
         const row = put(kind, value);
         await tx.put(row.entry, null);
       }
-      await tx.snapshot(put("playbook", playbook).entry);
       await tx.put(put("playbook", currentPlaybook).entry, 1);
-      const use = {
-        ...identity(scope),
-        taskRef: task.taskRef,
-        callerId: host.id,
-        playbook: { kind: "playbook", id: playbook.id, revision: 1 },
-        playbookUseRef: "source-bound-use",
-        returnedAt: new Date().toISOString(),
-      };
-      await tx.put(put("playbook_use", use).entry, null);
-      // Deleting the experience first must not discard the source-to-history binding.
+      // Deleting the experience first must not discard the source binding.
       const job = await tx.get<any>("job", accepted.jobId);
       await tx.put(
         put("job", {
@@ -219,6 +209,9 @@ test("Erasure resumes after native and projection failures, scrubs history and t
         job.revision,
       );
     });
+    // The independent replacement is confirmed before A is erased. Pending
+    // replacements retain every possibly stored old source until confirmation.
+    await core.syncProjections([scope]);
     await core.remove(owner, "experience", experience.id, 1);
     const receipt = (await dispatch(
       core,
@@ -266,7 +259,6 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       [],
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
-    assert.equal((await core.history(owner, playbook.id)).length, 0);
     assert.equal(
       ((await core.inspect(owner, "playbook", playbook.id)) as any).title,
       "Independent playbook B",
