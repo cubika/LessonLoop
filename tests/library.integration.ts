@@ -6,7 +6,7 @@ import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { dispatch } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
-import { identity, digest, methodSchema } from "../src/domain/schema.js";
+import { identity, digest, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("database required");
@@ -80,8 +80,8 @@ async function setup(store: ProductStore) {
       sourceFingerprints: [source],
       state: "active",
     });
-  const methods = ["a", "b", "c"].map((title) =>
-    methodSchema.parse({
+  const playbooks = ["a", "b", "c"].map((title) =>
+    playbookSchema.parse({
       ...identity(scope),
       title,
       goal: "Preserve extensions",
@@ -112,7 +112,6 @@ async function setup(store: ProductStore) {
       change: {
         kind: "create",
         summary: "Fixture",
-        caseRefs: [],
         predecessors: [],
       },
     }),
@@ -130,9 +129,9 @@ async function setup(store: ProductStore) {
     await tx.put(row("experience", e), null);
     for (const [kind, item] of [
       ["experience", e] as const,
-      ...methods.map((m) => ["method", m] as const),
+      ...playbooks.map((m) => ["playbook", m] as const),
     ]) {
-      if (kind === "method") await tx.put(row(kind, item), null);
+      if (kind === "playbook") await tx.put(row(kind, item), null);
       await tx.put(
         row("projection", {
           id: item.id,
@@ -146,22 +145,22 @@ async function setup(store: ProductStore) {
       );
     }
   });
-  return { scope, owner, host, engine, core, e, methods };
+  return { scope, owner, host, engine, core, e, playbooks };
 }
-test("Method library pagination binds filters, pins persist, and users cannot forge host observations", async () => {
+test("Playbook library pagination binds filters, pins persist, and users cannot forge host observations", async () => {
   const store = new ProductStore(url);
   await store.open();
   try {
     const f = await setup(store),
-      m = f.methods[2]!;
-    await f.core.pinMethod(f.owner, { id: m.id, pinned: true });
-    const first = (await f.core.browseMethods(f.owner, {
+      m = f.playbooks[2]!;
+    await f.core.pinPlaybook(f.owner, { id: m.id, pinned: true });
+    const first = (await f.core.browsePlaybooks(f.owner, {
       topic: "pipeline",
       limit: 1,
     })) as any;
     assert.equal(first.items[0].id, m.id);
     assert.equal(first.total, 3);
-    const next = (await f.core.browseMethods(f.owner, {
+    const next = (await f.core.browsePlaybooks(f.owner, {
       topic: "pipeline",
       limit: 2,
       cursor: first.nextCursor,
@@ -169,7 +168,7 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
     assert.equal(next.items.length, 2);
     assert.ok(next.items.every((v: any) => v.id !== m.id));
     await assert.rejects(
-      f.core.browseMethods(f.owner, {
+      f.core.browsePlaybooks(f.owner, {
         query: "changed",
         limit: 2,
         cursor: first.nextCursor,
@@ -177,17 +176,17 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
       /invalid_cursor/,
     );
     assert.equal(
-      ((await f.core.browseMethods({ ...f.owner, scopes: [] }, {})) as any[])
+      ((await f.core.browsePlaybooks({ ...f.owner, scopes: [] }, {})) as any[])
         .length,
       0,
     );
     const task = await f.core.startTask(f.host, f.scope);
     const prepared = await f.core.prepare(f.owner, {
       taskRef: task.taskRef,
-      methodId: m.id,
+      playbookId: m.id,
       revision: m.revision,
     });
-    assert.ok(prepared.methodUseRef);
+    assert.ok(prepared.playbookUseRef);
     assert.equal(prepared.status, "guidance");
     assert.deepEqual(prepared.steps, m.steps);
     assert.deepEqual(prepared.conditions, m.conditions);
@@ -201,7 +200,7 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
     });
     const refreshed = await f.core.prepare(f.owner, {
       taskRef: task.taskRef,
-      methodId: m.id,
+      playbookId: m.id,
       revision: m.revision,
       requestId: "after-observation",
     });
@@ -224,22 +223,22 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
     );
     const rating = {
       taskRef: task.taskRef,
-      methodUseRef: prepared.methodUseRef,
+      playbookUseRef: prepared.playbookUseRef,
       rating: "helpful",
       text: "The diagnostic step helped",
     };
     assert.equal(
-      (await f.core.rateMethodUse(f.owner, rating, "rating-1")).results[0]
+      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
         ?.status,
       "accepted",
     );
     assert.equal(
-      (await f.core.rateMethodUse(f.owner, rating, "rating-1")).results[0]
+      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
         ?.status,
       "duplicate",
     );
     await assert.rejects(
-      f.core.rateMethodUse(
+      f.core.ratePlaybookUse(
         f.owner,
         { ...rating, rating: "incorrect" },
         "rating-1",
@@ -249,24 +248,24 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
     const effects = new Effects(store);
     await effects.clear(f.scope);
     assert.equal(
-      (await f.core.rateMethodUse(f.owner, rating, "rating-1")).results[0]
+      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
         ?.status,
       "ignored",
     );
     assert.equal(
-      ((await f.core.inspect(f.owner, "method", m.id)) as any).revision,
+      ((await f.core.inspect(f.owner, "playbook", m.id)) as any).revision,
       1,
     );
   } finally {
     await store.close();
   }
 });
-test("Method guidance survives core restart and retains task, source and feedback boundaries", async () => {
+test("Playbook guidance survives core restart and retains task, source and feedback boundaries", async () => {
   const store = new ProductStore(url);
   await store.open();
   try {
     const f = await setup(store),
-      m = f.methods[0]!;
+      m = f.playbooks[0]!;
     const task = await f.core.startTask(f.host, f.scope);
     const agent = {
       id: "working-agent",
@@ -276,7 +275,7 @@ test("Method guidance survives core restart and retains task, source and feedbac
     };
     const input = {
       taskRef: task.taskRef,
-      methodId: m.id,
+      playbookId: m.id,
       revision: m.revision,
       requestId: "first",
     };
@@ -288,13 +287,13 @@ test("Method guidance survives core restart and retains task, source and feedbac
     );
     assert.deepEqual(await restarted.prepare(agent, input), first);
     const uses = await store.transaction((tx) =>
-      tx.list<any>("method_use", [f.scope]),
+      tx.list<any>("playbook_use", [f.scope]),
     );
     assert.equal(uses.length, 2); // One return record for each caller, independent of requestId.
     assert.ok(
       uses.every(
         (u) =>
-          u.methodUseRef === first.methodUseRef &&
+          u.playbookUseRef === first.playbookUseRef &&
           u.delivery === "unknown" &&
           u.adoption === "unknown" &&
           u.outcome === "unknown",
@@ -304,8 +303,8 @@ test("Method guidance survives core restart and retains task, source and feedbac
     const newTask = await restarted.startTask(f.host, f.scope);
     assert.notEqual(
       (await restarted.prepare(f.host, { ...input, taskRef: newTask.taskRef }))
-        .methodUseRef,
-      first.methodUseRef,
+        .playbookUseRef,
+      first.playbookUseRef,
     );
     await assert.rejects(
       restarted.prepare({ ...agent, taskOwnerId: "other-host" }, input),
@@ -320,7 +319,7 @@ test("Method guidance survives core restart and retains task, source and feedbac
       (
         await restarted.prepare(
           { ...f.owner, scopes: [f.scope, other.scope] },
-          { ...input, methodId: other.methods[0]!.id },
+          { ...input, playbookId: other.playbooks[0]!.id },
         )
       ).status,
       "target_unavailable",
@@ -390,7 +389,7 @@ test("Method guidance survives core restart and retains task, source and feedbac
     assert.equal(
       (
         await other.core.prepare(other.host, {
-          methodId: other.methods[0]!.id,
+          playbookId: other.playbooks[0]!.id,
           revision: 1,
           taskRef: privateTask.taskRef,
         })
@@ -398,7 +397,7 @@ test("Method guidance survives core restart and retains task, source and feedbac
       "guidance",
     );
     assert.equal(
-      (await store.transaction((tx) => tx.list("method_use", [other.scope])))
+      (await store.transaction((tx) => tx.list("playbook_use", [other.scope])))
         .length,
       0,
     );

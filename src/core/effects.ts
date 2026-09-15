@@ -22,8 +22,8 @@ const eventSchema = z
       "collection_gap",
     ]),
     occurredAt: z.string().datetime(),
-    method: refSchema.extend({ kind: z.literal("method") }).optional(),
-    methodUseRef: z.string().max(128).optional(),
+    playbook: refSchema.extend({ kind: z.literal("playbook") }).optional(),
+    playbookUseRef: z.string().max(128).optional(),
     stepId: z.string().max(128).optional(),
     text: z.string().min(1).max(512),
     outcome: z.enum(["succeeded", "failed", "abandoned", "unknown"]).optional(),
@@ -161,31 +161,31 @@ export class Effects {
             Date.parse(actual.createdAt) < Date.now() - 31 * 86400000
           )
             throw new Error("event_outside_window");
-          if (event.method || event.methodUseRef || event.stepId) {
+          if (event.playbook || event.playbookUseRef || event.stepId) {
             const uses = await tx.list<{
               taskRef: string;
               callerId: string;
-              method: ObjectRef;
-              methodUseRef: string;
+              playbook: ObjectRef;
+              playbookUseRef: string;
               stepIds: string[];
               returnedAt: string;
-            }>("method_use", [event.scopeId]);
+            }>("playbook_use", [event.scopeId]);
             if (
-              !event.method ||
-              !event.methodUseRef ||
+              !event.playbook ||
+              !event.playbookUseRef ||
               !uses.some(
                 (use) =>
                   use.taskRef === event.taskRef &&
-                  use.method.id === event.method!.id &&
-                  use.method.revision === event.method!.revision &&
-                  use.methodUseRef === event.methodUseRef &&
+                  use.playbook.id === event.playbook!.id &&
+                  use.playbook.revision === event.playbook!.revision &&
+                  use.playbookUseRef === event.playbookUseRef &&
                   (!event.stepId || use.stepIds.includes(event.stepId)) &&
                   Date.parse(use.returnedAt) <= Date.parse(event.occurredAt),
               )
             )
-              throw new Error("method_use_mismatch");
+              throw new Error("playbook_use_mismatch");
           } else if (["delivery", "usage"].includes(event.kind))
-            throw new Error("method_use_mismatch");
+            throw new Error("playbook_use_mismatch");
           if (actual.erasedObservationHashes?.includes(digest(event.text)))
             return {
               eventId: event.eventId,
@@ -241,7 +241,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
-                    "method_use_mismatch",
+                    "playbook_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)
@@ -254,7 +254,7 @@ export class Effects {
                   [
                     "scope_denied",
                     "task_identity_mismatch",
-                    "method_use_mismatch",
+                    "playbook_use_mismatch",
                     "event_outside_window",
                     "effect_task_budget",
                   ].includes(e.message)

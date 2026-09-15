@@ -2,12 +2,12 @@ import { readFile, writeFile } from "node:fs/promises";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
-import type { Method } from "../src/domain/schema.js";
+import type { Playbook } from "../src/domain/schema.js";
 const secret = JSON.parse(
   await readFile(".local-validation/data/development-secret.json", "utf8"),
 );
 const prior = JSON.parse(
-  await readFile(".local-validation/results/p0-method-path.json", "utf8"),
+  await readFile(".local-validation/results/p0-playbook-path.json", "utf8"),
 );
 const store = new ProductStore(
   `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
@@ -27,15 +27,15 @@ const report: Record<string, unknown> = {
   scope: prior.scope,
 };
 try {
-  const method = (await core.inspect(
+  const playbook = (await core.inspect(
     user,
-    "method",
-    prior.methods[0].id,
-  )) as Method;
-  const steps = method.steps.map((s) => ({ ...s }));
+    "playbook",
+    prior.playbooks[0].id,
+  )) as Playbook;
+  const steps = playbook.steps.map((s) => ({ ...s }));
   steps.at(-1)!.instruction =
     "Compare regenerated client.json fields with the expected field list using a deep equality check.";
-  const receipt = await core.revise(user, method.id, method.revision, {
+  const receipt = await core.revise(user, playbook.id, playbook.revision, {
     steps,
   });
   report.receipt = receipt;
@@ -54,10 +54,10 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   }
   await core.syncProjections([prior.scope]);
-  report.method = await core.inspect(user, "method", method.id);
+  report.playbook = await core.inspect(user, "playbook", playbook.id);
   report.status =
     (report.review as { status?: string } | undefined)?.status ===
-      "completed" && (report.method as Method).state === "active"
+      "completed" && (report.playbook as Playbook).state === "active"
       ? "passed"
       : report.review
         ? "failed"

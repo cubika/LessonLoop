@@ -20,7 +20,7 @@ class RecallEngine extends HindsightEngine {
     _scope: string,
     _query: string,
     refs: ObjectRef[],
-    kind: "method" | "experience" = "method",
+    kind: "playbook" | "experience" = "playbook",
   ) {
     assert.equal(kind, "experience");
     this.allowed = refs;

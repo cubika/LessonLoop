@@ -33,6 +33,6 @@ $files=Get-ChildItem -LiteralPath $bundleRoot -Recurse -File | ForEach-Object {
   @{path=$relative;size=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
 $components=Get-Content -LiteralPath (Join-Path $bundleRoot "config/components.json") -Raw | ConvertFrom-Json
-$manifest=@{compatibility=@{productSchema=1;protocol=1;activationCheck=1;hindsight=$components.hindsight;postgresql=$components.postgresql;pgvector=$components.pgvector};version="0.0.1-dev";platform="win32-x64";releaseReady=$false;createdAt=[DateTime]::UtcNow.ToString("o");files=@($files)}
+$manifest=@{compatibility=@{productSchema=2;protocol=1;activationCheck=1;hindsight=$components.hindsight;postgresql=$components.postgresql;pgvector=$components.pgvector};version="0.0.1-dev";platform="win32-x64";releaseReady=$false;createdAt=[DateTime]::UtcNow.ToString("o");files=@($files)}
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $bundleRoot "manifest.json") -Encoding UTF8
 Write-Output "Bundle prepared. It remains a development build until installation and product acceptance pass."

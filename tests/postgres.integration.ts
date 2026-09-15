@@ -5,7 +5,7 @@ import { ProductStore, Conflict } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { Effects } from "../src/core/effects.js";
-import { identity, methodSchema } from "../src/domain/schema.js";
+import { identity, playbookSchema } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url)
   throw new Error(
@@ -44,7 +44,7 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     Conflict,
   );
   const agent = { ...p, id: `agent-${scope}`, channel: "agent" as const };
-  const material = {
+  const inputSource = {
     scopeId: scope,
     segments: [
       {
@@ -53,18 +53,18 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
       },
     ],
   };
-  const accepted = await core.submitMaterial(agent, material, "event-1");
+  const accepted = await core.submitSource(agent, inputSource, "event-1");
   assert.equal(accepted.accepted, true);
   const stored = (await core.inspect(
     agent,
-    "material",
-    accepted.materialId,
-  )) as unknown as { segments: Array<{ role: string }> };
-  assert.equal(stored.segments[0]!.role, "agent");
+    "source",
+    accepted.sources[0]!.id,
+  )) as unknown as { segment: { role: string } };
+  assert.equal(stored.segment.role, "agent");
   await assert.rejects(
-    core.submitMaterial(
+    core.submitSource(
       agent,
-      { ...material, segments: [{ text: "changed", role: "tool" }] },
+      { ...inputSource, segments: [{ text: "changed", role: "tool" }] },
       "event-1",
     ),
     /idempotency_conflict/,
@@ -73,13 +73,13 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   store = new ProductStore(url);
   await store.open();
   core = new CoreService(store, engine);
-  const duplicate = await core.submitMaterial(agent, material, "event-1");
+  const duplicate = await core.submitSource(agent, inputSource, "event-1");
   assert.equal(duplicate.duplicate, true);
   assert.equal(duplicate.jobId, accepted.jobId);
   await core.cancelJob(agent, accepted.jobId);
   assert.equal((await core.getJob(agent, accepted.jobId)).status, "canceled");
   await assert.rejects(
-    core.inspect({ ...p, scopes: [] }, "material", accepted.materialId),
+    core.inspect({ ...p, scopes: [] }, "source", accepted.sources[0]!.id),
     /not_found/,
   );
   const task = await core.startTask(p, scope);
@@ -112,7 +112,7 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   await assert.rejects(
     core.prepare(
       { ...agent, taskOwnerId: "wrong-host" },
-      { methodId: "missing", revision: 1, taskRef: effectTask.taskRef },
+      { playbookId: "missing", revision: 1, taskRef: effectTask.taskRef },
     ),
     /task_unavailable/,
   );
@@ -120,7 +120,7 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     (
       await core.prepare(
         { ...agent, taskOwnerId: host.id },
-        { methodId: "missing", revision: 1, taskRef: effectTask.taskRef },
+        { playbookId: "missing", revision: 1, taskRef: effectTask.taskRef },
       )
     ).status,
     "target_unavailable",
@@ -149,9 +149,9 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     (await effects.record(host, [event])).results[0]?.status,
     "ignored",
   );
-  const method = methodSchema.parse({
+  const playbook = playbookSchema.parse({
     ...identity(scope),
-    title: "Test method",
+    title: "Test playbook",
     goal: "Test control barrier",
     topics: [],
     applicability: "general",
@@ -171,33 +171,32 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     change: {
       kind: "create",
       summary: "test fixture",
-      caseRefs: [],
       predecessors: [],
     },
   });
   await store.transaction((tx) =>
     tx.put(
       {
-        kind: "method",
-        id: method.id,
+        kind: "playbook",
+        id: playbook.id,
         scopeId: scope,
         revision: 1,
-        value: method,
+        value: playbook,
       },
       null,
     ),
   );
-  await core.revise(p, method.id, 1, {
+  await core.revise(p, playbook.id, 1, {
     goal: "Changed goal requiring reassessment",
   });
-  await core.setState(p, "method", method.id, 2, "disabled");
+  await core.setState(p, "playbook", playbook.id, 2, "disabled");
   await assert.rejects(
-    core.setState(p, "method", method.id, 3, "active"),
+    core.setState(p, "playbook", playbook.id, 3, "active"),
     /reassessment_required/,
   );
   await store.close();
 });
-test("Trusted task materials aggregate without source duplication or cross-task mixing", async () => {
+test("Trusted task inputSources aggregate without source duplication or cross-task mixing", async () => {
   const store = new ProductStore(url!);
   await store.open();
   try {
@@ -223,38 +222,37 @@ test("Trusted task materials aggregate without source duplication or cross-task 
       context: { taskRef },
       segments: [{ text, role: "tool" }],
     });
-    const first = await core.submitMaterial(
+    const first = await core.submitSource(
       host,
       input(task.taskRef, "actual A"),
       "a",
     );
-    const forged = await core.submitMaterial(
+    const forged = await core.submitSource(
       { ...host, channel: "agent" },
       input(task.taskRef, "agent assertion"),
       "forged",
     );
-    await core.submitMaterial(
-      host,
-      input(other.taskRef, "other task"),
-      "other",
-    );
-    const next = await core.submitMaterial(
+    await core.submitSource(host, input(other.taskRef, "other task"), "other");
+    const next = await core.submitSource(
       host,
       input(task.taskRef, "actual B"),
       "b",
     );
-    const job = await core.getJob(host, next.jobId);
+    const job = await store.transaction((tx) => tx.get<any>("job", next.jobId));
     assert.equal(job.kind, "synthesis");
-    assert.deepEqual(job.materialIds, [first.materialId, next.materialId]);
-    assert.equal(job.materialIds.includes(forged.materialId), false);
-    const duplicate = await core.submitMaterial(
+    assert.deepEqual(job.sourceIds, [
+      first.sources[0]!.id,
+      next.sources[0]!.id,
+    ]);
+    assert.equal(job.sourceIds.includes(forged.sources[0]!.id), false);
+    const duplicate = await core.submitSource(
       host,
       input(task.taskRef, "actual B"),
       "b",
     );
     assert.equal(duplicate.jobId, next.jobId);
     await assert.rejects(
-      core.submitMaterial(
+      core.submitSource(
         { ...host, id: "other-host" },
         input(task.taskRef, "wrong owner"),
         "wrong",
@@ -263,7 +261,7 @@ test("Trusted task materials aggregate without source duplication or cross-task 
     );
     const otherScope = randomUUID();
     await assert.rejects(
-      core.submitMaterial(
+      core.submitSource(
         { ...host, scopes: [scope, otherScope] },
         { ...input(task.taskRef, "wrong scope"), scopeId: otherScope },
         "wrong-scope",
@@ -281,15 +279,15 @@ test("Trusted task materials aggregate without source duplication or cross-task 
     );
     assert.equal((await core.recordHostObservation(host, raw)).duplicate, true);
     const all = await store.transaction((tx) =>
-      tx.list<any>("material", [scope]),
+      tx.list<any>("source", [scope]),
     );
     assert.equal(
-      all.find((m) => m.id === first.materialId).sourceFamily,
-      all.find((m) => m.id === next.materialId).sourceFamily,
+      all.find((m) => m.id === first.sources[0]!.id).sourceFamily,
+      all.find((m) => m.id === next.sources[0]!.id).sourceFamily,
     );
-    assert.equal(
-      all.find((m) => m.id === forged.materialId).sourceFamily,
-      undefined,
+    assert.notEqual(
+      all.find((m) => m.id === forged.sources[0]!.id).sourceFamily,
+      all.find((m) => m.id === first.sources[0]!.id).sourceFamily,
     );
   } finally {
     await store.close();

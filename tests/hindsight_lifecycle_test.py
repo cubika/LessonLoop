@@ -80,22 +80,22 @@ async def main():
         await db.execute("UPDATE hindsight.async_operations SET status='completed' WHERE operation_id=$1", processing)
         assert (await endpoints['drain-bank'](module.BankDrain(bank_id=bank), auth))['drained']
         assert (await endpoints['erase-bank'](module.BankErasure(bank_id=bank, generation=1), auth))['erased']
-        await put('method', object_id, {'state': 'active', 'revision': 1})
-        await put('projection', object_id, {'objectRevision': 1, 'objectKind': 'method', 'text': 'private source'})
-        write = module.ProjectionWrite(scope_id=scope, object_kind='method', object_id=object_id, revision=1, text='private source')
+        await put('playbook', object_id, {'state': 'active', 'revision': 1})
+        await put('projection', object_id, {'objectRevision': 1, 'objectKind': 'playbook', 'text': 'private source'})
+        write = module.ProjectionWrite(scope_id=scope, object_kind='playbook', object_id=object_id, revision=1, text='private source')
         running = asyncio.create_task(endpoints['write-projection'](write, auth))
         await native.entered.wait()
         await put('scope_barrier', scope, {'pending': True})
-        erasure = asyncio.create_task(endpoints['erase-projections'](module.ProjectionErasure(scope_id=scope, object_kind='method', object_id=object_id), auth))
+        erasure = asyncio.create_task(endpoints['erase-projections'](module.ProjectionErasure(scope_id=scope, object_kind='playbook', object_id=object_id), auth))
         await asyncio.sleep(.1)
         assert not erasure.done(), 'Erasure must wait for the server-side write, even after caller timeout'
         native.release.set()
         await running
         assert (await erasure)['deleted'] == 1
         await rejected(endpoints['write-projection'](write, auth), 'projection_changed')
-        assert await db.fetchval("SELECT count(*) FROM hindsight.documents WHERE id=$1", f'method-{object_id}-1') == 0
+        assert await db.fetchval("SELECT count(*) FROM hindsight.documents WHERE id=$1", f'playbook-{object_id}-1') == 0
         await put('scope_barrier', scope, {'pending': False})
-        await put('method', object_id, {'state': 'disabled', 'revision': 2})
+        await put('playbook', object_id, {'state': 'disabled', 'revision': 2})
         await rejected(endpoints['write-projection'](write, auth), 'projection_changed')
         print('Lifecycle gates passed: unsubmitted retain closure, child drain, erasure, delayed projection write, stale replay.')
     finally:

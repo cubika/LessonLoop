@@ -1,13 +1,13 @@
-import { canonical, type Method } from "./schema.js";
+import { canonical, type Playbook } from "./schema.js";
 const text = (value: string) => value;
 // Compare executable structure independently of title, step IDs and history metadata.
-export function methodPlanKey(method: Method): string {
-  const positions = new Map(method.steps.map((s, i) => [s.stepId, i]));
-  const conditions = (items: Method["conditions"]) =>
+export function playbookPlanKey(playbook: Playbook): string {
+  const positions = new Map(playbook.steps.map((s, i) => [s.stepId, i]));
+  const conditions = (items: Playbook["conditions"]) =>
     items
       .map((c) => ({ ...c, text: text(c.text) }))
       .sort((a, b) => canonical(a).localeCompare(canonical(b)));
-  const checks = (items: Method["completionChecks"]) =>
+  const checks = (items: Playbook["completionChecks"]) =>
     items
       .map((c) => ({
         text: text(c.text),
@@ -15,13 +15,13 @@ export function methodPlanKey(method: Method): string {
       }))
       .sort((a, b) => canonical(a).localeCompare(canonical(b)));
   return canonical({
-    goal: text(method.goal),
-    applicability: method.applicability,
-    conditions: conditions(method.conditions),
-    exceptions: conditions(method.exceptions),
-    validFrom: method.validFrom,
-    validUntil: method.validUntil,
-    steps: method.steps.map((s) => ({
+    goal: text(playbook.goal),
+    applicability: playbook.applicability,
+    conditions: conditions(playbook.conditions),
+    exceptions: conditions(playbook.exceptions),
+    validFrom: playbook.validFrom,
+    validUntil: playbook.validUntil,
+    steps: playbook.steps.map((s) => ({
       instruction: text(s.instruction),
       choices: s.choices
         ?.map((c) => ({
@@ -30,18 +30,18 @@ export function methodPlanKey(method: Method): string {
         }))
         .sort((a, b) => canonical(a).localeCompare(canonical(b))),
     })),
-    completionChecks: checks(method.completionChecks),
-    stopConditions: checks(method.stopConditions),
+    completionChecks: checks(playbook.completionChecks),
+    stopConditions: checks(playbook.stopConditions),
   });
 }
 
-export function methodSupportKey(method: Method): string {
-  const key = (index: number) => method.supportRefs[index];
+export function playbookSupportKey(playbook: Playbook): string {
+  const key = (index: number) => playbook.supportRefs[index];
   return canonical({
-    all: [...method.supportRefs].sort((a, b) =>
+    all: [...playbook.supportRefs].sort((a, b) =>
       canonical(a).localeCompare(canonical(b)),
     ),
-    steps: method.steps.map((step) =>
+    steps: playbook.steps.map((step) =>
       step.supportIndexes
         .map(key)
         .sort((a, b) => canonical(a).localeCompare(canonical(b))),

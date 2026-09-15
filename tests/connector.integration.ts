@@ -82,14 +82,14 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
     });
     const file = resolve(".local-validation/connector-tests", scope + ".json");
     const changes: any[] = [];
-    const material = (text: string) => ({
+    const inputSource = (text: string) => ({
       scopeId: scope,
       segments: [{ text, role: "external" }],
     });
     changes.push({
       sourceKey: "doc",
       mutation: "snapshot",
-      source: material("Version A"),
+      source: inputSource("Version A"),
     });
     await writeFile(file, JSON.stringify(changes));
     const added = (await dispatch(
@@ -106,7 +106,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
     changes.push({
       sourceKey: "doc",
       mutation: "snapshot",
-      source: material("Version B"),
+      source: inputSource("Version B"),
     });
     await writeFile(file, JSON.stringify(changes));
     assert.equal(
@@ -134,7 +134,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
             );
       });
     await finish();
-    // Inject failure after the new material receipt, while withdrawing the old source.
+    // Inject failure after the new inputSource receipt, while withdrawing the old source.
     const control = core.controlSource.bind(core);
     core.controlSource = async () => {
       throw new Error("simulated receipt transaction failure");
@@ -154,13 +154,13 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
         sourceKey: "event-1",
         parentSourceKey: "task-1",
         mutation: "append",
-        source: material("Observed A"),
+        source: inputSource("Observed A"),
       },
       {
         sourceKey: "event-2",
         parentSourceKey: "task-1",
         mutation: "append",
-        source: material("Observed B"),
+        source: inputSource("Observed B"),
       },
     );
     await writeFile(file, JSON.stringify(changes));
@@ -173,7 +173,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
       parentSourceKey: "task-1",
       mutation: "correct",
       correctsRef: { bindingId: first.id, sourceRevision: 1 },
-      source: material("Corrected A"),
+      source: inputSource("Corrected A"),
     });
     await writeFile(file, JSON.stringify(changes));
     await connector.sync(p, id);
@@ -181,7 +181,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
     const second = bindings.find((b) => b.sourceKey === "event-2")!;
     sources = await core.listSources(p);
     assert.equal(
-      sources.find((s) => s.materialId === second.current!.materialId)!.blocked,
+      sources.find((s) => s.id === second.current!.sourceIds[0])!.blocked,
       false,
     );
     const forgotten = await connector.forget(p, id, "task-1");
@@ -191,13 +191,13 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
         sourceKey: "event-3",
         parentSourceKey: "task-1",
         mutation: "append",
-        source: material("Late C"),
+        source: inputSource("Late C"),
       },
       {
         sourceKey: "grandchild",
         parentSourceKey: "event-3",
         mutation: "append",
-        source: material("Late nested C"),
+        source: inputSource("Late nested C"),
       },
     );
     await writeFile(file, JSON.stringify(changes));
@@ -266,13 +266,13 @@ test("Connector keeps stable families, ignores version-only changes, retries rec
       b = bindings.find((b) => b.sourceKey === "B")!;
     const materialA = (await core.inspect(
         p,
-        "material",
-        a.pending!.materialId,
+        "source",
+        a.pending!.sourceIds[0]!,
       )) as any,
       materialB = (await core.inspect(
         p,
-        "material",
-        b.pending!.materialId,
+        "source",
+        b.pending!.sourceIds[0]!,
       )) as any;
     assert.equal(materialA.sourceFamily, materialB.sourceFamily);
     assert.notEqual(materialA.sourceIdentity, materialB.sourceIdentity);
@@ -317,8 +317,7 @@ test("Connector keeps stable families, ignores version-only changes, retries rec
       "accepted",
     );
     assert.equal(
-      (await core.listSources(p)).find((s) => s.materialId === materialA.id)!
-        .blocked,
+      (await core.listSources(p)).find((s) => s.id === materialA.id)!.blocked,
       true,
     );
     assert.equal((await core.getJob(p, retry.jobId)).status, "canceled");
@@ -456,7 +455,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
       notifications: false,
     });
     const file = resolve(".local-validation/connector-tests", scope + ".json");
-    const material = (text: string) => ({
+    const inputSource = (text: string) => ({
       scopeId: scope,
       segments: [{ text, role: "external" }],
     });
@@ -465,7 +464,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
         sourceKey: "document",
         parentSourceKey: "collection",
         mutation: "snapshot",
-        source: material("Original snapshot"),
+        source: inputSource("Original snapshot"),
       },
     ];
     await writeFile(file, JSON.stringify(changes));
@@ -494,7 +493,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
       mutation: "snapshot",
       complete: false,
       partKeys: ["intro", "body"],
-      parts: [{ partKey: "intro", source: material("New introduction") }],
+      parts: [{ partKey: "intro", source: inputSource("New introduction") }],
     });
     await writeFile(file, JSON.stringify(changes));
     await assert.rejects(
@@ -509,12 +508,12 @@ test("Connector receives complete snapshots atomically and tracks every learning
     changes[1].complete = true;
     changes[1].parts.push({
       partKey: "body",
-      source: material("New full body"),
+      source: inputSource("New full body"),
     });
     await writeFile(file, JSON.stringify(changes));
-    const submit = core.submitMaterial.bind(core);
+    const submit = core.submitSource.bind(core);
     let count = 0;
-    core.submitMaterial = async (...args) => {
+    core.submitSource = async (...args) => {
       if (++count === 2) throw new Error("interrupted second part receipt");
       return submit(...args);
     };
@@ -525,7 +524,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
     assert.equal((await connector.list(p))[0]!.cursor, 1);
     assert.equal((await core.listSources(p)).length, 1);
     assert.equal((await core.listSources(p))[0]!.blocked, false);
-    core.submitMaterial = submit;
+    core.submitSource = submit;
     const accepted = (await connector.sync(p, added.connection.id))
       .results![0]!;
     assert.deepEqual(accepted.partKeys, ["intro", "body"]);
@@ -537,7 +536,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
     await store.transaction(async (tx) => {
       const parts = await Promise.all(
         binding.pending!.parts.map((part) =>
-          tx.get<any>("material", part.materialId),
+          tx.get<any>("source", part.sourceIds[0]!),
         ),
       );
       assert.equal(new Set(parts.map((part) => part.sourceFamily)).size, 1);
@@ -600,7 +599,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
   }
 });
 
-test("Connector draft inputs enter material learning without creating trusted product records", async () => {
+test("Connector draft inputs enter inputSource learning without creating trusted product records", async () => {
   const store = new ProductStore(url!);
   await store.open(true);
   try {
@@ -670,28 +669,33 @@ test("Connector draft inputs enter material learning without creating trusted pr
       ),
     );
     const added = await connector.add(p, { scopeId: scope, file });
-    assert.equal(added.preview.materialParts, 3);
+    assert.equal(added.preview.sourceParts, 3);
     await connector.state(p, added.connection.id, 1, "active");
     assert.equal(
       (await connector.sync(p, added.connection.id)).results!.length,
       3,
     );
     await store.transaction(async (tx) => {
-      for (const kind of ["work_case", "experience", "method"])
+      for (const kind of ["work_view", "experience", "playbook"])
         assert.deepEqual(await tx.list(kind, [scope]), []);
-      const materials = await tx.list<any>("material", [scope]);
-      assert.equal(materials.length, 3);
-      for (const material of materials) {
+      const inputSources = await tx.list<any>("source", [scope]);
+      assert.equal(inputSources.length, 6);
+      for (const inputSource of inputSources) {
         assert.equal(
-          material.segments.every(
+          [inputSource.segment].every(
             (segment: any) => segment.role === "external",
           ),
           true,
         );
-        assert.equal(material.segments[1].text, evidence[0]!.text);
-        assert.equal(material.segments[1].locator, evidence[0]!.locator);
-        assert.equal(material.segments[1].author, evidence[0]!.author);
-        assert.equal(material.taskRef, undefined);
+        assert.equal(inputSource.taskRef, undefined);
+      }
+      const quoted = inputSources.filter(
+        (s) => s.segment.text === evidence[0]!.text,
+      );
+      assert.equal(quoted.length, 3);
+      for (const source of quoted) {
+        assert.equal(source.segment.locator, evidence[0]!.locator);
+        assert.equal(source.segment.author, evidence[0]!.author);
       }
     });
   } finally {

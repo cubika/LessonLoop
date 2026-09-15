@@ -59,7 +59,7 @@ try {
     review: false,
     notifications: false,
   });
-  const initial = await core.submitMaterial(
+  const initial = await core.submitSource(
     host,
     {
       scopeId: scope,
@@ -123,7 +123,7 @@ try {
     ),
   );
   report.before = claim;
-  const receipt = await core.submitMaterial(
+  const receipt = await core.submitSource(
     host,
     {
       scopeId: scope,

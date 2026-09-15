@@ -41,12 +41,12 @@ async def main():
         await endpoints['retain-submissions'](module.RetainSubmission(bank_id=bank, mode='chunks', contents=[{'content': 'Synthetic lifecycle source retained without an LLM.', 'document_id': 'source-a'}]), auth)
         assert await db.fetchval('SELECT count(*) FROM hindsight.documents WHERE bank_id=$1', bank) == 1
         print('Real source retained', flush=True)
-        await put('method', object_id, {'state': 'active', 'revision': 1})
-        await put('projection', object_id, {'objectRevision': 1, 'objectKind': 'method', 'text': 'Synthetic published lifecycle method'})
-        write = module.ProjectionWrite(scope_id=scope, object_kind='method', object_id=object_id, revision=1, text='Synthetic published lifecycle method')
+        await put('playbook', object_id, {'state': 'active', 'revision': 1})
+        await put('projection', object_id, {'objectRevision': 1, 'objectKind': 'playbook', 'text': 'Synthetic published lifecycle playbook'})
+        write = module.ProjectionWrite(scope_id=scope, object_kind='playbook', object_id=object_id, revision=1, text='Synthetic published lifecycle playbook')
         report['projectionWrite'] = await endpoints['write-projection'](write, auth)
         await put('scope_barrier', scope, {'pending': True})
-        report['projectionErasure'] = await endpoints['erase-projections'](module.ProjectionErasure(scope_id=scope, object_kind='method', object_id=object_id), auth)
+        report['projectionErasure'] = await endpoints['erase-projections'](module.ProjectionErasure(scope_id=scope, object_kind='playbook', object_id=object_id), auth)
         await put('engine_bank', bank, {'state': 'erasing'}, 2)
         report['bankErasure'] = await endpoints['erase-bank'](module.BankErasure(bank_id=bank, generation=2), auth)
         report['status'] = 'passed'

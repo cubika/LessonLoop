@@ -52,7 +52,7 @@ test("Automatic cross-case review requires independent families and freezes a de
       ),
     );
     const add = async (key: string, family: string) => {
-      const receipt = await core.submitMaterial(
+      const receipt = await core.submitSource(
         p,
         {
           scopeId: scope,
@@ -61,7 +61,7 @@ test("Automatic cross-case review requires independent families and freezes a de
         key,
       );
       const source = (await core.listSources(p)).find(
-        (s) => s.materialId === receipt.materialId,
+        (s) => s.id === receipt.sources[0]!.id,
       )!;
       await store.transaction(async (tx) => {
         const job = await tx.get<any>("job", receipt.jobId);
@@ -102,11 +102,11 @@ test("Automatic cross-case review requires independent families and freezes a de
           ],
           unresolved: [],
           coverage: [],
-          methodUses: [],
+          playbookUses: [],
         };
         await tx.put(
           {
-            kind: "work_case",
+            kind: "work_view",
             id: c.id,
             revision: 1,
             scopeId: scope,
@@ -117,7 +117,7 @@ test("Automatic cross-case review requires independent families and freezes a de
       });
       return receipt;
     };
-    // Use real bank names for material identities, while preventing actual model calls in tick.
+    // Use real bank names for inputSource identities, while preventing actual model calls in tick.
     core.engine.forJob = (id: string) => {
       const e = Object.create(core.engine) as HindsightEngine;
       e.bank = () => "lessonloop-job-" + id;
@@ -139,10 +139,10 @@ test("Automatic cross-case review requires independent families and freezes a de
     ).filter((j) => j.synthesisTopicId);
     assert.equal(jobs.length, 1);
     assert.deepEqual(
-      new Set(jobs[0].materialIds),
-      new Set([a.materialId, b.materialId, c.materialId]),
+      new Set(jobs[0].sourceIds),
+      new Set([a.sources[0]!.id, b.sources[0]!.id, c.sources[0]!.id]),
     );
-    assert.equal(jobs[0].inputCaseRefs.length, 3);
+    assert.equal(jobs[0].inputViewRefs.length, 3);
     assert.equal(jobs[0].decisions[0].families, 2);
     await store.transaction(async (tx) => {
       const j = jobs[0];
@@ -174,7 +174,7 @@ test("Automatic cross-case review requires independent families and freezes a de
     ).filter((j) => j.synthesisTopicId);
     assert.equal(jobs.length, 2);
     assert.equal(
-      jobs.some((j) => j.materialIds.includes(d.materialId)),
+      jobs.some((j) => j.sourceIds.includes(d.sources[0]!.id)),
       true,
     );
   } finally {

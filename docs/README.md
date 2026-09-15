@@ -12,7 +12,7 @@
 | 文档 | 唯一职责 |
 |---|---|
 | [01 产品定义](01-product.md) | 用户价值、首版范围、设置和官方分工 |
-| [02 自动复盘与方法学习](02-experience-model.md) | WorkCase/Experience/Method语义、L1–L5实际处理、准入与演进 |
+| [02 自动复盘与方法学习](02-experience-model.md) | Source/Experience/Playbook语义、L1–L5实际处理、准入与演进 |
 | [12 方法库与使用体验](12-method-library.md) | UI、CLI、任务使用、变化与导出 |
 | [03 系统架构](03-architecture.md) | 组件、官方复用、可替换引擎、发布投影与恢复 |
 | [07 数据模型与保留](07-storage-model.md) | 字段、引用、状态记录、所有容量和保留期 |

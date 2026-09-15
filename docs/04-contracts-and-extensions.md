@@ -6,16 +6,16 @@
 
 UI、CLI、AgentAdapter 与 Connector 使用同一带版本核心 API。认证身份、授权 scope 和适配能力由服务配置确定，模型不能填写身份字段取得权限。所有修改检查 expectedRevision，写结果未知时返回 uncertain，不把 jobId 当作发布成功。
 
-公开 ObjectRef={kind,id,revision} 的 kind 为 source、experience 或 playbook。Source 的 id 是片段指纹；一次提交多个片段返回多个 Source 引用，不能用内部 Material 的批次 ID 控制来源。scopeIds 与调用者授权求交，知识主题和 context 不扩大访问范围。
+公开 ObjectRef={kind,id,revision} 的 kind 为 source、experience 或 playbook。Source 的 id 是片段指纹；一次提交多个片段返回多个 Source 引用，批次没有独立领域 ID。scopeIds 与调用者授权求交，知识主题和 context 不扩大访问范围。
 
 ## 输入与学习操作
 
 | 操作 | 主要输入 | 输出与行为 |
 |---|---|---|
-| submitSource | scopeId、segments，可选context/sourceFor/verificationFor | 返回 sources 引用数组与 jobId；sourceFor={id,revision} 补充已有来源的后续结果，核心保留原任务及内部案例关联 |
+| submitSource | scopeId、segments，可选context/sourceFor/verificationFor | 返回 sources 引用数组与 jobId；sourceFor={id,revision} 补充已有来源的后续结果，核心保留原任务与工作关联 |
 | listSources / inspectSource | 授权范围 / id | 片段身份、控制状态和仍保留的原文；正文过期或擦除明确标记 |
 | controlSource | id、expectedRevision、action | 撤回、擦除或永久忘记指定来源，传播到依赖及副本 |
-| getWorkView | kind=source/experience/playbook、id | 按需返回相关工作记录及来源引用，不公开 WorkCase 身份 |
+| getWorkView | kind=source/experience/playbook、id | 按需返回相关工作记录及来源引用，不公开 WorkView 身份 |
 | reviewTopic | scopeId、topic | 在当前有界材料中创建复盘作业，不执行真实任务 |
 | getJob | id | 当前阶段、Experience/Playbook 产出、处置与回执；隐藏内部材料和案例引用，正常完成可以零产出 |
 | cancelJob | jobId | 停止未发的新步骤；已发原生操作须确认，不能伪报取消成功 |
@@ -59,7 +59,7 @@ Agent 从第一个步骤开始，无 choices 时继续下一步；有 choices �
 
 preparePlaybook 不维护内存执行会话，不保存当前步骤或分支补查次数。每次获取都重查当前资格；核心重启后，未结束且未过期的任务仍可获取方法。playbookUseRef 按任务归属、任务和方法修订稳定生成，仅关联反馈，不是执行凭据。相同调用身份重复获取不重复记录使用，也不重置已有结果。
 
-学习或回顾开启时保存轻量方法返回关联，学习复盘可将其带入 WorkCase.methodUses，回顾单独记录投递、实际观察及用户评价。返回或投递方法不证明采用和成功；缺少对应依据时保留 unknown。工具结果采集和后台复盘独立于方法获取。
+学习或回顾开启时保存轻量方法返回关联，学习复盘可将其带入 WorkView.playbookUses，回顾单独记录投递、实际观察及用户评价。返回或投递方法不证明采用和成功；缺少对应依据时保留 unknown。工具结果采集和后台复盘独立于方法获取。
 
 ## 直接经验操作
 
