@@ -175,6 +175,8 @@ interface Task {
   ended: boolean;
   endedAt?: string;
   createdAt: string;
+  updatedAt: string;
+  hostSession?: boolean;
   values: Record<string, string | string[]>;
   observations: Array<{
     id: string;
@@ -607,7 +609,7 @@ export class CoreService {
               verificationTarget!.sourceFingerprints.includes(s.id),
           )
         : [];
-      const learningSources = [
+      let learningSources = [
         ...new Map(
           [
             ...(verificationTarget ? retainedSources : taskSources),
@@ -615,6 +617,17 @@ export class CoreService {
           ].map((s) => [s.id, s]),
         ).values(),
       ];
+      const session = taskRef ? await tx.get<Task>("task", taskRef) : undefined;
+      if (session?.hostSession && !verificationTarget) {
+        // Collection is session-wide; only the learning context is bounded.
+        // Retain all source rows and preserve one family/sequence for the session.
+        learningSources = learningSources.slice(-192);
+        while (
+          learningSources.length > submitted.length &&
+          byteSize(learningSources) > 131072
+        )
+          learningSources.shift();
+      }
       if (learningSources.length > 192 || byteSize(learningSources) > 131072)
         throw new ApiError("source_input_budget", 413);
       const job: Job = {
@@ -1710,7 +1723,7 @@ export class CoreService {
           : undefined;
         const taskCase = cached;
         const bound = bindEvidence(output.workView.evidence);
-        if (taskCase) {
+        if (taskCase && !task?.hostSession) {
           const retained = taskCase.evidence.filter((e) =>
             indexedSources.some((s) => s.fingerprint === e.fingerprint),
           );
@@ -2613,7 +2626,10 @@ export class CoreService {
     return this.store.transaction(async (tx) =>
       (await tx.list<Task>("task", scopes))
         .filter(
-          (t) => !t.ended && Date.now() - Date.parse(t.createdAt) < 86400000,
+          (t) =>
+            !t.ended &&
+            Date.now() - Date.parse(t.hostSession ? t.updatedAt : t.createdAt) <
+              86400000,
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 100)
@@ -3480,7 +3496,9 @@ export class CoreService {
           p.channel !== "user" &&
           !(p.channel === "agent" && p.taskOwnerId === task.callerId)) ||
         task.ended ||
-        Date.now() - Date.parse(task.createdAt) >= 86400000
+        Date.now() -
+          Date.parse(task.hostSession ? task.updatedAt : task.createdAt) >=
+          86400000
       )
         throw new ApiError("task_unavailable", 409);
       return { taskRef: task.id, scopeId: task.scopeId };
@@ -3488,6 +3506,8 @@ export class CoreService {
   }
   async startTask(p: Principal, scopeId: string, eventId?: string) {
     this.authorize(p, scopeId);
+    const hostSession =
+      p.channel === "host" && !!eventId?.startsWith("copilot-session:");
     const task = await this.store.transaction(async (tx) => {
       const bindingId = eventId ? digest([p.id, scopeId, eventId]) : undefined;
       if (bindingId) {
@@ -3495,7 +3515,15 @@ export class CoreService {
           "task_binding",
           bindingId,
         );
-        if (old) return { taskRef: old.taskRef };
+        if (old) {
+          const previous = await this.owned<Task>(tx, p, "task", old.taskRef);
+          if (hostSession && previous.hostSession && !previous.ended)
+            await tx.put(
+              entry("task", mutate(previous, {})),
+              previous.revision,
+            );
+          return { taskRef: old.taskRef, createdAt: previous.createdAt };
+        }
       }
       const t: Task = {
         ...identity(scopeId),
@@ -3503,6 +3531,7 @@ export class CoreService {
         ended: false,
         values: {},
         observations: [],
+        ...(hostSession ? { hostSession: true } : {}),
       };
       await tx.put(entry("task", t), null);
       if (bindingId)
@@ -3515,7 +3544,7 @@ export class CoreService {
           }),
           null,
         );
-      return { taskRef: t.id };
+      return { taskRef: t.id, createdAt: t.createdAt };
     });
     if (p.channel === "host")
       await new Effects(this.store).record(p, [
@@ -3524,11 +3553,11 @@ export class CoreService {
           taskRef: task.taskRef,
           scopeId,
           kind: "task_started",
-          occurredAt: new Date().toISOString(),
+          occurredAt: task.createdAt,
           text: "Trusted host task started",
         },
       ]);
-    return task;
+    return { taskRef: task.taskRef };
   }
   async observe(p: Principal, input: unknown) {
     if (!["user", "host"].includes(p.channel))
@@ -3643,7 +3672,8 @@ export class CoreService {
           p.channel !== "user" &&
           !(p.channel === "agent" && p.taskOwnerId === t.callerId)) ||
         t.ended ||
-        Date.now() - Date.parse(t.createdAt) >= 86400000
+        Date.now() - Date.parse(t.hostSession ? t.updatedAt : t.createdAt) >=
+          86400000
       )
         throw new ApiError("task_unavailable", 409);
       const m = await tx.get<Playbook>("playbook", v.playbookId);
@@ -3747,7 +3777,9 @@ export class CoreService {
       );
       if (
         task.ended ||
-        Date.now() - Date.parse(task.createdAt) >= 86400000 ||
+        Date.now() -
+          Date.parse(task.hostSession ? task.updatedAt : task.createdAt) >=
+          86400000 ||
         (p.channel !== "user" &&
           task.callerId !== p.id &&
           !(p.channel === "agent" && p.taskOwnerId === task.callerId))

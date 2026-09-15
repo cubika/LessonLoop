@@ -62,7 +62,6 @@ export class Effects {
   async record(
     caller: { id: string; channel: string; scopes: string[] },
     input: unknown,
-    transaction?: Transaction,
   ) {
     if (!["host", "user"].includes(caller.channel))
       throw new Error("trusted_host_required");
@@ -93,7 +92,7 @@ export class Effects {
       try {
         if (!caller.scopes.includes(event.scopeId))
           throw new Error("scope_denied");
-        const persist = async (tx: Transaction) => {
+        const result = await this.store.transaction(async (tx) => {
           const setting = await tx.get<{ review: boolean }>(
             "settings",
             event.scopeId,
@@ -230,10 +229,7 @@ export class Effects {
             null,
           );
           return { eventId: event.eventId, status: "accepted" };
-        };
-        const result = transaction
-          ? await persist(transaction)
-          : await this.store.transaction(persist);
+        });
         results.push(result);
       } catch (e) {
         results.push({

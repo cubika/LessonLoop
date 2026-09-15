@@ -37,7 +37,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 已提供方法学习、查看/编辑/导出、Copilot有界会话采集与方法准备、样例JSON Connector及效果回顾。真实宿主回填、补证发布和自动演进的局部流程已有验证。
 
-这是alpha，不表示P0–P3正式质量门槛全部通过。完整L2–L5泛化、长期收益、所有故障场景和干净Windows虚拟机矩阵仍待验证。自动任务边界有局限，可用/lessonloop new或continue明确覆盖。采集超预算会报告缺口，不承诺无限历史。
+这是alpha，不表示P0–P3正式质量门槛全部通过。完整L2–L5泛化、长期收益、所有故障场景和干净Windows虚拟机矩阵仍待验证。Copilot按会话采集，追问与恢复沿用原关联；需要独立关联时新建Copilot会话。new/continue不再切分任务。采集缺失或截断会报告缺口，长会话用最近窗口学习。
 
 官方provider、检索、原生作业和重排直接复用；删除了未使用的适配封装。持续维护同一Mental Model的delta路线尚未切换：当前产品仍使用隔离作业及独立审查，避免alpha前扩大存储与来源合同。页面是产品方法管理，不是另一个工作流执行器。
 
