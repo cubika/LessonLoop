@@ -8,7 +8,9 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 $archive=Join-Path $staging $asset
 Write-Output "Downloading LessonLoop $version..."
 Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile $archive
-$checksums=(Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt").Content
+$checksumFile=Join-Path $staging "SHA256SUMS.txt"
+Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $checksumFile
+$checksums=Get-Content -LiteralPath $checksumFile -Raw -Encoding UTF8
 $line=($checksums -split [char]10 | Where-Object { $_.Trim().EndsWith($asset) })
 if(@($line).Count -ne 1){throw "Release checksum missing"}
 $expected=($line.Trim() -split '\s+')[0]
