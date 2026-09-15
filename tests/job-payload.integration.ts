@@ -176,8 +176,8 @@ test("Generation and assessment replay exact requests after PostgreSQL round tri
   }
 });
 
-test("Old in-flight jobs replay their original prompt and migrate on write", async () => {
-  const store = new ProductStore(url!);
+test("Old in-flight jobs replay their original prompt and migrate at startup", async () => {
+  let store = new ProductStore(url!);
   await store.open();
   const db = new pg.Client({ connectionString: url });
   await db.connect();
@@ -197,7 +197,11 @@ test("Old in-flight jobs replay their original prompt and migrate on write", asy
         }),
       ],
     );
-    await f.core.tick([f.scope]);
+    await store.close();
+    store = new ProductStore(url!);
+    await store.open();
+    const core = new CoreService(store, engine);
+    await core.tick([f.scope]);
     assert.equal(engine.requests[0]![2], query);
     const raw = (
       await db.query(
@@ -207,8 +211,8 @@ test("Old in-flight jobs replay their original prompt and migrate on write", asy
     ).rows[0].value;
     assert.equal(raw.modelQuery, undefined);
     assert.equal(raw.payload.modelQuery, query);
-    await f.core.cancelJob(f.p, f.receipt.jobId);
-    await f.core.tick([f.scope]);
+    await core.cancelJob(f.p, f.receipt.jobId);
+    await core.tick([f.scope]);
     const done = (
       await db.query(
         "SELECT value FROM lessonloop.objects WHERE kind='job' AND id=$1",
@@ -219,6 +223,93 @@ test("Old in-flight jobs replay their original prompt and migrate on write", asy
     assert.equal(done.payload, undefined);
   } finally {
     await store.close();
+    await db.end();
+  }
+});
+
+test("Startup migration preserves requests and metadata, clears terminal payloads and runs once per record", async () => {
+  const db = new pg.Client({ connectionString: url });
+  await db.connect();
+  const scope = randomUUID();
+  const originalQuery = 'Original {"z":1,"a":2}';
+  const originalAssessment = "Original review";
+  const records = [
+    {
+      status: "uncertain",
+      modelQuery: originalQuery,
+      assessmentQuery: originalAssessment,
+      synthesisTopicId: "topic",
+      verificationTarget: { id: "target", revision: 2 },
+    },
+    {
+      status: "running",
+      modelQuery: "stale flat value",
+      payload: { modelQuery: "preserved nested value" },
+    },
+    ...["completed", "failed", "canceled"].map((status) => ({
+      status,
+      verificationTarget: { id: "target", revision: 2 },
+      payload: { candidate: draft, inputSources: [{ text: "private source" }] },
+    })),
+  ].map((record) => ({
+    ...record,
+    id: randomUUID(),
+    revision: 7,
+    scopeId: scope,
+  }));
+  try {
+    for (const record of records)
+      await db.query(
+        "INSERT INTO lessonloop.objects(kind,id,scope_id,revision,value) VALUES('job',$1,$2,7,$3)",
+        [record.id, scope, JSON.stringify(record)],
+      );
+    const read = () =>
+      db.query(
+        "SELECT value,xmin::text FROM lessonloop.objects WHERE kind='job' AND scope_id=$1 ORDER BY id",
+        [scope],
+      );
+    const store = new ProductStore(url!);
+    await store.open();
+    try {
+      const active = await store.transaction((tx) =>
+        tx.get<any>("job", records[0]!.id),
+      );
+      assert.equal(active.payload.modelQuery, originalQuery);
+      assert.equal(active.payload.assessmentQuery, originalAssessment);
+      assert.equal(active.synthesisTopicId, "topic");
+      assert.deepEqual(active.verificationRef, {
+        kind: "experience",
+        id: "target",
+        revision: 2,
+      });
+      const jobs = await store.transaction((tx) =>
+        tx.list<any>("job", [scope]),
+      );
+      assert.equal(
+        jobs.find((j) => j.id === records[1]!.id).payload.modelQuery,
+        "preserved nested value",
+      );
+      for (const job of jobs) {
+        assert.equal(job.revision, 7);
+        assert.equal(job.modelQuery, undefined);
+        assert.equal(job.verificationTarget, undefined);
+        if (["completed", "failed", "canceled"].includes(job.status)) {
+          assert.equal(job.payload, undefined);
+          assert.equal(job.verificationRef.id, "target");
+        }
+      }
+    } finally {
+      await store.close();
+    }
+    const before = await read();
+    const reopened = new ProductStore(url!);
+    try {
+      await reopened.open();
+    } finally {
+      await reopened.close();
+    }
+    assert.deepEqual((await read()).rows, before.rows);
+  } finally {
     await db.end();
   }
 });
@@ -264,5 +355,59 @@ test("Prompt drift fails without resubmission and source erasure clears frozen d
   } finally {
     await store.close();
     await db.end();
+  }
+});
+
+test("Cancellation during submission recovery returns to the shared drain path", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    for (const stage of ["compose", "assess"] as const) {
+      const engine = new Engine();
+      engine.fail.clear();
+      const f = await setup(store, engine);
+      await store.transaction(async (tx) => {
+        const job = await tx.get<any>("job", f.receipt.jobId);
+        const next = {
+          ...job,
+          revision: job.revision + 1,
+          stage,
+          status: "uncertain",
+          ...(stage === "compose"
+            ? { modelId: "job-" + job.id }
+            : { assessmentId: "assess-" + job.id }),
+        };
+        await tx.put(
+          {
+            kind: "job",
+            id: job.id,
+            scopeId: f.scope,
+            revision: next.revision,
+            value: next,
+          },
+          job.revision,
+        );
+      });
+      (engine as any).findModelOperation = async () => {
+        await f.core.cancelJob(f.p, f.receipt.jobId);
+        return "recovered-operation";
+      };
+      engine.operation = async () => {
+        throw new Error("Canceled job must drain before reading operations");
+      };
+      await f.core.tick([f.scope]);
+      assert.equal(
+        (await f.core.getJob(f.p, f.receipt.jobId)).status,
+        "uncertain",
+      );
+      await f.core.tick([f.scope]);
+      assert.equal(
+        (await f.core.getJob(f.p, f.receipt.jobId)).status,
+        "canceled",
+      );
+      assert.equal(engine.requests.length, 0);
+    }
+  } finally {
+    await store.close();
   }
 });

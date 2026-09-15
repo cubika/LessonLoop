@@ -238,8 +238,7 @@ test("Public resources preserve source identity, work provenance and playbook fe
       undefined,
     );
     const canceled = await call("cancelJob", { id: append.jobId });
-    assert.equal(canceled.candidate, undefined);
-    assert.equal(canceled.modelSchema, undefined);
+    assert.equal(canceled.payload, undefined);
     const prepared = await call(
       "preparePlaybook",
       { playbookId: playbook.id, revision: 1, taskRef: task.taskRef },
