@@ -25,7 +25,7 @@ async function main() {
         "LessonLoop CLI",
         "  serve [--initialize] | status | rpc <operation> [input.json]",
         "  playbook list [--query text --scope id --topic text --state active|held|disabled --limit n --cursor value --pinned]",
-        "  playbook show|history|work|usage <id> | pin|unpin <id> | restore <id> <old-revision>",
+        "  playbook show|work|usage <id> | pin|unpin <id>",
         "  playbook prepare|revise|state|remove|export|rate <input.json>",
         "  experience list [input.json] | show|work <id> | verify <source.json>",
         "  experience revise <input.json> (id, expectedRevision, correctionText; holds for evidence review)",
@@ -35,7 +35,6 @@ async function main() {
         "    append requires sourceFor = {id, revision} from a Source reference.",
         "  connector add|list|sync|schedule|bindings|state|forget|retry",
         "  report list|notifications|configure|dismiss|export",
-        "JSON inputs follow the corresponding RPC contract. restore sends old content for review; it does not immediately publish it.",
       ].join("\n"),
     );
     return;
@@ -133,69 +132,10 @@ async function main() {
   let operation = args.shift();
   let input: unknown = {};
   if (command === "playbook") {
-    if (operation === "restore") {
-      const id = args.shift(),
-        revision = Number(args.shift());
-      if (!id || !Number.isSafeInteger(revision) || revision < 1)
-        throw new Error(
-          "playbook restore requires an id and positive revision",
-        );
-      const [history, current] = await Promise.all([
-        call("playbookHistory", { id }),
-        call("inspectPlaybook", { id }),
-      ]);
-      const previous = (history.result as Array<Record<string, unknown>>).find(
-        (v) => v.revision === revision,
-      );
-      if (!previous) throw new Error("Historical revision is unavailable");
-      for (const reference of previous.supportRefs as Array<{
-        id: string;
-        revision: number;
-      }>) {
-        const fetched = (await call("inspectExperience", { id: reference.id }))
-          .result as { revision: number };
-        if (fetched.revision !== reference.revision)
-          throw new Error(
-            "Historical support has changed. Open the playbook editor to review current evidence before resubmitting.",
-          );
-      }
-      const body = Object.fromEntries(
-        [
-          "title",
-          "goal",
-          "topics",
-          "conditions",
-          "exceptions",
-          "applicability",
-          "steps",
-          "completionChecks",
-          "stopConditions",
-          "supportRefs",
-        ].map((key) => [key, previous[key]]),
-      );
-      body.change = {
-        ...(previous.change as object),
-        kind: "correction",
-        summary: `Resubmit content from revision ${revision} for evidence review`,
-      };
-      console.log(
-        JSON.stringify(
-          await call("revisePlaybook", {
-            id,
-            expectedRevision: (current.result as { revision: number }).revision,
-            body,
-          }),
-          null,
-          2,
-        ),
-      );
-      return;
-    }
     const action = operation;
     const map: Record<string, string> = {
       list: "browsePlaybooks",
       show: "inspectPlaybook",
-      history: "playbookHistory",
       work: "getWorkView",
       usage: "getUsageView",
       prepare: "preparePlaybook",
@@ -247,8 +187,7 @@ async function main() {
         } else filters[flag.slice(2)] = value;
       }
       input = filters;
-    } else if (["inspectPlaybook", "playbookHistory"].includes(operation ?? ""))
-      input = { id: args.shift() };
+    } else if (operation === "inspectPlaybook") input = { id: args.shift() };
     else if (args[0])
       input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
   } else if (

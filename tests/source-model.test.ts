@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { identity, refSchema, type Source } from "../src/domain/schema.js";
 import { learningQuery } from "../src/core/learning.js";
+import { workViewSchema } from "../src/core/work-view.js";
 
 test("Only Source, Experience and Playbook have domain references", () => {
   for (const kind of ["source", "experience", "playbook"])

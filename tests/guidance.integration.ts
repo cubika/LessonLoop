@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService, type Principal } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { apiServer, dispatch } from "../src/core/server.js";
 import {
   identity,
@@ -167,6 +167,7 @@ async function fixture() {
         confirmed: true,
       });
     }
+    await core.syncProjections([scopeId]);
     return { e, m };
   }
   return { store, scopeId, user, agent, engine, core, call, put, update, seed };

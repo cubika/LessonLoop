@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { digest, identity } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("database required");
