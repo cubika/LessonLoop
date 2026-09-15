@@ -8,6 +8,8 @@ const secret = JSON.parse(
 // These files share one database. Run sequentially on every supported Node.
 const files = [
   "tests/postgres.integration.ts",
+  "tests/feedback-migration.integration.ts",
+  "tests/task-feedback.integration.ts",
   "tests/pure-storage.integration.ts",
   "tests/http.integration.ts",
   "tests/public-contract.integration.ts",

@@ -36,18 +36,18 @@ type Task = {
   endedAt?: string;
   stopped?: boolean;
   playbook?: Playbook;
-  playbookUseRef?: string;
+  feedbackRevision?: number | undefined;
   prompts: Array<{
     key: string;
     digest: string;
     responseDigest?: string;
     done?: boolean;
     playbook?: Playbook;
-    playbookUseRef?: string;
+    feedbackRevision?: number | undefined;
   }>;
   inputSources: string[];
   observations: string[];
-  effects: string[];
+  collectionGap?: string;
   lastAgentDigest?: string;
 };
 type State = {
@@ -145,49 +145,10 @@ export async function handleHook(
     const current = () => state.tasks.at(-1);
     const taskAt = (time: string) =>
       [...state.tasks].reverse().find((t) => t.startedAt <= time);
-    const effect = async (
-      task: Task,
-      kind: string,
-      id: string,
-      text: string,
-      at = now,
-      extra: Record<string, unknown> = {},
-    ) => {
-      if (
-        !setting.review ||
-        task.effects.includes(id) ||
-        task.effects.length >= 64
-      )
-        return;
-      const result = await call(
-        "recordTaskObservation",
-        [
-          {
-            eventId: id,
-            taskRef: task.taskRef,
-            scopeId: config.scopeId,
-            kind,
-            occurredAt: at,
-            text: text.slice(0, 512),
-            ...extra,
-          },
-        ],
-        id,
-      );
-      const status = result.results?.[0]?.status;
-      if (["accepted", "duplicate", "ignored"].includes(status)) {
-        task.effects.push(id);
-        await save();
-      } else if (status === "retryable") throw new Error("effect_retryable");
+    const gap = async (task: Task, reason: string, _at = now) => {
+      task.collectionGap = reason;
+      await save();
     };
-    const gap = (task: Task, reason: string, at = now) =>
-      effect(
-        task,
-        "collection_gap",
-        digest([task.taskRef, "gap", reason]),
-        `Copilot collection incomplete: ${reason}.`,
-        at,
-      );
     const inputSource = async (
       task: Task,
       text: string,
@@ -271,13 +232,6 @@ export async function handleHook(
     };
     const finish = async (task: Task, at: string, reason: string) => {
       if (task.endedAt) return;
-      await effect(
-        task,
-        "task_ended",
-        digest([task.taskRef, "ended"]),
-        `Copilot task boundary: ${reason}.`,
-        at,
-      );
       await call(
         "observeTask",
         {
@@ -335,7 +289,6 @@ export async function handleHook(
           prompts: [],
           inputSources: [],
           observations: [],
-          effects: [],
         });
         state.tasks = state.tasks.slice(-8);
         await save();
@@ -382,18 +335,35 @@ export async function handleHook(
           typeof output === "string"
             ? task.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
-        if (returned?.playbook && returned.playbookUseRef)
-          await effect(
-            task,
-            "delivery",
-            digest([task.taskRef, "delivery", record.id ?? output]),
-            "Copilot acknowledged the transformed prompt containing this playbook.",
-            at,
-            {
-              playbook: returned.playbook,
-              playbookUseRef: returned.playbookUseRef,
-            },
-          );
+        if (
+          setting.review &&
+          returned?.playbook &&
+          returned.feedbackRevision !== undefined
+        ) {
+          try {
+            await call(
+              "updateTaskFeedback",
+              {
+                taskRef: task.taskRef,
+                field: "delivered",
+                playbookId: returned.playbook.id,
+                revision: returned.playbook.revision,
+                expectedRevision: returned.feedbackRevision,
+              },
+              "delivery",
+            );
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              ![
+                "revision_conflict",
+                "feedback_unavailable",
+                "review_disabled",
+              ].includes(error.message)
+            )
+              throw error;
+          }
+        }
       }
       if (record.type === "tool.execution_complete") {
         const start = state.tools[data.toolCallId];
@@ -499,13 +469,12 @@ export async function handleHook(
             promptKey,
           );
           if (prepared.status === "guidance") {
-            task.playbookUseRef = prepared.playbookUseRef;
+            task.feedbackRevision = prepared.feedbackRevision;
             promptRecord.playbook = task.playbook;
-            if (task.playbookUseRef)
-              promptRecord.playbookUseRef = task.playbookUseRef;
+            promptRecord.feedbackRevision = task.feedbackRevision;
             output = promptEnvelope(
               event,
-              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. The playbookUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
+              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
             );
             promptRecord.responseDigest = digest(
               output.modifiedTransformedPrompt,

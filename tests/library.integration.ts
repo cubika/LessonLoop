@@ -185,7 +185,7 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
       playbookId: m.id,
       revision: m.revision,
     });
-    assert.ok(prepared.playbookUseRef);
+    assert.ok(prepared.feedbackRevision);
     assert.equal(prepared.status, "guidance");
     assert.deepEqual(prepared.steps, m.steps);
     assert.deepEqual(prepared.conditions, m.conditions);
@@ -206,10 +206,6 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
     assert.deepEqual(refreshed, prepared);
     assert.equal(f.engine.calls, 0);
     await assert.rejects(
-      dispatch(f.core, f.owner, "recordTaskObservation", [], "fake"),
-      /trusted_host_required/,
-    );
-    await assert.rejects(
       f.core.observe(f.owner, {
         taskRef: task.taskRef,
         eventId: "fake",
@@ -218,52 +214,34 @@ test("Playbook library pagination binds filters, pins persist, and users cannot 
       }),
       /task_identity_mismatch/,
     );
+    const effects = new Effects(store);
     const rating = {
       taskRef: task.taskRef,
-      playbookUseRef: prepared.playbookUseRef,
+      field: "userRating",
+      playbookId: m.id,
+      revision: m.revision,
+      expectedRevision: prepared.feedbackRevision,
       rating: "helpful",
       text: "The diagnostic step helped",
     };
-    assert.equal(
-      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
-        ?.status,
-      "accepted",
-    );
-    assert.equal(
-      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
-        ?.status,
-      "duplicate",
-    );
+    const receipt = await effects.update(f.owner, rating);
+    assert.equal(receipt.accepted, true);
+    assert.deepEqual(await effects.update(f.owner, rating), receipt);
     await assert.rejects(
-      f.core.ratePlaybookUse(
-        f.owner,
-        { ...rating, rating: "incorrect" },
-        "rating-1",
-      ),
-      /event_conflict/,
+      effects.update(f.owner, { ...rating, rating: "incorrect" }),
+      /revision_conflict/,
     );
-    const effects = new Effects(store);
     await effects.clear(f.scope);
-    assert.equal(
-      (await f.core.ratePlaybookUse(f.owner, rating, "rating-1")).results[0]
-        ?.status,
-      "ignored",
+    await assert.rejects(
+      effects.update(f.owner, rating),
+      /feedback_unavailable/,
     );
     await f.core.prepare(f.host, {
       playbookId: m.id,
       revision: m.revision,
       taskRef: task.taskRef,
     });
-    await effects.record(f.host, [
-      {
-        eventId: "after-clear",
-        kind: "collection_gap",
-        taskRef: task.taskRef,
-        scopeId: f.scope,
-        occurredAt: new Date(Date.now() + 2).toISOString(),
-        text: "New observation after clear",
-      },
-    ]);
+    await assert.rejects(effects.update(f.owner, rating), /revision_conflict/);
     assert.equal(
       (await effects.cases([f.scope]))[0]!.feedback[0]!.delivered,
       null,
@@ -301,12 +279,11 @@ test("Playbook guidance survives core restart and retains task, source and feedb
     );
     assert.deepEqual(initialFeedback?.feedback, [
       {
-        taskRef: task.taskRef,
         playbookId: m.id,
         revision: m.revision,
         delivered: null,
-        taskOutcome: "unknown",
         userRating: null,
+        ratingText: "",
       },
     ]);
     const restarted = new CoreService(store, f.engine);
@@ -315,26 +292,13 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       first,
     );
     assert.deepEqual(await restarted.prepare(agent, input), first);
-    const uses = await store.transaction((tx) =>
-      tx.list<any>("playbook_use", [f.scope]),
-    );
-    assert.equal(uses.length, 1); // Host and agent share one task/playbook/revision association.
-    assert.ok(
-      uses.every(
-        (u) =>
-          u.playbookUseRef === first.playbookUseRef &&
-          !["delivery", "adoption", "outcome", "stepIds"].some(
-            (key) => key in u,
-          ),
-      ),
-    );
+    const records = await new Effects(store).cases([f.scope]);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.feedback.length, 1);
     assert.equal(f.engine.calls, 0);
     const newTask = await restarted.startTask(f.host, f.scope);
-    assert.notEqual(
-      (await restarted.prepare(f.host, { ...input, taskRef: newTask.taskRef }))
-        .playbookUseRef,
-      first.playbookUseRef,
-    );
+    await restarted.prepare(f.host, { ...input, taskRef: newTask.taskRef });
+    assert.equal((await new Effects(store).cases([f.scope])).length, 2);
     await assert.rejects(
       restarted.prepare({ ...agent, taskOwnerId: "other-host" }, input),
       /task_unavailable/,
@@ -424,7 +388,7 @@ test("Playbook guidance survives core restart and retains task, source and feedb
       "guidance",
     );
     assert.equal(
-      (await store.transaction((tx) => tx.list("playbook_use", [other.scope])))
+      (await store.transaction((tx) => tx.list("task_feedback", [other.scope])))
         .length,
       0,
     );

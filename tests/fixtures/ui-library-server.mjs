@@ -67,13 +67,6 @@ export async function startUiFixture() {
     result: { status: "succeeded", summary: "已读回核对" },
     unresolved: ["不同版本待测"],
     coverage: ["单个本地 fixture"],
-    playbookUses: [
-      {
-        taskRef: "task-ui",
-        playbookUseRef: "use-ui",
-        playbook: { id: base.id, revision: 2 },
-      },
-    ],
     evidence: experience.evidence,
     createdAt,
     updatedAt: createdAt,
@@ -172,7 +165,7 @@ export async function startUiFixture() {
         case "preparePlaybook":
           result = {
             status: "guidance",
-            playbookUseRef: "use-ui",
+            feedbackRevision: 2,
             conditions: [{ text: "使用生成器维护文件" }],
             exceptions: [{ text: "外部系统只读文件" }],
             steps: [
@@ -202,8 +195,11 @@ export async function startUiFixture() {
           result = { status: "completed" };
           break;
         case "feedback":
-        case "ratePlaybookUse":
+        case "updateTaskFeedback":
           result = { accepted: true, results: [{ status: "accepted" }] };
+          break;
+        case "getTaskFeedback":
+          result = { revision: 2 };
           break;
         case "reviews.notifications":
         case "reviews.list":
@@ -235,7 +231,7 @@ export async function startUiFixture() {
                   userRating: "helpful",
                 },
               ],
-              events: [],
+              outcomeText: "",
             },
           ];
           break;

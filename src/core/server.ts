@@ -98,12 +98,19 @@ export async function dispatch(
       return new Reviews(core.store).notifications(p);
     case "reviews.dismiss":
       return new Reviews(core.store).dismiss(p, identifier.parse(input).id);
-    case "recordTaskObservation":
-      if (p.channel !== "host")
-        throw new ApiError("trusted_host_required", 403);
-      return new Effects(core.store).record(p, input);
-    case "ratePlaybookUse":
-      return core.ratePlaybookUse(p, input, key);
+    case "updateTaskFeedback":
+      return new Effects(core.store).update(p, input);
+    case "getTaskFeedback": {
+      const { taskRef } = z
+        .object({ taskRef: z.string() })
+        .strict()
+        .parse(input);
+      const value = (await new Effects(core.store).cases(p.scopes)).find(
+        (c) => c.id === taskRef,
+      );
+      if (!value) throw new ApiError("feedback_unavailable", 404);
+      return value;
+    }
     case "listTasks": {
       const v = z
         .object({ scopeId: z.string().optional() })
@@ -124,7 +131,7 @@ export async function dispatch(
       return (await new Effects(core.store).cases(p.scopes)).filter(
         (row) =>
           !v.playbookId ||
-          row.events.some((e) => e.playbook?.id === v.playbookId),
+          row.feedback.some((f) => f.playbookId === v.playbookId),
       );
     }
     case "clearEffectData": {

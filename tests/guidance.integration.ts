@@ -263,12 +263,12 @@ test("Guidance combines eligible content, preserves leads and rechecks targets a
     assert.equal(result.experiences[0].usage, "lead");
     assert.equal(result.experiences[0].missingChecks.length, 1);
     const uses = () =>
-      f.store.transaction((tx) => tx.list<any>("playbook_use", [f.scopeId]));
+      f.store.transaction((tx) => tx.list<any>("task_feedback", [f.scopeId]));
     const replay = await f.call({ query: "generated" }, f.agent, key);
     assert.equal(replay.taskRef, result.taskRef);
     assert.equal(
-      replay.playbooks[0].playbookUseRef,
-      result.playbooks[0].playbookUseRef,
+      replay.playbooks[0].feedbackRevision,
+      result.playbooks[0].feedbackRevision,
     );
     assert.equal((await uses()).length, 1);
     const target = { kind: "experience", id: e.id, revision: 1 };
@@ -353,10 +353,13 @@ test("Three MCP tools run through real HTTP and storage, including fixed-referen
     };
     const first = await call("getGuidance", { query: "generated" });
     assert.equal(first.playbooks[0].status, "requires_expansion");
-    assert.equal(first.playbooks[0].playbookUseRef, undefined);
+    assert.equal(first.playbooks[0].feedbackRevision, undefined);
     assert.equal(
-      (await f.store.transaction((tx) => tx.list("playbook_use", [f.scopeId])))
-        .length,
+      (
+        await f.store.transaction((tx) =>
+          tx.list<any>("task_feedback", [f.scopeId]),
+        )
+      ).flatMap((t) => t.feedback).length,
       0,
     );
     const target = first.playbooks[0].playbook;

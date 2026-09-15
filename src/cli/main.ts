@@ -205,7 +205,7 @@ async function main() {
       export: "exportPlaybook",
       pin: "pinPlaybook",
       unpin: "pinPlaybook",
-      rate: "ratePlaybookUse",
+      rate: "updateTaskFeedback",
     };
     operation = map[operation ?? ""];
     if (operation === "getWorkView")

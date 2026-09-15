@@ -2,8 +2,7 @@ import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
 import type { Principal } from "./service.js";
-import { feedbackSummary, taskFeedback } from "./feedback.js";
-import { Effects } from "./effects.js";
+import { Effects, type TaskFeedback } from "./effects.js";
 const DAY = 86400000;
 type Stored = { id: string; revision: number; scopeId: string };
 type Review = Stored & {
@@ -21,15 +20,6 @@ type Notification = Stored & {
   createdAt: string;
   read: boolean;
 };
-type Event = {
-  kind: string;
-  occurredAt: string;
-  outcome?: string;
-  rating?: string;
-  text: string;
-  playbook?: ObjectRef;
-};
-type Task = Stored & { taskRef: string; createdAt: string; events: Event[] };
 const entry = <T extends Stored>(kind: string, value: T) => ({
   kind,
   id: value.id,
@@ -47,8 +37,8 @@ type Issue = Stored & {
   severity: "normal" | "serious";
   createdAt: string;
   confirmedBy?: string;
-  confirmedEvidence?: Array<{ caseId: string; eventId: string }>;
-  evidence: Array<{ caseId: string; eventId: string }>;
+  confirmedEvidence?: Array<{ caseId: string; revision: number }>;
+  evidence: Array<{ caseId: string; revision: number }>;
 };
 export class Reviews {
   constructor(private readonly store: ProductStore) {}
@@ -70,7 +60,14 @@ export class Reviews {
         status: z.enum(["suspected", "confirmed", "resolved"]),
         severity: z.enum(["normal", "serious"]),
         evidence: z
-          .array(z.object({ caseId: z.string(), eventId: z.string() }).strict())
+          .array(
+            z
+              .object({
+                caseId: z.string(),
+                revision: z.number().int().positive(),
+              })
+              .strict(),
+          )
           .min(1)
           .max(32),
       })
@@ -98,15 +95,13 @@ export class Reviews {
       ];
       if (evidence.length > 32) throw new Error("issue_evidence_budget");
       for (const ref of v.evidence) {
-        const task = await tx.get<Task>("effect_task", ref.caseId);
+        const task = await tx.get<TaskFeedback>("task_feedback", ref.caseId);
         if (
           !task ||
           task.scopeId !== v.scopeId ||
-          !task.events.some(
-            (e) =>
-              (e as Event & { eventId: string }).eventId === ref.eventId &&
-              Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
-          )
+          task.cleared ||
+          task.revision !== ref.revision ||
+          Date.parse(task.createdAt) <= Date.now() - 30 * DAY
         )
           throw new Error("issue_evidence_unavailable");
       }
@@ -162,7 +157,7 @@ export class Reviews {
   }
   async issues(p: Principal, transaction?: Transaction) {
     const read = async (tx: Transaction) => {
-      const cases = await tx.list<Task>("effect_task", p.scopes),
+      const cases = await tx.list<TaskFeedback>("task_feedback", p.scopes),
         result = [];
       for (const issue of await tx.list<Issue>("review_issue", p.scopes)) {
         const evidence = issue.evidence.filter((r) =>
@@ -170,11 +165,9 @@ export class Reviews {
             (c) =>
               c.id === r.caseId &&
               c.scopeId === issue.scopeId &&
-              c.events.some(
-                (e) =>
-                  (e as Event & { eventId: string }).eventId === r.eventId &&
-                  Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
-              ),
+              !c.cleared &&
+              c.revision === r.revision &&
+              Date.parse(c.createdAt) > Date.now() - 30 * DAY,
           ),
         );
         if (
@@ -187,7 +180,7 @@ export class Reviews {
               issue.status === "confirmed" &&
               !(issue.confirmedEvidence ?? issue.evidence).every((r) =>
                 evidence.some(
-                  (e) => e.caseId === r.caseId && e.eventId === r.eventId,
+                  (e) => e.caseId === r.caseId && e.revision === r.revision,
                 ),
               )
                 ? "suspected"
@@ -198,7 +191,7 @@ export class Reviews {
               issue.confirmedBy &&
               (issue.confirmedEvidence ?? issue.evidence).every((r) =>
                 evidence.some(
-                  (e) => e.caseId === r.caseId && e.eventId === r.eventId,
+                  (e) => e.caseId === r.caseId && e.revision === r.revision,
                 ),
               )
                 ? "user_confirmed"
@@ -223,39 +216,22 @@ export class Reviews {
       const cases = [];
       const feedbackCases = await new Effects(this.store).cases(p.scopes, tx);
       for (const id of new Set(v.caseIds)) {
-        const task = await tx.get<Task>("effect_task", id);
-        if (!task || !p.scopes.includes(task.scopeId))
-          throw new Error("not_found");
-        const events = task.events.filter(
-          (e) => Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
-        );
-        if (!events.length) throw new Error("case_expired");
+        const task = feedbackCases.find((c) => c.id === id);
+        if (!task) throw new Error("not_found");
         const original = await tx.get<{
           rawObservations?: Array<{
             eventId: string;
             text: string;
             occurredAt: string;
           }>;
-        }>("task", task.taskRef);
+        }>("task", task.id);
         const observations = v.includeObservations
           ? (original?.rawObservations ?? []).filter(
               (o) => Date.parse(o.occurredAt) > Date.now() - 30 * DAY,
             )
           : [];
         cases.push({
-          scopeId: task.scopeId,
-          taskRef: task.taskRef,
-          ...taskFeedback(
-            { ...task, events },
-            (feedbackCases.find((c) => c.id === task.id)?.feedback ?? []).map(
-              (f) => ({
-                kind: "playbook",
-                id: f.playbookId,
-                revision: f.revision,
-              }),
-            ),
-          ),
-          events,
+          ...task,
           observations,
           coverage: {
             initialWorkspace: "unavailable",
@@ -350,11 +326,13 @@ export class Reviews {
         if (elapsed < schedule.days * DAY) continue;
         const start = Math.max(Date.parse(schedule.through), now - 30 * DAY),
           end = now;
-        const tasks = (await tx.list<Task>("effect_task", [scope])).filter(
+        const tasks = (
+          await tx.list<TaskFeedback>("task_feedback", [scope])
+        ).filter(
           (t) =>
             Date.parse(t.createdAt) >= start &&
             Date.parse(t.createdAt) < end &&
-            t.events.length > 0,
+            !t.cleared,
         );
         const playbooks = (
           await tx.list<{
@@ -437,7 +415,7 @@ export class Reviews {
   }
   async list(p: Principal, transaction?: Transaction) {
     const read = async (tx: Transaction) => {
-      const tasks = await tx.list<Task>("effect_task", p.scopes),
+      const tasks = await tx.list<TaskFeedback>("task_feedback", p.scopes),
         playbooks = await tx.list<{
           id: string;
           revision: number;
@@ -470,15 +448,11 @@ export class Reviews {
               Date.parse(t.createdAt) >= Date.parse(review.start) &&
               Date.parse(t.createdAt) < Date.parse(review.end),
           )
-          .map((t) => ({
-            ...t,
-            events: t.events.filter(
-              (e) => Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
-            ),
-          }))
-          .filter((t) => t.events.length)
-          .map((t) => ({ ...t, ...taskFeedback(t) }));
-        const totals = feedbackSummary(cohort);
+          .filter(
+            (t) =>
+              !t.cleared && Date.parse(t.createdAt) > Date.now() - 30 * DAY,
+          );
+        const totals = Effects.summarize(cohort);
         const summary = {
           ...totals,
           helpfulCount: totals.helpful,
@@ -490,7 +464,7 @@ export class Reviews {
             .slice(0, 3)
             .map((t) => ({
               id: t.id,
-              taskRef: t.taskRef,
+              taskRef: t.id,
               classification:
                 rating === "helpful" ? "reported_helpful" : "reported_problem",
             }));
@@ -502,7 +476,7 @@ export class Reviews {
           needsVerification: cohort
             .filter((t) => t.taskOutcome === "unknown")
             .slice(0, 2)
-            .map((t) => ({ id: t.id, taskRef: t.taskRef })),
+            .map((t) => ({ id: t.id, taskRef: t.id })),
           playbooks: review.playbookRefs.flatMap((r) => {
             const current = playbooks.find(
               (m) => m.id === r.id && m.scopeId === review.scopeId,

@@ -43,7 +43,7 @@ async function fixture(t: test.TestContext) {
       return {
         status: "guidance",
         playbook: playbook,
-        playbookUseRef: "use-" + input.taskRef,
+        feedbackRevision: 2,
         conditions: [{ text: "Read the input schema" }],
         steps: [
           {
@@ -56,13 +56,8 @@ async function fixture(t: test.TestContext) {
           { stepId: "source", instruction: "Edit the source and regenerate" },
         ],
       };
-    if (operation === "recordTaskObservation")
-      return {
-        results: input.map((e: any) => ({
-          eventId: e.eventId,
-          status: "accepted",
-        })),
-      };
+    if (operation === "updateTaskFeedback")
+      return { accepted: true, revision: 3 };
     return { accepted: true };
   };
   const config: Config = {
@@ -114,8 +109,7 @@ test("Copilot transcript capture preserves roles, strips injected playbooks and 
   assert.equal(
     f.calls.some(
       (c) =>
-        c.operation === "recordTaskObservation" &&
-        c.input[0].kind === "delivery",
+        c.operation === "updateTaskFeedback" && c.input.field === "delivered",
     ),
     false,
   );
@@ -179,12 +173,12 @@ test("Copilot transcript capture preserves roles, strips injected playbooks and 
     1,
   );
   const effects = f.calls
-    .filter((c) => c.operation === "recordTaskObservation")
+    .filter((c) => c.operation === "updateTaskFeedback")
     .flatMap((c) => c.input);
-  assert.equal(effects.filter((e) => e.kind === "delivery").length, 1);
-  assert.equal(effects.filter((e) => e.kind === "usage").length, 0);
+  assert.equal(effects.filter((e) => e.field === "delivered").length, 1);
+  assert.equal(effects.filter((e) => e.field === "usage").length, 0);
   assert.equal(
-    effects.some((e) => e.kind === "outcome"),
+    effects.some((e) => e.field === "taskOutcome"),
     false,
   );
   assert.equal(
@@ -252,16 +246,13 @@ test("session end retries after interruption and late transcript inputSource sta
   assert.equal(late?.input.context.taskRef, "task-1");
   const outcomes = f.calls.filter(
     (c) =>
-      c.operation === "recordTaskObservation" && c.input[0].kind === "outcome",
+      c.operation === "updateTaskFeedback" && c.input.field === "taskOutcome",
   );
   assert.equal(outcomes.length, 0);
   assert.equal(
-    f.calls.filter(
-      (c) =>
-        c.operation === "recordTaskObservation" &&
-        c.input[0].kind === "task_ended",
-    ).length,
-    1,
+    f.calls.filter((c) => c.operation === "observeTask" && c.input.ended)
+      .length,
+    2,
   );
 });
 
@@ -303,12 +294,9 @@ test("transcript identity, partial lines and byte limits are explicit collection
   await writeFile(f.path, "not-json\n");
   await f.hook("userPromptTransformed", 1, { prompt: "Read" });
   await f.hook("agentStop", 2);
-  assert.ok(
-    f.calls.some(
-      (c) =>
-        c.operation === "recordTaskObservation" &&
-        c.input[0].kind === "collection_gap",
-    ),
+  assert.equal(
+    f.calls.some((c) => c.operation === "updateTaskFeedback"),
+    false,
   );
 });
 
@@ -368,14 +356,14 @@ test("unacknowledged injection is never counted as delivery, and completed promp
   );
   assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
   const effects = f.calls
-    .filter((c) => c.operation === "recordTaskObservation")
+    .filter((c) => c.operation === "updateTaskFeedback")
     .flatMap((c) => c.input);
   assert.equal(
-    effects.some((e) => e.kind === "delivery"),
+    effects.some((e) => e.field === "delivered"),
     false,
   );
   assert.equal(
-    effects.some((e) => e.kind === "outcome"),
+    effects.some((e) => e.field === "taskOutcome"),
     false,
   );
 });
@@ -392,7 +380,7 @@ test("disabled learning does not ingest transcript inputSource and disallowed wo
   await f.hook("agentStop", 3);
   assert.equal(
     f.calls.some((c) =>
-      ["submitSource", "recordTaskObservation", "searchPlaybooks"].includes(
+      ["submitSource", "updateTaskFeedback", "searchPlaybooks"].includes(
         c.operation,
       ),
     ),
@@ -493,7 +481,7 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
         };
       if (operation === "preparePlaybook")
         return { status: "requires_expansion" };
-      if (operation === "recordTaskObservation")
+      if (operation === "updateTaskFeedback")
         return {
           results: input.map((e: any) => ({
             eventId: e.eventId,
@@ -543,7 +531,7 @@ test("a guidance MCP response is not execution evidence and does not change the 
           result: {
             status: "guidance",
             playbook: { kind: "playbook", id: "playbook", revision: 1 },
-            playbookUseRef: "use-1",
+            feedbackRevision: 2,
             steps: [],
           },
         }),

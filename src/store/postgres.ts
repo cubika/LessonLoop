@@ -1,4 +1,5 @@
 import pg from "pg";
+import { migrateFeedback } from "./feedback-migration.js";
 
 export interface Entry {
   kind: string;
@@ -160,6 +161,7 @@ export class ProductStore {
       );
       if (versions.rows.length !== 1 || versions.rows[0].version !== 2)
         throw new Error("incompatible_product_schema");
+      await migrateFeedback(this.owner);
       this.ready = true;
     } catch (error) {
       if (this.owner) {

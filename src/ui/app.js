@@ -440,7 +440,10 @@ document.querySelectorAll("[data-view]").forEach(
                 ),
               ),
             );
-            c.events.forEach((e) => section.append(node("p", e.text)));
+            if (c.outcomeText) section.append(node("p", c.outcomeText));
+            c.feedback.forEach((f) => {
+              if (f.ratingText) section.append(node("p", f.ratingText));
+            });
             const report = node("button", "标记方法问题");
             report.onclick = handle(() => issueForm(section, c));
             section.append(report);
@@ -879,7 +882,7 @@ async function preparePlaybook(parent) {
       requestId: crypto.randomUUID(),
     });
     if (request !== preparationRequest || task.value !== taskRef) return;
-    use = result.playbookUseRef;
+    use = result.feedbackRevision;
     output.replaceChildren(node("h4", "本次任务的方法"));
     if (result.status === "guidance") {
       output.append(
@@ -949,14 +952,12 @@ async function preparePlaybook(parent) {
           taskRef,
           playbookId: playbook.id,
           revision: playbook.revision,
-          playbookUseRef: use,
         }),
       );
       reference.readOnly = true;
       reference.onclick = () => reference.select();
       const rate = node("button", "评价这次使用");
-      const playbookUseRef = use;
-      rate.onclick = handle(() => rateUseForm(output, taskRef, playbookUseRef));
+      rate.onclick = handle(() => rateUseForm(output, taskRef, playbook));
       output.append(rate);
     }
   };
@@ -997,7 +998,8 @@ function feedbackForm(parent, kind, value, refresh) {
   panel.append(save);
   parent.append(panel);
 }
-function rateUseForm(parent, taskRef, playbookUseRef) {
+async function rateUseForm(parent, taskRef, playbook) {
+  const current = await rpc("getTaskFeedback", { taskRef });
   const panel = node("section", "");
   panel.append(node("h3", "评价这次使用"));
   const rating = selectField(panel, "实际感受", [
@@ -1008,17 +1010,15 @@ function rateUseForm(parent, taskRef, playbookUseRef) {
     text = field(panel, "说明（可选）", "", true);
   const save = node("button", "保存评价");
   save.onclick = handle(async () => {
-    const receipt = await rpc("ratePlaybookUse", {
+    await rpc("updateTaskFeedback", {
       taskRef,
-      playbookUseRef,
+      field: "userRating",
+      playbookId: playbook.id,
+      revision: playbook.revision,
+      expectedRevision: current.revision,
       rating: rating.value,
       ...(text.value.trim() ? { text: text.value.trim() } : {}),
     });
-    const rejected = receipt.results?.find(
-      (result) => !["accepted", "duplicate"].includes(result.status),
-    );
-    if (rejected)
-      throw new Error(`评价未保存：${rejected.reason ?? rejected.status}`);
     panel.replaceChildren(node("p", "这次使用的评价已记录。"));
   });
   panel.append(save);
@@ -1493,7 +1493,7 @@ setInterval(() => {
 async function issueForm(parent, caseData) {
   const panel = node("section", "");
   panel.append(
-    node("p", "选择实际事件作为依据。确认问题不会自动修改或修复方法。"),
+    node("p", "以当前任务结果和评价为依据。记录更正后需要重新核对问题。"),
   );
   const existing = (await rpc("reviews.issues")).filter(
     (i) => i.scopeId === caseData.scopeId,
@@ -1528,14 +1528,6 @@ async function issueForm(parent, caseData) {
     category.append(option);
   }
   panel.append(category);
-  const evidence = node("select", "");
-  evidence.setAttribute("aria-label", "问题依据");
-  caseData.events.forEach((e) => {
-    const o = node("option", e.text);
-    o.value = e.eventId;
-    evidence.append(o);
-  });
-  panel.append(evidence);
   const confirmed = field(panel, "已核对，确认问题存在", ""),
     serious = field(panel, "严重问题，需要及时处理", "");
   confirmed.type = "checkbox";
@@ -1556,7 +1548,7 @@ async function issueForm(parent, caseData) {
       category: old?.category ?? category.value,
       status: old?.status ?? (confirmed.checked ? "confirmed" : "suspected"),
       severity: old?.severity ?? (serious.checked ? "serious" : "normal"),
-      evidence: [{ caseId: caseData.id, eventId: evidence.value }],
+      evidence: [{ caseId: caseData.id, revision: caseData.revision }],
     });
     panel.remove();
     await renderIssues();

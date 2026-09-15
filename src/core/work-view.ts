@@ -5,7 +5,6 @@ import {
   text,
   contextSchema,
   evidenceSchema,
-  refSchema,
   byteSize,
 } from "../domain/schema.js";
 export const workViewSchema = z
@@ -53,20 +52,6 @@ export const workViewSchema = z
     evidence: z.array(evidenceSchema).max(16),
     unresolved: z.array(text(512)).max(8),
     coverage: z.array(text(512)).max(8),
-    playbookUses: z
-      .array(
-        z
-          .object({
-            playbookUseRef: id,
-            taskRef: id,
-            callerId: id,
-            playbook: refSchema.extend({ kind: z.literal("playbook") }),
-            returnedAt: z.string().datetime(),
-          })
-          // Strip obsolete returned-step snapshots from historical views.
-          .strip(),
-      )
-      .max(8),
   })
   .strict()
   .superRefine((v, ctx) => {

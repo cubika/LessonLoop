@@ -197,15 +197,22 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       }
       await tx.snapshot(put("playbook", playbook).entry);
       await tx.put(put("playbook", currentPlaybook).entry, 1);
-      const use = {
+      const feedback = {
         ...identity(scope),
-        taskRef: task.taskRef,
-        callerId: host.id,
-        playbook: { kind: "playbook", id: playbook.id, revision: 1 },
-        playbookUseRef: "source-bound-use",
-        returnedAt: new Date().toISOString(),
+        id: task.taskRef,
+        taskOutcome: "unknown",
+        outcomeText: "",
+        feedback: [
+          {
+            playbookId: playbook.id,
+            revision: 1,
+            delivered: true,
+            userRating: null,
+            ratingText: "",
+          },
+        ],
       };
-      await tx.put(put("playbook_use", use).entry, null);
+      await tx.put(put("task_feedback", feedback).entry, null);
       // Deleting the experience first must not discard the source-to-history binding.
       const job = await tx.get<any>("job", accepted.jobId);
       await tx.put(
@@ -262,7 +269,9 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       "completed",
     );
     assert.deepEqual(
-      await store.transaction((tx) => tx.list("playbook_use", [scope])),
+      (
+        await store.transaction((tx) => tx.list<any>("task_feedback", [scope]))
+      ).flatMap((t) => t.feedback),
       [],
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
