@@ -343,7 +343,11 @@ export class Effects {
           }),
           event.revision,
         );
-      for (const kind of ["effect_review", "review_notification"])
+      for (const kind of [
+        "effect_review",
+        "review_notification",
+        "review_issue",
+      ])
         for (const row of await tx.list<{ id: string; revision: number }>(
           kind,
           [scopeId],

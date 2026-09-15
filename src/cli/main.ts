@@ -121,6 +121,7 @@ async function main() {
         list: "reviews.list",
         notifications: "reviews.notifications",
         configure: "reviews.configure",
+        export: "reviews.export",
         dismiss: "reviews.dismiss",
       },
     };

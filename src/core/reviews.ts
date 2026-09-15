@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProductStore, Conflict } from "../store/postgres.js";
+import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
 import type { Principal } from "./service.js";
 const DAY = 86400000;
@@ -15,6 +15,7 @@ type Review = Stored & {
 type Schedule = Stored & { days: number; through: string };
 type Notification = Stored & {
   reviewId: string;
+  issueId?: string;
   createdAt: string;
   read: boolean;
 };
@@ -34,8 +35,258 @@ const entry = <T extends Stored>(kind: string, value: T) => ({
   scopeId: value.scopeId,
   value: value as unknown as Record<string, unknown>,
 });
+type Issue = Stored & {
+  category:
+    | "stale_method"
+    | "wrong_scope"
+    | "wrong_branch"
+    | "incorrect_guidance";
+  status: "suspected" | "confirmed" | "resolved";
+  severity: "normal" | "serious";
+  createdAt: string;
+  confirmedBy?: string;
+  confirmedEvidence?: Array<{ caseId: string; eventId: string }>;
+  evidence: Array<{ caseId: string; eventId: string }>;
+};
 export class Reviews {
   constructor(private readonly store: ProductStore) {}
+  async recordIssue(p: Principal, input: unknown) {
+    if (p.channel !== "user") throw new Error("user_operation_required");
+    const v = z
+      .object({
+        scopeId: z.string(),
+        problemKey: z.string().min(1).max(128).optional(),
+        id: z.string().optional(),
+        reconfirm: z.boolean().optional(),
+        expectedRevision: z.number().int().nonnegative(),
+        category: z.enum([
+          "stale_method",
+          "wrong_scope",
+          "wrong_branch",
+          "incorrect_guidance",
+        ]),
+        status: z.enum(["suspected", "confirmed", "resolved"]),
+        severity: z.enum(["normal", "serious"]),
+        evidence: z
+          .array(z.object({ caseId: z.string(), eventId: z.string() }).strict())
+          .min(1)
+          .max(32),
+      })
+      .strict()
+      .parse(input);
+    if (!p.scopes.includes(v.scopeId)) throw new Error("not_found");
+    return this.store.transaction(async (tx) => {
+      const settings = await tx.get<{
+        review: boolean;
+        notifications: boolean;
+      }>("settings", v.scopeId);
+      if (!settings?.review) throw new Error("review_disabled");
+      if (!v.id && !v.problemKey) throw new Error("problem_identity_required");
+      const id = v.id ?? digest([v.scopeId, v.problemKey]),
+        old = await tx.get<Issue>("review_issue", id);
+      if ((old && old.scopeId !== v.scopeId) || (v.id && !old))
+        throw new Error("not_found");
+      if ((old?.revision ?? 0) !== v.expectedRevision) throw new Conflict();
+      if (old && old.category !== v.category)
+        throw new Conflict("issue_category_changed");
+      const evidence = [
+        ...new Map(
+          [...(old?.evidence ?? []), ...v.evidence].map((r) => [digest(r), r]),
+        ).values(),
+      ];
+      if (evidence.length > 32) throw new Error("issue_evidence_budget");
+      for (const ref of v.evidence) {
+        const task = await tx.get<Task>("effect_task", ref.caseId);
+        if (
+          !task ||
+          task.scopeId !== v.scopeId ||
+          !task.events.some(
+            (e) =>
+              (e as Event & { eventId: string }).eventId === ref.eventId &&
+              Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
+          )
+        )
+          throw new Error("issue_evidence_unavailable");
+      }
+      const issue: Issue = {
+        id,
+        revision: (old?.revision ?? 0) + 1,
+        scopeId: v.scopeId,
+        category: v.category,
+        status: v.status,
+        severity: v.severity,
+        createdAt: old?.createdAt ?? new Date().toISOString(),
+        evidence,
+        ...(v.status === "confirmed"
+          ? {
+              confirmedBy: p.id,
+              confirmedEvidence:
+                old?.status === "confirmed" && !v.reconfirm
+                  ? (old.confirmedEvidence ?? old.evidence)
+                  : v.evidence,
+            }
+          : old?.confirmedBy
+            ? {
+                confirmedBy: old.confirmedBy,
+                ...(old.confirmedEvidence
+                  ? { confirmedEvidence: old.confirmedEvidence }
+                  : {}),
+              }
+            : {}),
+      };
+      await tx.put(entry("review_issue", issue), old?.revision ?? null);
+      if (
+        issue.status === "confirmed" &&
+        issue.severity === "serious" &&
+        settings.notifications
+      ) {
+        const notificationId = digest([id, "confirmed-serious"]);
+        if (!(await tx.get("review_notification", notificationId)))
+          await tx.put(
+            entry("review_notification", {
+              id: notificationId,
+              revision: 1,
+              scopeId: v.scopeId,
+              reviewId: id,
+              issueId: id,
+              createdAt: new Date().toISOString(),
+              read: false,
+            }),
+            null,
+          );
+      }
+      return issue;
+    });
+  }
+  async issues(p: Principal, transaction?: Transaction) {
+    const read = async (tx: Transaction) => {
+      const cases = await tx.list<Task>("effect_task", p.scopes),
+        result = [];
+      for (const issue of await tx.list<Issue>("review_issue", p.scopes)) {
+        const evidence = issue.evidence.filter((r) =>
+          cases.some(
+            (c) =>
+              c.id === r.caseId &&
+              c.scopeId === issue.scopeId &&
+              c.events.some(
+                (e) =>
+                  (e as Event & { eventId: string }).eventId === r.eventId &&
+                  Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
+              ),
+          ),
+        );
+        if (
+          evidence.length &&
+          Date.parse(issue.createdAt) > Date.now() - 90 * DAY
+        )
+          result.push({
+            ...issue,
+            status:
+              issue.status === "confirmed" &&
+              !(issue.confirmedEvidence ?? issue.evidence).every((r) =>
+                evidence.some(
+                  (e) => e.caseId === r.caseId && e.eventId === r.eventId,
+                ),
+              )
+                ? "suspected"
+                : issue.status,
+            evidence,
+            affectedTasks: new Set(evidence.map((e) => e.caseId)).size,
+            confirmation:
+              issue.confirmedBy &&
+              (issue.confirmedEvidence ?? issue.evidence).every((r) =>
+                evidence.some(
+                  (e) => e.caseId === r.caseId && e.eventId === r.eventId,
+                ),
+              )
+                ? "user_confirmed"
+                : "needs_verification",
+          });
+      }
+      return result;
+    };
+    return transaction ? read(transaction) : this.store.transaction(read);
+  }
+  async exportCases(p: Principal, input: unknown) {
+    if (p.channel !== "user") throw new Error("user_operation_required");
+    const v = z
+      .object({
+        caseIds: z.array(z.string()).min(1).max(8),
+        includeObservations: z.boolean().default(false),
+        redact: z.array(z.string().min(1).max(512)).max(32).default([]),
+      })
+      .strict()
+      .parse(input);
+    return this.store.transaction(async (tx) => {
+      const cases = [];
+      for (const id of new Set(v.caseIds)) {
+        const task = await tx.get<Task>("effect_task", id);
+        if (!task || !p.scopes.includes(task.scopeId))
+          throw new Error("not_found");
+        const events = task.events.filter(
+          (e) => Date.parse(e.occurredAt) > Date.now() - 30 * DAY,
+        );
+        if (!events.length) throw new Error("case_expired");
+        const original = await tx.get<{
+          rawObservations?: Array<{
+            eventId: string;
+            text: string;
+            occurredAt: string;
+          }>;
+        }>("task", task.taskRef);
+        const observations = v.includeObservations
+          ? (original?.rawObservations ?? []).filter(
+              (o) => Date.parse(o.occurredAt) > Date.now() - 30 * DAY,
+            )
+          : [];
+        cases.push({
+          scopeId: task.scopeId,
+          taskRef: task.taskRef,
+          events,
+          observations,
+          coverage: {
+            initialWorkspace: "unavailable",
+            executionTrace: observations.length
+              ? "retained_host_observations"
+              : "not_included_or_unavailable",
+            methodSnapshots: "not_included",
+          },
+        });
+      }
+      const redact = (value: unknown): unknown =>
+        typeof value === "string"
+          ? v.redact.reduce(
+              (text, term) => text.split(term).join("[redacted]"),
+              value,
+            )
+          : Array.isArray(value)
+            ? value.map(redact)
+            : value && typeof value === "object"
+              ? Object.fromEntries(
+                  Object.entries(value).map(([key, v]) => [key, redact(v)]),
+                )
+              : value;
+      const data = redact({
+        format: "lessonloop-development-cases-1",
+        exportedAt: new Date().toISOString(),
+        snapshot:
+          "Independent copy. Later source removal does not update this file. No upload is performed.",
+        limitations:
+          "Incomplete retained evidence; not an independent evaluation dataset or proof of benefit.",
+        cases,
+      });
+      const content = JSON.stringify(data, null, 2);
+      if (Buffer.byteLength(content) > 262144)
+        throw new Error("export_budget_exceeded");
+      return {
+        filename: "lessonloop-development-cases.json",
+        content,
+        contentRevision: digest(cases),
+        caseCount: cases.length,
+        redactionTerms: v.redact.length,
+      };
+    });
+  }
   async configure(p: Principal, input: unknown) {
     if (p.channel !== "user") throw new Error("user_operation_required");
     const v = z
@@ -154,7 +405,11 @@ export class Reviews {
           schedule.revision,
         );
       }
-      for (const kind of ["effect_review", "review_notification"]) {
+      for (const kind of [
+        "effect_review",
+        "review_notification",
+        "review_issue",
+      ]) {
         for (const row of await tx.list<Stored & { createdAt: string }>(
           kind,
           scopes,
@@ -165,8 +420,8 @@ export class Reviews {
       return { created };
     });
   }
-  async list(p: Principal) {
-    return this.store.transaction(async (tx) => {
+  async list(p: Principal, transaction?: Transaction) {
+    const read = async (tx: Transaction) => {
       const tasks = await tx.list<Task>("effect_task", p.scopes),
         methods = await tx.list<{
           id: string;
@@ -292,11 +547,13 @@ export class Reviews {
         });
       }
       return result;
-    });
+    };
+    return transaction ? read(transaction) : this.store.transaction(read);
   }
   async notifications(p: Principal) {
-    const reviews = await this.list(p);
     return this.store.transaction(async (tx) => {
+      const reviews = await this.list(p, tx),
+        issues = await this.issues(p, tx);
       const settings = await tx.list<{
         scopeId: string;
         review: boolean;
@@ -309,17 +566,28 @@ export class Reviews {
             settings.some(
               (s) => s.scopeId === n.scopeId && s.review && s.notifications,
             ) &&
-            reviews.some(
-              (r) =>
-                r.id === n.reviewId && (r.summary.tasks || r.methods.length),
-            ),
+            (n.issueId
+              ? issues.some(
+                  (i) =>
+                    i.id === n.issueId &&
+                    i.status === "confirmed" &&
+                    i.severity === "serious",
+                )
+              : reviews.some(
+                  (r) =>
+                    r.id === n.reviewId &&
+                    (r.summary.tasks || r.methods.length),
+                )),
         )
         .map((n) => ({
           id: n.id,
           scopeId: n.scopeId,
           reviewId: n.reviewId,
           createdAt: n.createdAt,
-          text: "新的本地效果回顾已就绪",
+          text: n.issueId
+            ? "有已确认的严重方法问题待处理"
+            : "新的本地效果回顾已就绪",
+          ...(n.issueId ? { issueId: n.issueId } : {}),
         }));
     });
   }

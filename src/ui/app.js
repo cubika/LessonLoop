@@ -205,6 +205,7 @@ document.querySelectorAll("[data-view]").forEach(
       if (button.dataset.view === "connections") await renderConnections();
       if (button.dataset.view === "effects") {
         await renderPeriodicReviews();
+        await renderIssues();
         const summary = await rpc("getEffectSummary");
         $("effect-summary").replaceChildren(
           node(
@@ -219,6 +220,12 @@ document.querySelectorAll("[data-view]").forEach(
             section.className = "card";
             section.append(node("h2", c.classification), node("p", c.taskRef));
             c.events.forEach((e) => section.append(node("p", e.text)));
+            const report = node("button", "标记方法问题");
+            report.onclick = handle(() => issueForm(section, c));
+            section.append(report);
+            const exportCase = node("button", "导出开发样本");
+            exportCase.onclick = handle(() => exportCaseForm(section, c));
+            section.append(exportCase);
             return section;
           }),
         );
@@ -639,3 +646,170 @@ setInterval(() => {
   if (token && !document.hidden)
     void renderReviewNotifications().catch(() => {});
 }, 60000);
+
+async function issueForm(parent, caseData) {
+  const panel = node("section", "");
+  panel.append(
+    node("p", "选择实际事件作为依据。确认问题不会自动修改或修复方法。"),
+  );
+  const existing = (await rpc("reviews.issues")).filter(
+    (i) => i.scopeId === caseData.scopeId,
+  );
+  const target = node("select", "");
+  target.setAttribute("aria-label", "新建或关联问题");
+  target.append(node("option", "新建问题"));
+  for (const issue of existing) {
+    const option = node(
+      "option",
+      issue.category +
+        " · " +
+        issue.status +
+        " · 涉及任务 " +
+        issue.affectedTasks,
+    );
+    option.value = issue.id;
+    target.append(option);
+  }
+  panel.append(target);
+  const key = field(panel, "新问题名称", ""),
+    category = node("select", "");
+  category.setAttribute("aria-label", "问题类型");
+  for (const [value, label] of [
+    ["stale_method", "过期方法"],
+    ["wrong_scope", "范围错误"],
+    ["wrong_branch", "分支错误"],
+    ["incorrect_guidance", "指导错误"],
+  ]) {
+    const option = node("option", label);
+    option.value = value;
+    category.append(option);
+  }
+  panel.append(category);
+  const evidence = node("select", "");
+  evidence.setAttribute("aria-label", "问题依据");
+  caseData.events.forEach((e) => {
+    const o = node("option", e.text);
+    o.value = e.eventId;
+    evidence.append(o);
+  });
+  panel.append(evidence);
+  const confirmed = field(panel, "已核对，确认问题存在", ""),
+    serious = field(panel, "严重问题，需要及时处理", "");
+  confirmed.type = "checkbox";
+  serious.type = "checkbox";
+  target.onchange = () => {
+    const old = existing.find((i) => i.id === target.value);
+    confirmed.checked = old?.status === "confirmed";
+    serious.checked = old?.severity === "serious";
+    if (old) category.value = old.category;
+  };
+  const save = node("button", "保存复核");
+  save.onclick = handle(async () => {
+    const old = existing.find((i) => i.id === target.value);
+    await rpc("reviews.issue", {
+      scopeId: caseData.scopeId,
+      ...(old ? { id: old.id } : { problemKey: key.value }),
+      expectedRevision: old?.revision ?? 0,
+      category: old?.category ?? category.value,
+      status: old?.status ?? (confirmed.checked ? "confirmed" : "suspected"),
+      severity: old?.severity ?? (serious.checked ? "serious" : "normal"),
+      evidence: [{ caseId: caseData.id, eventId: evidence.value }],
+    });
+    panel.remove();
+    await renderIssues();
+    await renderReviewNotifications();
+  });
+  panel.append(save);
+  parent.append(panel);
+}
+async function renderIssues() {
+  const container = $("review-issues");
+  container.replaceChildren();
+  for (const issue of await rpc("reviews.issues")) {
+    const card = node("section", "");
+    card.className = "card";
+    card.append(
+      node("h3", issue.category),
+      node(
+        "p",
+        issue.status +
+          " · " +
+          issue.severity +
+          " · 涉及任务 " +
+          issue.affectedTasks,
+      ),
+    );
+    const confirm = node("button", "确认为严重问题"),
+      resolve = node("button", "标为已解决");
+    const update = async (status, severity) => {
+      await rpc("reviews.issue", {
+        scopeId: issue.scopeId,
+        id: issue.id,
+        expectedRevision: issue.revision,
+        reconfirm: status === "confirmed",
+        category: issue.category,
+        status,
+        severity,
+        evidence: issue.evidence,
+      });
+      await renderIssues();
+      await renderReviewNotifications();
+    };
+    confirm.onclick = handle(() => update("confirmed", "serious"));
+    resolve.onclick = handle(() => update("resolved", issue.severity));
+    card.append(confirm, resolve);
+    container.append(card);
+  }
+}
+
+function exportCaseForm(parent, caseData) {
+  const panel = node("section", "");
+  panel.append(
+    node(
+      "p",
+      "先预览并脱敏。导出只有保留的事件和可选工具观察，不包含完整初始工作区。",
+    ),
+  );
+  const terms = field(panel, "需要替换的文字（每行一项）", "", true),
+    observations = field(panel, "包含仍保留的工具观察", "");
+  observations.type = "checkbox";
+  const preview = node("button", "生成预览"),
+    output = node("pre", "");
+  let download;
+  const invalidate = () => {
+    download?.remove();
+    download = undefined;
+    output.textContent = "预览条件已变化，请重新生成。";
+  };
+  terms.oninput = invalidate;
+  observations.onchange = invalidate;
+  preview.onclick = handle(async () => {
+    download?.remove();
+    const input = {
+      caseIds: [caseData.id],
+      includeObservations: observations.checked,
+      redact: terms.value.split("\n").filter(Boolean),
+    };
+    const result = await rpc("reviews.export", input);
+    output.textContent = result.content;
+    download = node("button", "下载已预览样本");
+    download.onclick = handle(async () => {
+      const fresh = await rpc("reviews.export", input);
+      if (fresh.contentRevision !== result.contentRevision) {
+        invalidate();
+        throw new Error("来源已变化，请重新预览后下载。");
+      }
+      const url = URL.createObjectURL(
+        new Blob([fresh.content], { type: "application/json;charset=utf-8" }),
+      );
+      const link = node("a", "");
+      link.href = url;
+      link.download = fresh.filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    panel.append(download);
+  });
+  panel.append(preview, output);
+  parent.append(panel);
+}

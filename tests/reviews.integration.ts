@@ -178,3 +178,129 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
     await store.close();
   }
 });
+
+test("Serious issue notifications require user-confirmed retained evidence and deduplicate across tasks", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    const scope = randomUUID(),
+      host = { id: randomUUID(), channel: "host" as const, scopes: [scope] },
+      p = { ...host, channel: "user" as const },
+      core = new CoreService(
+        store,
+        new HindsightEngine("http://127.0.0.1:19888", "unused"),
+      ),
+      effects = new Effects(store),
+      reviews = new Reviews(store);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: false,
+      recommendation: false,
+      review: true,
+      notifications: true,
+    });
+    await core.startTask(host, scope);
+    await core.startTask(host, scope);
+    const cases = await effects.cases([scope]);
+    const exported = await reviews.exportCases(p, {
+      caseIds: [cases[0]!.id],
+      includeObservations: false,
+      redact: [scope],
+    });
+    assert.equal(exported.caseCount, 1);
+    assert.equal(exported.content.includes(scope), false);
+    assert.equal(
+      JSON.parse(exported.content).cases[0].coverage.initialWorkspace,
+      "unavailable",
+    );
+    await assert.rejects(
+      reviews.exportCases(
+        { ...p, channel: "agent" },
+        { caseIds: [cases[0]!.id] },
+      ),
+      /user_operation_required/,
+    );
+    const evidence = cases.map((c) => ({
+      caseId: c.id,
+      eventId: c.events[0]!.eventId,
+    }));
+    const input = {
+      scopeId: scope,
+      problemKey: "same issue",
+      expectedRevision: 0,
+      category: "wrong_branch",
+      status: "suspected",
+      severity: "normal",
+      evidence: [evidence[0]],
+    };
+    const initial = await reviews.recordIssue(p, input);
+    assert.equal((await reviews.notifications(p)).length, 0);
+    await assert.rejects(
+      reviews.recordIssue(
+        { ...p, channel: "agent" },
+        {
+          ...input,
+          expectedRevision: initial.revision,
+          status: "confirmed",
+          severity: "serious",
+        },
+      ),
+      /user_operation_required/,
+    );
+    const confirmed = await reviews.recordIssue(p, {
+      ...input,
+      expectedRevision: initial.revision,
+      status: "confirmed",
+      severity: "serious",
+      evidence,
+    });
+    const notification = (await reviews.notifications(p))[0]!;
+    assert.equal((await reviews.notifications(p)).length, 1);
+    assert.equal(notification.text.includes("same issue"), false);
+    assert.equal((await reviews.issues(p))[0]!.affectedTasks, 2);
+    await reviews.recordIssue(p, {
+      ...input,
+      expectedRevision: confirmed.revision,
+      status: "confirmed",
+      severity: "serious",
+      evidence,
+    });
+    assert.equal((await reviews.notifications(p)).length, 1);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 1,
+      learning: false,
+      recommendation: false,
+      review: true,
+      notifications: false,
+    });
+    assert.equal((await reviews.notifications(p)).length, 0);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 2,
+      learning: false,
+      recommendation: false,
+      review: true,
+      notifications: true,
+    });
+    await store.transaction(async (tx) => {
+      const task = await tx.get<any>("effect_task", evidence[0]!.caseId);
+      await tx.remove("effect_task", task.id, task.revision);
+    });
+    const weakened = (await reviews.issues(p))[0]!;
+    assert.equal(weakened.status, "suspected");
+    assert.equal(weakened.confirmation, "needs_verification");
+    assert.equal((await reviews.notifications(p)).length, 0);
+    await reviews.dismiss(p, notification.id);
+    assert.equal((await reviews.notifications(p)).length, 0);
+    await effects.clear(scope);
+    assert.equal((await reviews.issues(p)).length, 0);
+    await assert.rejects(
+      reviews.recordIssue(p, input),
+      /issue_evidence_unavailable/,
+    );
+  } finally {
+    await store.close();
+  }
+});

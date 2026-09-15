@@ -61,6 +61,12 @@ export async function dispatch(
         .parse(input);
       return sample(core).forget(p, v.id, v.sourceKey);
     }
+    case "reviews.export":
+      return new Reviews(core.store).exportCases(p, input);
+    case "reviews.issue":
+      return new Reviews(core.store).recordIssue(p, input);
+    case "reviews.issues":
+      return new Reviews(core.store).issues(p);
     case "reviews.list":
       return new Reviews(core.store).list(p);
     case "reviews.configure":
