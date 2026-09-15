@@ -94,7 +94,13 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
-首版 MCP 公开 submitSource、reviewTopic、getJob、searchPlaybooks、preparePlaybook、inspectPlaybook、recallExperiences、inspectExperience、feedback、startTask。可信事件追加使用专用认证入口；删除、范围、导出和安装管理留在 UI/CLI。旧 Material/Method 命名及独立案例接口已移除，客户端随本版一起更新。
+Agent MCP 只公开 getGuidance、submitSource、feedback，三个工具都提供明确的参数结构。工具参数为 input 和可选 eventId；重试同一次请求时复用 eventId。可信事件使用专用宿主入口；对象详情、主题复盘、作业查询、删除、范围、导出和安装管理由 UI/CLI 提供。
+
+getGuidance 接受 query，或 target={kind:playbook/experience,id,revision}。已有 hook 或上次返回的 taskRef 时复用该任务；首次调用可省略，核心按唯一授权范围或显式 scopeId 创建任务，并按请求幂等键复用。多范围时必须指定 scopeId；已有任务只检索自身范围，校验任务身份、结束状态与24小时时限。直接 RPC 首次调用必须携带 Idempotency-Key，MCP 适配器会补齐。
+
+返回 taskRef、scopeId、playbooks 和 experiences；无命中仍返回任务引用。按问题查询时，内部搜索、准备至多一个方法并召回至多三条经验，保留完整步骤、条件、例外及 guidance/lead 区别。Agent 提供的 context 不作为可信执行证据。requires_expansion 返回方法引用；调用方用相同 taskRef、target 和 viewMode=expanded 展开。定向经验展开包含证据，仍检查当前使用资格，不返回已停用的原始对象详情。每次调用重新检查资格，不缓存旧指导正文。
+
+submitSource 接收 agent/external 材料、可选补充来源引用，返回异步接收回执；回执不代表学习或发布完成，作业状态在 UI/CLI 查询。feedback 接收目标引用、修订、评价和纠错说明，记录调用者意见，不作为真实任务完成的证明。旧的分步检索和任务操作继续供核心、UI/CLI 与可信 hook 使用，不再作为 Agent MCP 工具公开。
 
 | 能力 | 验收与限制 |
 |---|---|

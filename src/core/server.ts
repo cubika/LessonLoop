@@ -14,6 +14,7 @@ import {
   internalInput,
 } from "./public-contract.js";
 import { inspectSource, sourceReceipt, workView } from "./source-views.js";
+import { getGuidance } from "./guidance.js";
 const connectors = new WeakMap<CoreService, SampleConnector>();
 function sample(core: CoreService) {
   let connector = connectors.get(core);
@@ -280,6 +281,8 @@ export async function dispatch(
   raw: unknown,
   key: string,
 ): Promise<unknown> {
+  if (operation === "getGuidance")
+    return publicValue(await getGuidance(core, p, raw, key));
   if (
     Object.values(publicOperations).includes(operation) ||
     [

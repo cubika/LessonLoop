@@ -3714,6 +3714,35 @@ export class CoreService {
       };
     });
   }
+  async guidanceTask(
+    p: Principal,
+    input: { taskRef?: string | undefined; scopeId?: string | undefined },
+    key: string,
+  ) {
+    let taskRef = input.taskRef;
+    if (!taskRef) {
+      if (!key || key.length > 128)
+        throw new ApiError("idempotency_key_required");
+      const scopeId =
+        input.scopeId ?? (p.scopes.length === 1 ? p.scopes[0] : undefined);
+      if (!scopeId) throw new ApiError("scope_required");
+      ({ taskRef } = await this.startTask(p, scopeId, `guidance:${key}`));
+    }
+    return this.store.transaction(async (tx) => {
+      const task = await this.owned<Task>(tx, p, "task", taskRef);
+      if (input.scopeId && task.scopeId !== input.scopeId)
+        throw new ApiError("not_found", 404);
+      if (
+        (task.callerId !== p.id &&
+          p.channel !== "user" &&
+          !(p.channel === "agent" && p.taskOwnerId === task.callerId)) ||
+        task.ended ||
+        Date.now() - Date.parse(task.createdAt) >= 86400000
+      )
+        throw new ApiError("task_unavailable", 409);
+      return { taskRef: task.id, scopeId: task.scopeId };
+    });
+  }
   async startTask(p: Principal, scopeId: string, eventId?: string) {
     this.authorize(p, scopeId);
     const task = await this.store.transaction(async (tx) => {
@@ -4126,6 +4155,7 @@ export class CoreService {
       includeLeads?: boolean;
       trustedKeys?: Set<string>;
       conditions?: Map<string, boolean>;
+      expanded?: boolean;
     } = {},
   ) {
     const decideWith = (
@@ -4213,9 +4243,10 @@ export class CoreService {
           conditions: e.conditions,
           exceptions: e.exceptions,
           ...d,
+          ...(options.expanded ? { evidence: e.evidence } : {}),
         };
         if (results.length >= 3) break;
-        if (tokenCount([...results, row]) <= 800) {
+        if (tokenCount([...results, row]) <= (options.expanded ? 8192 : 800)) {
           results.push(row);
           leadIncluded ||= d.usage === "lead";
         }

@@ -491,6 +491,7 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
   const text = String(result.modifiedTransformedPrompt);
   assert.ok(text.includes("large-task") && text.includes("large-method"));
   assert.ok(text.includes("viewMode=expanded"));
+  assert.ok(text.includes("getGuidance") && text.includes("target: playbook"));
   assert.equal(text.includes("playbookUseRef"), false);
 });
 
@@ -511,13 +512,13 @@ test("Copilot sessionStart following the first prompt does not close the newly b
   );
 });
 
-test("a method MCP response is not execution evidence and does not change the task boundary", async (t) => {
+test("a guidance MCP response is not execution evidence and does not change the task boundary", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.append(
     f.record(2, "tool.execution_start", {
       toolCallId: "prepare",
-      toolName: "lessonloop-preparePlaybook",
+      toolName: "lessonloop-getGuidance",
     }),
     f.record(3, "tool.execution_complete", {
       toolCallId: "prepare",

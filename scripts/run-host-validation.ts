@@ -20,7 +20,7 @@ await mkdir(folder, { recursive: true });
 const workspace = join(folder, "workspace");
 await mkdir(workspace, { recursive: true });
 const prompt =
-  "Read fixture.txt once. Diagnose the generated client field that disappears after regeneration using the complete method supplied by the LessonLoop hook. Choose the relevant branch from the file contents and explain the remaining check. Do not request step unlocking or report completion. If method references are present, call lessonloop-preparePlaybook once with taskRef, playbookId and revision to check that explicit retrieval also returns complete guidance. Stop after these tools. If a tool returns an error, report the limitation. Do not guess identifiers, inspect other files, retry tools, edit files, or claim task success.";
+  "Read fixture.txt once. Diagnose the generated client field that disappears after regeneration using the complete method supplied by the LessonLoop hook. Choose the relevant branch from the file contents and explain the remaining check. Do not request step unlocking or report completion. If method references are present, call lessonloop-getGuidance once with input {taskRef, target: {kind: 'playbook', id, revision}} using the supplied playbook reference to check that explicit retrieval also returns complete guidance. Stop after these tools. If a tool returns an error, report the limitation. Do not guess identifiers, inspect other files, retry tools, edit files, or claim task success.";
 const plugin = join(folder, "plugin");
 await mkdir(join(plugin, "com.github.copilot/hooks"), { recursive: true });
 const token = randomBytes(32).toString("hex");
@@ -149,7 +149,7 @@ try {
               token: agentToken,
             }),
           },
-          tools: ["preparePlaybook"],
+          tools: ["getGuidance"],
         },
       },
     }),
