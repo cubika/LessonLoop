@@ -10,7 +10,7 @@
 
 | 数据 | 权威位置 | 用途 |
 |---|---|---|
-| Source、WorkView 缓存、Experience、Playbook 元数据 | ProductStore | 工作输入、分层主张、身份、依据、发布状态和用户控制 |
+| Source、WorkView 缓存、Experience、Playbook 元数据 | ProductStore | 工作输入、有范围的主张、身份、依据、发布状态和用户控制 |
 | Playbook 当前正文 | Hindsight 独立方法 bank | 标题、目标、主题、条件、步骤、分支和检查项；不保存旧版正文 |
 | 用户控制、版本和 SourceBinding | ProductStore | 纠正、停用、忘记、范围、来源变化和恢复 |
 | PublishedProjection | 可重建索引 | 查询当前可投递对象，不决定产品状态 |
@@ -51,7 +51,8 @@ WorkView 缓存按 scopeId/workKey 定位，包含目标、尝试、结果、短
 | 字段 | 内容 |
 |---|---|
 | 公共身份 | id、revision、scopeId、createdAt、updatedAt |
-| conclusion、level、purpose | 单一主张；level=L1–L5；purpose=fact/constraint/lesson/procedure/rationale |
+| conclusion、purpose | 单一主张及用途；purpose=fact/constraint/lesson/procedure/rationale |
+| level（可选） | L1–L5 分析标注；普通学习省略，已有标注保留，不影响发布、召回或方法资格 |
 | applicability、conditions、exceptions | general/conditional/unknown，全局边界及例外 |
 | topics、entities | 主题与精确实体，不把例外词当正向推荐条件 |
 | basis、assessment | reported/observed/inferred；attributed/supported/hypothesis/contested |

@@ -58,7 +58,6 @@ async function setup(store: ProductStore) {
     e = experienceSchema.parse({
       ...identity(scope),
       conclusion: "Extensions survive the observed pipeline",
-      level: "L1",
       purpose: "fact",
       applicability: "conditional",
       conditions: [{ text: "Observed version 2" }],

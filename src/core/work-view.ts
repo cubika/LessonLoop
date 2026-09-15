@@ -52,7 +52,6 @@ export const workViewSchema = z
     evidence: z.array(evidenceSchema).max(16),
     unresolved: z.array(text(512)).max(8),
     coverage: z.array(text(512)).max(8),
-
   })
   .strict()
   .superRefine((v, ctx) => {

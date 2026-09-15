@@ -1,6 +1,6 @@
 # LessonLoop
 
-LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、执行L1–L5提炼、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
+LessonLoop 帮助个人和工作Agent从真实工作中持续学习做事方法。它整理经历、提炼有依据的经验、形成排查流程和决策清单，在下一次任务中使用，并根据新结果改进方法。
 
 **Windows 预览版：0.1.0-alpha.2。** 预览版包含方法学习与管理、Copilot接入、样例Connector和本地运行管理；安装与试用见[alpha说明](docs/14-alpha-release.md)。正式P0–P3质量与发行矩阵尚未全部通过，当前结果和限制见[实现计划](docs/13-implementation-plan.md)及[运行记录](docs/research/2026-09-14-implementation/README.md)。
 
@@ -19,7 +19,7 @@ Agent MCP 提供 getGuidance、submitSource、feedback 三个工具，分别获�
 | 主题 | 文档 |
 |---|---|
 | 产品做什么 | [产品定义](docs/01-product.md) |
-| 怎样从工作学出方法 | [自动复盘与分层提炼](docs/02-experience-model.md) |
+| 怎样从工作学出方法 | [自动复盘与方法学习](docs/02-experience-model.md) |
 | UI、CLI和方法使用 | [方法库](docs/12-method-library.md) |
 | 官方工具怎样接入 | [系统架构](docs/03-architecture.md) |
 | 第一阶段怎样实现P0–P3 | [实现计划](docs/13-implementation-plan.md) |
@@ -40,7 +40,7 @@ Agent MCP 提供 getGuidance、submitSource、feedback 三个工具，分别获�
 | tests/、scripts/ | 辅助代码测试及文档/材料校验 |
 | .local-validation/ | 不提交的隔离环境和校验报告 |
 
-历史Mem0/Qdrant原型已停止维护，报告仅供追溯。现有level枚举和确定性判断不等于已实现L1–L5提炼，材料数量也不代表通过的任务数。
+历史Mem0/Qdrant原型已停止维护，报告仅供追溯。现有字段和确定性判断不能证明经验有用或方法有效，材料数量也不代表通过的任务数。
 
 ## 在源码中运行检查
 

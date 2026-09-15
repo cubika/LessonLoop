@@ -250,7 +250,7 @@ async function show(id) {
       panel.append(
         node(
           "p",
-          `${value.level} · ${value.assessment} · 修订 ${value.revision}`,
+          `${value.assessment} · 修订 ${value.revision}`,
         ),
         node("p", value.conclusion),
       );
@@ -1139,7 +1139,7 @@ async function showRecord(kind, id) {
     d.append(
       node(
         "p",
-        `${value.level} · ${labels[value.state]} · ${value.assessment}`,
+        `${labels[value.state]} · ${value.assessment}`,
       ),
     );
     for (const [key, title] of [
