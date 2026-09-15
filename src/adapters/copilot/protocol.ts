@@ -2,6 +2,7 @@
 // 0.4.2 (Hindsight v0.9.2). Copyright (c) 2025 Vectorize AI, Inc.
 // MIT license: third-party/hindsight-LICENSE. Product calls replace native recall.
 import { copilotTurn, stripOfficialMemory } from "./upstream.js";
+import { z } from "zod";
 export interface HookEvent {
   sessionId?: string;
   prompt?: string;
@@ -95,4 +96,48 @@ export function isProductTool(name: unknown) {
   return (
     typeof name === "string" && /(?:^|[._-])lessonloop(?:[._-]|$)/i.test(name)
   );
+}
+
+const guidanceResponse = z.object({
+  error: z.never().optional(),
+  isError: z.literal(false).optional(),
+  result: z.object({
+    taskRef: z.string(),
+    scopeId: z.string(),
+    playbooks: z.array(z.unknown()),
+  }),
+});
+const guidanceReceipt = z.object({
+  status: z.literal("guidance"),
+  playbook: z.object({
+    kind: z.literal("playbook"),
+    id: z.string().min(1),
+    revision: z.number().int().positive(),
+  }),
+  feedbackRevision: z.number().int().positive(),
+});
+
+export function guidanceDeliveryReceipts(
+  content: unknown,
+  taskRef: string,
+  scopeId: string,
+) {
+  if (typeof content !== "string") return [];
+  let body: unknown;
+  try {
+    body = JSON.parse(content);
+  } catch {
+    return [];
+  }
+  const response = guidanceResponse.safeParse(body);
+  if (
+    !response.success ||
+    response.data.result.taskRef !== taskRef ||
+    response.data.result.scopeId !== scopeId
+  )
+    return [];
+  return response.data.result.playbooks.flatMap((prepared) => {
+    const receipt = guidanceReceipt.safeParse(prepared);
+    return receipt.success ? [receipt.data] : [];
+  });
 }
