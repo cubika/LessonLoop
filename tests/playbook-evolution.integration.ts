@@ -209,23 +209,27 @@ async function setup(store: ProductStore) {
           revision: job.revision + 1,
           stage: "publish",
           status: "running",
-          modelSchema: outputJsonSchema,
-          retainedSupport: [e],
-          comparisonPlaybooks: [playbook],
+          payload: {
+            ...job.payload,
+            modelSchema: outputJsonSchema,
+            retainedSupport: [e],
+            comparisonPlaybooks: [playbook],
+            candidate: learningOutputSchema.parse(candidate),
+            verdict: learningAssessmentSchema.parse({
+              acceptedExperienceIndexes: [0],
+              playbookSupported: true,
+              substantiveChange: true,
+              supportedEvidenceChange: true,
+              acceptedPlaybookIndexes: [0, 1],
+              splitCoherent: true,
+              reasons: [],
+              ...verdict,
+            }),
+          },
+
           comparedPlaybookRefs: [
             { kind: "playbook", id: playbook.id, revision: playbook.revision },
           ],
-          candidate: learningOutputSchema.parse(candidate),
-          verdict: learningAssessmentSchema.parse({
-            acceptedExperienceIndexes: [0],
-            playbookSupported: true,
-            substantiveChange: true,
-            supportedEvidenceChange: true,
-            acceptedPlaybookIndexes: [0, 1],
-            splitCoherent: true,
-            reasons: [],
-            ...verdict,
-          }),
         }),
         job.revision,
       );
@@ -565,12 +569,16 @@ test("Rejected playbooks get one bounded revision while retaining every native o
           stage: "assess",
           assessmentId: "assess-fixture",
           assessmentOperationId: "op-review-1",
-          promptVersion: 1,
-          inputSources: await Promise.all(
-            j.sourceIds.map((id: string) => tx.get("source", id)),
-          ),
+          payload: {
+            ...j.payload,
+            promptVersion: 1,
+            inputSources: await Promise.all(
+              j.sourceIds.map((id: string) => tx.get("source", id)),
+            ),
+            assessmentSchema: learningAssessmentJsonSchema,
+          },
+
           engineOperations: ["op-compose-1", "op-review-1"],
-          assessmentSchema: learningAssessmentJsonSchema,
         }),
         j.revision,
       );
@@ -614,9 +622,9 @@ test("Rejected playbooks get one bounded revision while retaining every native o
     );
     assert.equal(j.playbookRepairCount, 1);
     assert.equal(j.stage, "compose");
-    assert.equal(j.modelQuery, undefined);
-    assert.equal(j.assessmentQuery, undefined);
-    assert.ok(j.repairReasons.length);
+    assert.equal(j.payload?.modelQuery, undefined);
+    assert.equal(j.payload?.assessmentQuery, undefined);
+    assert.ok(j.payload?.repairReasons.length);
     const repairQuery = jobQuery(j, "compose");
     assert.ok(repairQuery.includes("not evidence"));
     assert.deepEqual(j.engineOperations, ["op-compose-1", "op-review-1"]);
@@ -639,7 +647,10 @@ test("Rejected playbooks get one bounded revision while retaining every native o
           ...old,
           revision: old.revision + 1,
           stage: "assess",
-          candidate: learningOutputSchema.parse(candidate),
+          payload: {
+            ...old.payload,
+            candidate: learningOutputSchema.parse(candidate),
+          },
           assessmentId: "assess-second",
           assessmentOperationId: "op-review-2",
         }),

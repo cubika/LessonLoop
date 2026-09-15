@@ -86,11 +86,14 @@ test("New task snapshots replace one case while older candidates cannot overwrit
               revision: job.revision + 1,
               stage: "publish",
               status: "running",
-              candidate,
-              verdict: {
-                acceptedExperienceIndexes: [],
-                playbookSupported: false,
-                reasons: [],
+              payload: {
+                ...job.payload,
+                candidate,
+                verdict: {
+                  acceptedExperienceIndexes: [],
+                  playbookSupported: false,
+                  reasons: [],
+                },
               },
             },
           },
@@ -137,7 +140,10 @@ test("New task snapshots replace one case while older candidates cannot overwrit
           value: {
             ...j,
             revision: j.revision + 1,
-            candidate: { ...j.candidate, workView: null },
+            payload: {
+              ...j.payload,
+              candidate: { ...j.payload?.candidate, workView: null },
+            },
           },
         },
         j.revision,
@@ -184,8 +190,8 @@ test("New task snapshots replace one case while older candidates cannot overwrit
     await (core as any).publish(
       staged,
       stagedSources,
-      staged.candidate,
-      staged.verdict,
+      staged.payload?.candidate,
+      staged.payload?.verdict,
     );
     let supplementCase = (await core.browse(host, "work_view"))[0]!;
     assert.equal(supplementCase.taskRef, task.taskRef);
@@ -234,7 +240,12 @@ test("New task snapshots replace one case while older candidates cannot overwrit
           j.sourceIds.map((mid: string) => tx.get<any>("source", mid)),
         ),
       );
-      await (core as any).publish(j, ms, j.candidate, j.verdict);
+      await (core as any).publish(
+        j,
+        ms,
+        j.payload?.candidate,
+        j.payload?.verdict,
+      );
     };
     await publishJob(later.jobId);
     await stage(earlier.jobId);
@@ -272,7 +283,10 @@ test("New task snapshots replace one case while older candidates cannot overwrit
           value: {
             ...j,
             revision: j.revision + 1,
-            candidate: { ...j.candidate, workView: null },
+            payload: {
+              ...j.payload,
+              candidate: { ...j.payload?.candidate, workView: null },
+            },
           },
         },
         j.revision,
@@ -291,7 +305,7 @@ test("New task snapshots replace one case while older candidates cannot overwrit
     await stage(fourth.jobId);
     await store.transaction(async (tx) => {
       const j = await tx.get<any>("job", fourth.jobId);
-      j.candidate.workView.attempts = [];
+      j.payload.candidate.workView.attempts = [];
       await tx.put(
         {
           kind: "job",

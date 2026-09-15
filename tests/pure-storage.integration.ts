@@ -82,7 +82,7 @@ test("Erasure clears cached source metadata and shared context without deleting 
       sourceRefs: [keptId],
       status: "completed",
       stage: "done",
-      modelQuery: "shared-private-context",
+      payload: { modelQuery: "shared-private-context" },
     };
     const siblingBank = {
       ...identity(scopeId),

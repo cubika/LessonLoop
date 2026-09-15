@@ -16,6 +16,7 @@ import {
   transcriptEvent,
   toolText,
   isProductTool,
+  guidanceDeliveryReceipts,
   stripInjectedMemory,
   type HookEvent,
 } from "./protocol.js";
@@ -147,6 +148,40 @@ export async function handleHook(
       sessionKey,
     );
     state.taskRef = taskRef;
+    const confirmDelivery = async (receipt: {
+      playbook: Playbook;
+      feedbackRevision: number;
+    }) => {
+      if (!setting.review) return;
+      try {
+        await call(
+          "updateTaskFeedback",
+          {
+            taskRef,
+            field: "delivered",
+            playbookId: receipt.playbook.id,
+            revision: receipt.playbook.revision,
+            expectedRevision: receipt.feedbackRevision,
+          },
+          digest([
+            sessionKey,
+            "delivery",
+            receipt.playbook,
+            receipt.feedbackRevision,
+          ]),
+        );
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          ![
+            "revision_conflict",
+            "feedback_unavailable",
+            "review_disabled",
+          ].includes(error.message)
+        )
+          throw error;
+      }
+    };
     const transcript = await readTranscript(event, cwd, state.cursor);
     const gaps = new Set(transcript.gaps);
     for (const record of transcript.records) {
@@ -173,34 +208,11 @@ export async function handleHook(
           typeof output === "string"
             ? state.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
-        if (
-          setting.review &&
-          receipt?.playbook &&
-          receipt.feedbackRevision !== undefined
-        ) {
-          try {
-            await call(
-              "updateTaskFeedback",
-              {
-                taskRef,
-                field: "delivered",
-                playbookId: receipt.playbook.id,
-                revision: receipt.playbook.revision,
-                expectedRevision: receipt.feedbackRevision,
-              },
-              "delivery",
-            );
-          } catch (error) {
-            if (
-              !(error instanceof Error) ||
-              ![
-                "revision_conflict",
-                "feedback_unavailable",
-                "review_disabled",
-              ].includes(error.message)
-            )
-              throw error;
-          }
+        if (receipt?.playbook && receipt.feedbackRevision !== undefined) {
+          await confirmDelivery({
+            playbook: receipt.playbook,
+            feedbackRevision: receipt.feedbackRevision,
+          });
         }
       }
       let segment = transcriptEvent(record);
@@ -210,7 +222,21 @@ export async function handleHook(
           gaps.add("tool_identity_unavailable");
           continue;
         }
-        if (isProductTool(name)) continue;
+        if (isProductTool(name)) {
+          // A completed MCP response is a delivery receipt, never new evidence.
+          if (
+            name === "lessonloop-getGuidance" &&
+            data.success === true &&
+            data.result?.isError !== true
+          )
+            for (const receipt of guidanceDeliveryReceipts(
+              data.result?.content ?? data.result?.textResultForLlm,
+              taskRef,
+              config.scopeId,
+            ))
+              await confirmDelivery(receipt);
+          continue;
+        }
         const result =
           data.result && typeof data.result === "object"
             ? { ...data.result, success: data.success }

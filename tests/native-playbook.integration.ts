@@ -632,9 +632,11 @@ for (const stage of ["compose", "assess"] as const) {
         sourceRefs: [f.source.id, "extra-support"],
         operationId: "retain-op",
         modelId: "legacy-model",
-        modelQuery: "Frozen compose request",
         assessmentId: "legacy-assessment",
-        assessmentQuery: "Frozen assessment request",
+        payload: {
+          modelQuery: "Frozen compose request",
+          assessmentQuery: "Frozen assessment request",
+        },
         engineOperations: ["retain-op"],
         results: [],
         decisions: [],

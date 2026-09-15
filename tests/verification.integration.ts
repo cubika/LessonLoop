@@ -188,12 +188,15 @@ async function setup(store: ProductStore, controlled = false) {
           revision: job.revision + 1,
           stage: "publish",
           status: "running",
-          candidate,
-          verdict: {
-            acceptedExperienceIndexes: [0],
-            playbookSupported: false,
-            verifiedTarget: approved,
-            reasons: [],
+          payload: {
+            ...job.payload,
+            candidate,
+            verdict: {
+              acceptedExperienceIndexes: [0],
+              playbookSupported: false,
+              verifiedTarget: approved,
+              reasons: [],
+            },
           },
         }),
         job.revision,
@@ -252,7 +255,7 @@ test("User control, current target revision and verification deadlines cannot be
       tx.get<any>("job", receipt.jobId),
     );
     assert.equal(
-      job.verificationControl.correctionText,
+      job.payload?.verificationControl.correctionText,
       "Only version 2 has been observed; keep this boundary.",
     );
     await f.stage(receipt.jobId);
@@ -322,15 +325,15 @@ test("Failed verification retries preserve the target after payload cleanup", as
     const failed = await store.transaction((tx) =>
       tx.get<any>("job", receipt.jobId),
     );
-    assert.equal(failed.verificationTarget, undefined);
+    assert.equal(failed.payload?.verificationTarget, undefined);
     assert.equal(failed.verificationRef.id, f.e.id);
     const retry = await f.core.retryJob(f.p, receipt.jobId, "retry");
     const job = await store.transaction((tx) =>
       tx.get<any>("job", retry.jobId),
     );
-    assert.equal(job.verificationTarget.id, f.e.id);
+    assert.equal(job.payload?.verificationTarget.id, f.e.id);
     assert.equal(
-      job.verificationControl.correctionText,
+      job.payload?.verificationControl.correctionText,
       "Only version 2 has been observed; keep this boundary.",
     );
     await f.core.cancelJob(f.p, retry.jobId);

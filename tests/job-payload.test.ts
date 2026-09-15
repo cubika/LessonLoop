@@ -3,12 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { canonical, digest, type Source } from "../src/domain/schema.js";
-import { jobQuery, type PromptJob } from "../src/core/job-prompts.js";
-import {
-  packJobPayload,
-  unpackJobPayload,
-  clearJobPayload,
-} from "../src/store/job-payload.js";
+import { jobQuery, type JobPayload } from "../src/core/job-prompts.js";
 
 const source: Source = {
   id: "a".repeat(64),
@@ -98,70 +93,49 @@ test("Old extraction retries preserve their original request format", async () =
 });
 
 test("Frozen inputs regenerate identical generation, assessment and repair requests", () => {
-  const job: PromptJob = {
+  const payload: JobPayload = {
     promptVersion: 1,
     inputSources: [source],
     comparisonPlaybooks: [],
     retainedSupport: [],
     candidate: draft,
   };
+  const job = { payload };
   for (const stage of ["compose", "assess"] as const) {
     const query = jobQuery(job, stage);
     const hash = stage === "compose" ? "modelQueryHash" : "assessmentQueryHash";
-    const stored = packJobPayload({
-      ...job,
+    const stored = {
       status: "uncertain",
-      [hash]: digest(query),
-    });
-    const roundTrip = unpackJobPayload(JSON.parse(canonical(stored)));
+      payload: { ...payload, [hash]: digest(query) },
+    };
+    const roundTrip = JSON.parse(canonical(stored));
     assert.equal(jobQuery(roundTrip, stage), query);
-    assert.equal(stored.modelQuery, undefined);
-    assert.equal(stored.assessmentQuery, undefined);
+    assert.equal(stored.payload.modelQuery, undefined);
+    assert.equal(stored.payload.assessmentQuery, undefined);
     assert.equal(
       JSON.stringify(stored).split(source.segment!.text).length - 1,
       1,
     );
     assert.throws(
-      () => jobQuery({ ...roundTrip, [hash]: "changed" }, stage),
+      () =>
+        jobQuery(
+          { payload: { ...roundTrip.payload, [hash]: "changed" } },
+          stage,
+        ),
       /job_prompt_changed/,
     );
   }
   const repair = {
-    ...job,
-    repairReasons: ["Preserve the original supported path"],
+    payload: {
+      ...payload,
+      repairReasons: ["Preserve the original supported path"],
+    },
   };
   const query = jobQuery(repair, "compose");
   assert.ok(query.includes("REJECTED PROPOSAL (not evidence)"));
   assert.equal(jobQuery(JSON.parse(canonical(repair)), "compose"), query);
   assert.throws(
-    () => jobQuery({ ...job, promptVersion: 999 }, "compose"),
+    () => jobQuery({ payload: { ...payload, promptVersion: 999 } }, "compose"),
     /job_prompt_version_unsupported/,
   );
-});
-
-test("Legacy requests remain exact and every terminal status clears the payload", () => {
-  const legacy = {
-    status: "uncertain",
-    modelQuery: 'Original {"z":1,"a":2}',
-    assessmentQuery: "Original assessment",
-    candidate: draft,
-    retainedSupport: [],
-    verificationTarget: { id: "target", revision: 3 },
-    verificationControl: { reason: "Recheck" },
-  };
-  const stored = packJobPayload(legacy);
-  const read = unpackJobPayload(JSON.parse(canonical(stored)));
-  assert.equal(jobQuery(read, "compose"), legacy.modelQuery);
-  assert.equal(jobQuery(read, "assess"), legacy.assessmentQuery);
-  for (const status of ["completed", "failed", "canceled"]) {
-    const terminal = packJobPayload({ ...stored, status });
-    assert.deepEqual(terminal, {
-      status,
-      verificationRef: { kind: "experience", id: "target", revision: 3 },
-    });
-  }
-  assert.deepEqual(clearJobPayload(read), {
-    status: "uncertain",
-    verificationRef: { kind: "experience", id: "target", revision: 3 },
-  });
 });

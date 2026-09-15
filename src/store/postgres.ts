@@ -1,4 +1,4 @@
-import { packJobPayload, unpackJobPayload } from "./job-payload.js";
+import { migrateJobPayloads } from "./job-payload-migration.js";
 import pg from "pg";
 import { migrateFeedback } from "./feedback-migration.js";
 import { randomUUID } from "node:crypto";
@@ -51,8 +51,7 @@ export class Transaction {
       "SELECT value FROM lessonloop.objects WHERE kind=$1 AND id=$2",
       [kind, id],
     );
-    const stored = r.rows[0]?.value;
-    const value = stored && kind === "job" ? unpackJobPayload(stored) : stored;
+    const value = r.rows[0]?.value;
     return (
       value && kind === "playbook" && !metadataOnly
         ? await this.hydrate(value)
@@ -76,9 +75,7 @@ export class Transaction {
       "SELECT value FROM lessonloop.objects WHERE kind=$1 AND ($2::text[] IS NULL OR scope_id=ANY($2)) ORDER BY id",
       [kind, scopes ?? null],
     );
-    const values = r.rows.map((v) =>
-      kind === "job" ? unpackJobPayload(v.value) : v.value,
-    );
+    const values = r.rows.map((v) => v.value);
     if (kind !== "playbook" || metadataOnly) return values as T[];
     const results = await Promise.allSettled(
       values.map((v) => this.hydrate(v)),
@@ -91,24 +88,17 @@ export class Transaction {
     if (entry.revision !== (expected === null ? 1 : expected + 1))
       throw new Conflict("revision_must_increment");
     if (
-      entry.kind === "revision_review" &&
       ["completed", "failed", "canceled"].includes(String(entry.value.status))
     ) {
       const value = { ...entry.value };
-      for (const field of [
-        "candidate",
-        "modelQuery",
-        "assessmentQuery",
-        "comparisonPlaybooks",
-        "retainedSupport",
-        "verificationTarget",
-        "verificationControl",
-      ])
-        delete value[field];
+      if (entry.kind === "job") delete value.payload;
+      if (entry.kind === "revision_review") {
+        delete value.candidate;
+        delete value.modelQuery;
+        delete value.modelSchema;
+      }
       entry = { ...entry, value };
     }
-    if (entry.kind === "job")
-      entry = { ...entry, value: packJobPayload(entry.value) };
     if (entry.kind === "playbook" && "steps" in entry.value) {
       const { content, record } = splitPlaybook(
         playbookSchema.parse(entry.value),
@@ -261,6 +251,7 @@ export class ProductStore {
       if (versions.rows.length !== 1 || versions.rows[0].version !== 3)
         throw new Error("incompatible_product_schema");
       await migrateFeedback(this.owner);
+      await migrateJobPayloads(this.owner);
       this.ready = true;
     } catch (error) {
       if (this.owner) {

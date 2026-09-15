@@ -41,8 +41,7 @@ import {
   outputJsonSchema,
 } from "./learning.js";
 import { exportPlaybook } from "../domain/export.js";
-import { clearJobPayload } from "../store/job-payload.js";
-import { jobQuery, JobPromptError, type PromptJob } from "./job-prompts.js";
+import { jobQuery, JobPromptError, type JobPayload } from "./job-prompts.js";
 import { Effects, type TaskFeedback } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import {
@@ -68,7 +67,9 @@ export interface Settings {
   review: boolean;
   notifications: boolean;
 }
-interface Job extends PromptJob {
+interface Job {
+  payload?: JobPayload;
+  synthesisTopicId?: string;
   id: string;
   revision: number;
   scopeId: string;
@@ -88,8 +89,6 @@ interface Job extends PromptJob {
   modelId?: string;
   assessmentId?: string;
   assessmentOperationId?: string;
-  verdict?: z.infer<typeof learningAssessmentSchema>;
-  assessmentSchema?: Record<string, unknown>;
   inputViewRefs?: WorkViewRef[];
   playbookRepairCount?: number;
   verificationControlRevision?: number;
@@ -499,7 +498,7 @@ export class CoreService {
         }
       let verificationTarget: Experience | undefined,
         verificationControlRevision = 0;
-      let verificationControl: Job["verificationControl"];
+      let verificationControl: JobPayload["verificationControl"];
       if (data.verificationFor) {
         verificationTarget = await this.owned<Experience>(
           tx,
@@ -528,7 +527,7 @@ export class CoreService {
         if (
           (await tx.list<Job>("job", [data.scopeId])).some(
             (j) =>
-              j.verificationTarget?.id === verificationTarget!.id &&
+              j.payload?.verificationTarget?.id === verificationTarget!.id &&
               ["queued", "running", "uncertain"].includes(j.status),
           )
         )
@@ -674,11 +673,13 @@ export class CoreService {
         sourceRefs: [...new Set(learningSources.map((m) => m.id))],
         ...(verificationTarget
           ? {
-              verificationTarget,
+              payload: {
+                verificationTarget,
+                ...(verificationControl ? { verificationControl } : {}),
+              },
               verificationRef: ref("experience", verificationTarget),
               verificationControlRevision,
               verificationByUser: p.channel === "user",
-              ...(verificationControl ? { verificationControl } : {}),
             }
           : {}),
       };
@@ -867,11 +868,8 @@ export class CoreService {
         ).length >= 4
       )
         throw new ApiError("job_retry_budget", 409);
-      const verificationRef =
-        old.verificationRef ??
-        (old.verificationTarget
-          ? ref("experience", old.verificationTarget)
-          : undefined);
+      const verificationRef = old.verificationRef;
+      const payload: JobPayload = {};
       if (
         !verificationRef &&
         (old.verificationByUser !== undefined ||
@@ -898,9 +896,9 @@ export class CoreService {
           (control?.revision ?? 0) !== (old.verificationControlRevision ?? 0)
         )
           throw new ApiError("verification_target_changed", 409);
-        old.verificationTarget = target;
+        payload.verificationTarget = target;
         if (control)
-          old.verificationControl = {
+          payload.verificationControl = {
             reason: control.reason,
             ...(control.correctionText
               ? { correctionText: control.correctionText }
@@ -917,15 +915,12 @@ export class CoreService {
         sourceRefs: old.sourceRefs,
         results: [],
         decisions: [],
-        ...(old.verificationTarget
+        ...(verificationRef
           ? {
-              verificationTarget: old.verificationTarget,
-              verificationRef: ref("experience", old.verificationTarget),
+              payload,
+              verificationRef,
               verificationControlRevision: old.verificationControlRevision ?? 0,
               verificationByUser: old.verificationByUser ?? false,
-              ...(old.verificationControl
-                ? { verificationControl: old.verificationControl }
-                : {}),
             }
           : {}),
         ...(old.taskSequence ? { taskSequence: old.taskSequence } : {}),
@@ -1290,10 +1285,11 @@ export class CoreService {
       }
       return rows;
     });
+    const frozenSources = j.payload?.inputSources;
     if (
-      j.inputSources &&
-      (liveSources.length !== j.inputSources.length ||
-        j.inputSources.some((frozen, index) => {
+      frozenSources &&
+      (liveSources.length !== frozenSources.length ||
+        frozenSources.some((frozen, index) => {
           const live = liveSources[index];
           return (
             !live ||
@@ -1304,9 +1300,10 @@ export class CoreService {
         }))
     )
       throw new JobPromptError("job_source_changed");
-    const inputSources = j.inputSources ?? liveSources;
+    const inputSources = frozenSources ?? liveSources;
     const runModel = async (stage: "compose" | "assess") => {
       const compose = stage === "compose";
+      const payload = j.payload ?? {};
       const operationField = compose ? "operationId" : "assessmentOperationId";
       const modelId = compose ? j.modelId : j.assessmentId;
       if (!modelId)
@@ -1316,7 +1313,7 @@ export class CoreService {
             : "assessment_identity_unconfirmed",
         );
       const sourceRefs = compose ? j.modelSourceRefs : j.assessmentSourceRefs;
-      const query = compose ? j.modelQuery : j.assessmentQuery;
+      const query = compose ? payload.modelQuery : payload.assessmentQuery;
       const result = await advanceNativeModel(
         engine,
         {
@@ -1325,18 +1322,18 @@ export class CoreService {
           // Legacy compose records may still contain the retain operation ID.
           operationId: compose && !sourceRefs ? undefined : j[operationField],
           query:
-            j.promptVersion || query !== undefined
+            payload.promptVersion || query !== undefined
               ? () => jobQuery(j, stage)
               : undefined,
           sourceRefs:
             sourceRefs ??
-            (compose && j.playbookRepairCount && !j.promptVersion
+            (compose && j.playbookRepairCount && !payload.promptVersion
               ? j.sourceRefs
               : undefined) ??
             inputSources.map((s) => s.id),
           schema: compose
-            ? (j.modelSchema ?? outputJsonSchema)
-            : (j.assessmentSchema ?? learningAssessmentJsonSchema),
+            ? (payload.modelSchema ?? outputJsonSchema)
+            : (payload.assessmentSchema ?? learningAssessmentJsonSchema),
         },
         async (operationId) => {
           if (operationId !== j[operationField])
@@ -1348,6 +1345,7 @@ export class CoreService {
             });
         },
       );
+      if (j.cancelRequestedAt) return;
       if (result.status === "failed")
         await this.updateJob(j.id, {
           status: "failed",
@@ -1471,33 +1469,36 @@ export class CoreService {
         ];
         if (sourceRefs.some((fp) => data.blockedSources.has(fp)))
           throw new ApiError("source_changed_before_compose", 409);
-        if (current.verificationTarget) {
+        const verificationTarget = current.payload?.verificationTarget;
+        if (verificationTarget) {
           const target = await tx.get<Experience>(
             "experience",
-            current.verificationTarget.id,
+            verificationTarget.id,
           );
           const control = await tx.get<{ revision: number }>(
             "control",
-            current.verificationTarget.id,
+            verificationTarget.id,
           );
           if (
-            target?.revision !== current.verificationTarget.revision ||
+            target?.revision !== verificationTarget.revision ||
             (control?.revision ?? 0) !==
               (current.verificationControlRevision ?? 0)
           )
             throw new ApiError("verification_target_changed", 409);
         }
-        const query = jobQuery(
-          {
-            ...current,
-            promptVersion: 1,
-            inputSources,
-            comparisonPlaybooks: existing,
-            retainedSupport,
-            modelSchema: outputJsonSchema,
-          },
-          "compose",
-        );
+        const payload: JobPayload = {
+          ...current.payload,
+          promptVersion: 1,
+          inputSources,
+          comparisonPlaybooks: existing,
+          retainedSupport,
+          modelSchema: outputJsonSchema,
+          assessmentSchema: verificationTarget
+            ? verificationAssessmentJsonSchema
+            : learningAssessmentJsonSchema,
+        };
+        const query = jobQuery({ ...current, payload }, "compose");
+        payload.modelQueryHash = digest(query);
         if (byteSize(query) > 524288)
           throw new ApiError("learning_query_budget", 413);
         if (bank)
@@ -1508,7 +1509,7 @@ export class CoreService {
                 sourceRefs: [
                   ...new Set([
                     ...sourceRefs,
-                    ...(current.verificationTarget?.sourceFingerprints ?? []),
+                    ...(verificationTarget?.sourceFingerprints ?? []),
                   ]),
                 ],
                 state: "active",
@@ -1519,16 +1520,8 @@ export class CoreService {
         const next = mutate(current, {
           modelId,
           status: "running",
-          modelSchema: outputJsonSchema,
-          assessmentSchema: current.verificationTarget
-            ? verificationAssessmentJsonSchema
-            : learningAssessmentJsonSchema,
-          retainedSupport,
-          comparisonPlaybooks: existing,
+          payload,
           comparedPlaybookRefs: existing.map((m) => ref("playbook", m)),
-          promptVersion: 1,
-          inputSources,
-          modelQueryHash: digest(query),
           modelSourceRefs: inputSources.map((m) => m.id),
         });
         delete next.operationId;
@@ -1544,8 +1537,11 @@ export class CoreService {
         j.id,
         {
           stage: "assess",
-          candidate: output,
-          repairReasons: undefined,
+          payload: {
+            ...j.payload,
+            candidate: output,
+            repairReasons: undefined,
+          },
           status: "running",
           ...result.usageUpdate,
         },
@@ -1555,18 +1551,24 @@ export class CoreService {
     if (j.stage === "assess" && !j.assessmentId) {
       const assessmentId = "assess-" + randomUUID();
       const assessmentQuery = jobQuery(
-        j.promptVersion ? j : { ...j, promptVersion: 1, inputSources },
+        j.payload?.promptVersion
+          ? j
+          : { ...j, payload: { ...j.payload, promptVersion: 1, inputSources } },
         "assess",
       );
-      const reviewSchema = j.assessmentSchema ?? learningAssessmentJsonSchema;
+      const reviewSchema =
+        j.payload?.assessmentSchema ?? learningAssessmentJsonSchema;
       j = await this.updateJob(
         j.id,
         {
           assessmentId,
-          ...(j.promptVersion
-            ? { assessmentQueryHash: digest(assessmentQuery) }
-            : { assessmentQuery }),
-          assessmentSchema: reviewSchema,
+          payload: {
+            ...j.payload,
+            ...(j.payload?.promptVersion
+              ? { assessmentQueryHash: digest(assessmentQuery) }
+              : { assessmentQuery }),
+            assessmentSchema: reviewSchema,
+          },
           assessmentSourceRefs: inputSources.map((m) => m.id),
         },
         true,
@@ -1578,12 +1580,13 @@ export class CoreService {
       const verdict = learningAssessmentSchema.parse(result.output);
       if (result.usageUpdate)
         j = await this.updateJob(j.id, result.usageUpdate);
+      const candidate = j.payload?.candidate;
       const hasPlaybook =
-        !!j.candidate?.playbook || !!j.candidate?.splitPlaybooks?.length;
+        !!candidate?.playbook || !!candidate?.splitPlaybooks?.length;
       if (hasPlaybook) {
         const findings = pathReviewErrors(
-          j.candidate!.splitPlaybooks ?? [j.candidate!.playbook!],
-          j.comparisonPlaybooks ?? [],
+          candidate!.splitPlaybooks ?? [candidate!.playbook!],
+          j.payload?.comparisonPlaybooks ?? [],
           verdict as z.infer<typeof learningAssessmentSchema>,
         );
         if (findings.length) {
@@ -1602,13 +1605,13 @@ export class CoreService {
           const old = await tx.get<Job>("job", j.id);
           if (!old || old.cancelRequestedAt || old.revision !== j.revision)
             throw new Conflict();
-          const repairJob = { ...old, repairReasons: verdict.reasons };
-          delete repairJob.modelQueryHash;
-          const query = old.promptVersion
-            ? jobQuery(repairJob, "compose")
-            : (old.modelQuery ?? "") +
+          const payload = { ...old.payload, repairReasons: verdict.reasons };
+          delete payload.modelQueryHash;
+          const query = old.payload?.promptVersion
+            ? jobQuery({ ...old, payload }, "compose")
+            : (old.payload?.modelQuery ?? "") +
               "\nONE BOUNDED REVISION: the proposal below was rejected by independent support/path review. Correct only the cited problems using the same authorized evidence; do not weaken scope or invent facts. If no supported playbook is possible return playbook=null.\nREJECTED PROPOSAL (not evidence):\n" +
-              JSON.stringify(old.candidate) +
+              JSON.stringify(old.payload?.candidate) +
               "\nREVIEW FINDINGS (not evidence):\n" +
               JSON.stringify(verdict.reasons);
           if (byteSize(query) > 524288)
@@ -1617,15 +1620,11 @@ export class CoreService {
             stage: "compose",
             status: "running",
             modelId: "job-" + randomUUID(),
-            ...(old.promptVersion
-              ? {
-                  repairReasons: verdict.reasons,
-                  modelQueryHash: digest(query),
-                }
-              : { modelQuery: query }),
-            modelSourceRefs: old.promptVersion
+            payload,
+            modelSourceRefs: old.payload?.promptVersion
               ? inputSources.map((m) => m.id)
               : (old.sourceRefs ?? inputSources.map((m) => m.id)),
+
             playbookRepairCount: 1,
             decisions: [
               ...old.decisions,
@@ -1635,11 +1634,16 @@ export class CoreService {
           delete next.operationId;
           delete next.assessmentId;
           delete next.assessmentOperationId;
-          delete next.assessmentQuery;
+          if (payload.promptVersion) payload.modelQueryHash = digest(query);
+          else {
+            payload.modelQuery = query;
+            delete payload.candidate;
+          }
+          delete payload.assessmentQuery;
+          delete payload.assessmentQueryHash;
+          delete payload.verdict;
           delete next.assessmentSourceRefs;
-          delete next.assessmentQueryHash;
-          if (!old.promptVersion) delete next.candidate;
-          delete next.verdict;
+
           await tx.put(entry("job", next), old.revision);
           return next;
         });
@@ -1647,12 +1651,17 @@ export class CoreService {
       }
       j = await this.updateJob(
         j.id,
-        { stage: "publish", verdict, status: "running" },
+        {
+          stage: "publish",
+          payload: { ...j.payload, verdict },
+          status: "running",
+        },
         true,
       );
     }
-    if (j.stage === "publish" && j.candidate && j.verdict)
-      await this.publish(j, inputSources, j.candidate, j.verdict);
+    const { candidate, verdict } = j.payload ?? {};
+    if (j.stage === "publish" && candidate && verdict)
+      await this.publish(j, inputSources, candidate, verdict);
   }
   private async publish(
     job: Job,
@@ -1822,8 +1831,9 @@ export class CoreService {
             );
         }
       }
+      const verificationTarget = j.payload?.verificationTarget;
       if (
-        j.verificationTarget &&
+        verificationTarget &&
         (output.workView ||
           output.playbook ||
           output.splitPlaybooks?.length ||
@@ -1831,22 +1841,22 @@ export class CoreService {
       )
         throw new ApiError("verification_output_invalid", 409);
       const verified =
-        j.verificationTarget &&
+        verificationTarget &&
         "verifiedTarget" in verdict &&
         verdict.verifiedTarget &&
         verdict.acceptedExperienceIndexes.includes(0);
       let verificationOld: Experience | undefined;
-      if (j.verificationTarget) {
+      if (verificationTarget) {
         verificationOld = await tx.get<Experience>(
           "experience",
-          j.verificationTarget.id,
+          verificationTarget.id,
         );
         const control = await tx.get<{ revision: number }>(
           "control",
-          j.verificationTarget.id,
+          verificationTarget.id,
         );
         if (
-          verificationOld?.revision !== j.verificationTarget.revision ||
+          verificationOld?.revision !== verificationTarget.revision ||
           verificationOld.state !== "held" ||
           (control?.revision ?? 0) !== (j.verificationControlRevision ?? 0) ||
           !verificationOld.review ||
@@ -1863,7 +1873,7 @@ export class CoreService {
       const created = new Map<number, Experience>();
       for (const [i, draft] of output.experiences.entries()) {
         if (
-          (j.verificationTarget && !verified) ||
+          (verificationTarget && !verified) ||
           !verdict.acceptedExperienceIndexes.includes(i) ||
           draft.parentIndexes.some((n) => n >= i || !created.has(n))
         )
@@ -1891,7 +1901,7 @@ export class CoreService {
           sourceFingerprints: roots,
         });
         if (!parsed.success) {
-          if (j.verificationTarget)
+          if (verificationTarget)
             throw new ApiError("verification_output_invalid", 409);
           continue;
         }
@@ -2034,7 +2044,7 @@ export class CoreService {
                 !old?.supportRefs.some(
                   (s) => s.id === r.id && s.revision === r.revision,
                 ) ||
-                !j.retainedSupport?.some(
+                !j.payload?.retainedSupport?.some(
                   (e) => e.id === r.id && e.revision === r.revision,
                 ),
             )
@@ -2122,7 +2132,7 @@ export class CoreService {
           }
           if (old) {
             const prior = new Map(
-              (j.retainedSupport ?? []).map((e) => [e.id, e]),
+              (j.payload?.retainedSupport ?? []).map((e) => [e.id, e]),
             );
             const previousRoots = new Set<string>();
             const addRoots = (id: string) => {
@@ -3140,7 +3150,8 @@ export class CoreService {
             job.sourceIds.some((id) => sourceIds.has(id)) ||
             banks.some((b) => b.jobId === job.id)
           ) {
-            const next = clearJobPayload(mutate(job, { decisions: [] }));
+            const next = mutate(job, { decisions: [] });
+            delete next.payload;
             await tx.put(entry("job", next), job.revision);
           }
         for (const review of await tx.list<RevisionReview>("revision_review", [
