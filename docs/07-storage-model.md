@@ -90,7 +90,7 @@ Condition={text,match?}；match={key,values} 表示已规范化上下文值属�
 
 方法全局条件为 AND，例外任一成立就排除。分支条件只在相应决策点判断，不要求所有互斥分支同时成立。支持经验的当前资格先统一检查，本次适用性按方法与当前路径判断。
 
-方法准备不保存执行会话。Task保留归属、范围、结束状态和创建时间；每次获取检查任务仍有效。playbookUseRef稳定绑定任务归属、taskRef及方法id/revision，用于真实结果与反馈关联。记录不表示步骤已经执行，也不授予权限。
+Task保留归属、范围、结束状态和创建时间，每次获取方法都检查任务仍有效。任务反馈按taskRef存储，方法以id/revision关联，不另建使用标识或执行会话。
 
 ## 发布投影与引擎映射
 
@@ -120,11 +120,11 @@ SourceBinding 以 connectionId+sourceKey 唯一定位资源，保存 parentSourc
 
 ## 效果记录
 
-EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除传播。回顾按taskRef、playbookId、revision汇总delivered、taskOutcome和userRating，缺少投递或评价时为null，结果未知为unknown；不持久化另一套派生状态。任务/方法版本关联只保存一次，playbookUseRef保留为接口关联键。运行时不记录步骤完成集合或自动采用事件，方法正文中的步骤和检查仍完整保留。
+task_feedback是唯一反馈主记录，id为taskRef。每个任务保存taskOutcome/outcomeText，feedback数组按playbookId/revision保存delivered、userRating和ratingText；最多8个方法版本。投递和评价未知为null，结果未知为unknown。方法正文中的步骤和检查仍完整保留。
 
-格式 3 只接受当前关联结构，playbook_use 直接以 playbookUseRef 定位；不扫描旧关联键或转换旧步骤快照。宿主与核心、Hindsight 扩展需一起更新。使用视图保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
+写入使用整条记录的revision检查，同值重试不产生新版本。清空擦除字段并保留递增版本的空标记，到期按整条记录删除。读取无需事件归并，问题复核引用记录修订。更新宿主与核心时，启动迁移一次性保留旧记录的最终事实并删除事件、使用关联和评价收据；旧确认问题需重新复核。WorkView不再包含方法使用关联。
 
-这些记录按独立回顾授权保存，不自动成为学习输入。相同真实事件可分别路由到学习与回顾，但保持相同来源身份。正文过期或清空后不能靠迟到批次恢复，统计需能撤销贡献；零分母为 N/A，未知不按成功计。
+反馈按回顾开关独立保存，关闭后停止新写入，已有记录仍可查看。学习材料和可信观察独立保留，清空反馈不会删除学习来源。未知结果不按成功计。
 
 ## 保留与删除
 
@@ -137,10 +137,9 @@ EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除
 | WorkView | 原始观察后 30 天；追加不重置旧证据期限 |
 | 当前 Experience、Playbook | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
 | Playbook 旧版 | 不保留；产品历史恢复入口与原生 mental model 历史均关闭 |
-| EffectTask、EffectCase | 原始观察后 30 天，复核和复制不延期 |
+| task_feedback、使用视图 | 任务创建后30天，评价、更正和重新准备不延期 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
 | 方法获取所关联的Task | 普通任务创建后最长24小时；Copilot会话按最后宿主回调后的24小时空闲时间检查，恢复会话沿用原引用 |
-| 迟到结果 | 可信任务结束后24小时内等待结果；无结束信号保持结束未知，已保存历史关联仍按对应记录期限清理 |
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 
@@ -155,7 +154,7 @@ Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系
 | 对象或操作 | 上限 |
 |---|---|
 | Source 提交 | 32 KiB；最多16个片段；context 32 keys，key 64 B、每值128 B或最多4值 |
-| WorkView | 64 KiB；16 attempts，每项2 KiB；16 Evidence；8 playbookUses |
+| WorkView | 64 KiB；16 attempts，每项2 KiB；16 Evidence |
 | Experience | 16 KiB；conclusion 2 KiB；conditions/exceptions各4；topics8；entities16；derivedFrom8；根指纹32 |
 | Evidence | 单摘录512 B；Experience最多3项且总2 KiB；使用视图同限；WorkView最多16项 |
 | Playbook | 32 KiB；title256 B、goal1 KiB；12 steps，instruction1 KiB、rationale512 B；每步4 choices；16 supportRefs |

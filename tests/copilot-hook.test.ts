@@ -72,7 +72,7 @@ async function fixture(t: test.TestContext) {
             ...(expansion
               ? {}
               : {
-                  playbookUseRef: "use-" + input.query,
+                  feedbackRevision: 1,
                   steps: [{ instruction: "Read the source and verify" }],
                 }),
           },
@@ -246,8 +246,7 @@ test("transcript is the sole material source, preserving roles and excluding inj
   assert.ok(
     f.calls.some(
       (c) =>
-        c.operation === "recordTaskObservation" &&
-        c.input[0].kind === "delivery",
+        c.operation === "updateTaskFeedback" && c.input.field === "delivered",
     ),
   );
 });

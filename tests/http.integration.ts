@@ -89,6 +89,25 @@ test("HTTP rejects unauthenticated and cross-origin requests; accepted input is 
       ).status,
       404,
     );
+    const unavailable = await rpc("updateTaskFeedback", {
+      taskRef: "missing",
+      field: "userRating",
+      playbookId: "book",
+      revision: 1,
+      expectedRevision: 1,
+      rating: "helpful",
+    });
+    assert.equal(unavailable.status, 404);
+    assert.equal((await unavailable.json()).error, "feedback_unavailable");
+    const denied = await rpc("updateTaskFeedback", {
+      taskRef: "missing",
+      field: "delivered",
+      playbookId: "book",
+      revision: 1,
+      expectedRevision: 1,
+    });
+    assert.equal(denied.status, 403);
+    assert.equal((await denied.json()).error, "feedback_writer_denied");
   } finally {
     server.closeAllConnections();
     await new Promise<void>((done) => server.close(() => done()));

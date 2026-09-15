@@ -179,35 +179,6 @@ test("unknown applicability returns all boundaries for the agent to check", () =
   }
 });
 
-test("usage references are stable without sessions and separate tasks, owners and revisions", () => {
-  const { m, d } = setup();
-  const request = { callerId: "c", taskRef: "t", revision: 1 };
-  const ref = preparePlaybook(m, request, d).playbookUseRef;
-  assert.equal(
-    preparePlaybook(m, request, { ...d, now: d.now + 1800001 }).playbookUseRef,
-    ref,
-  );
-  assert.equal(
-    preparePlaybook(m, { ...request, viewMode: "expanded" }, d).playbookUseRef,
-    ref,
-  );
-  assert.notEqual(
-    preparePlaybook(m, { ...request, taskRef: "other" }, d).playbookUseRef,
-    ref,
-  );
-  assert.notEqual(
-    preparePlaybook(m, { ...request, callerId: "other" }, d).playbookUseRef,
-    ref,
-  );
-  const updated = { ...m, revision: 2 };
-  const published = new Map(d.published).set(m.id, 2);
-  assert.notEqual(
-    preparePlaybook(updated, { ...request, revision: 2 }, { ...d, published })
-      .playbookUseRef,
-    ref,
-  );
-});
-
 test("repeated preparation checks current revisions, permissions and supporting sources", () => {
   const { m, d } = setup();
   const request = { callerId: "c", taskRef: "t", revision: 1 };

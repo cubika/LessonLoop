@@ -1,4 +1,5 @@
 import pg from "pg";
+import { migrateFeedback } from "./feedback-migration.js";
 import { randomUUID } from "node:crypto";
 import { digest, playbookSchema, type Playbook } from "../domain/schema.js";
 import {
@@ -253,6 +254,7 @@ export class ProductStore {
       );
       if (versions.rows.length !== 1 || versions.rows[0].version !== 3)
         throw new Error("incompatible_product_schema");
+      await migrateFeedback(this.owner);
       this.ready = true;
     } catch (error) {
       if (this.owner) {

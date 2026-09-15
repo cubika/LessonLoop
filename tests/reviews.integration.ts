@@ -29,30 +29,7 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
       review: true,
       notifications: true,
     });
-    const otherTask = await core.startTask(host, scope);
-    const reference = { kind: "playbook", id: randomUUID(), revision: 1 };
-    await store.transaction(async (tx) => {
-      const id = randomUUID();
-      await tx.put(
-        {
-          kind: "playbook_use",
-          id,
-          scopeId: scope,
-          revision: 1,
-          value: {
-            id,
-            revision: 1,
-            scopeId: scope,
-            taskRef: otherTask.taskRef,
-            callerId: host.id,
-            playbook: reference,
-            playbookUseRef: "use-1",
-            returnedAt: new Date(Date.now() - 1000).toISOString(),
-          },
-        },
-        null,
-      );
-    });
+    await core.startTask(host, scope);
     const now = Date.now();
     await store.transaction(async (tx) => {
       const schedule = await tx.get<any>("review_schedule", scope);
@@ -72,16 +49,6 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
       );
     });
     const task = await core.startTask(host, scope);
-    await effects.record(host, [
-      {
-        eventId: "unknown-end",
-        taskRef: task.taskRef,
-        scopeId: scope,
-        kind: "task_ended",
-        text: "Ended with no observed outcome",
-        occurredAt: new Date(now).toISOString(),
-      },
-    ]);
     const result = await reviews.maintain([scope], now + 1000);
     assert.equal(result.created.length, 1);
     assert.equal(
@@ -94,49 +61,6 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
     assert.equal(all[0]!.summary.tasks, 2);
     assert.equal(all[0]!.summary.unknownOutcome, 2);
     assert.equal(all[0]!.summary.succeeded, 0);
-    const mismatch = await effects.record(host, [
-      {
-        eventId: "wrong-use",
-        taskRef: task.taskRef,
-        scopeId: scope,
-        kind: "delivery",
-        playbook: reference,
-        playbookUseRef: "use-1",
-        text: "Wrong task use",
-        occurredAt: new Date().toISOString(),
-      },
-    ]);
-    assert.equal(mismatch.results[0]!.status, "rejected");
-    await store.transaction(async (tx) => {
-      const t = await tx.get<any>("task", otherTask.taskRef);
-      await tx.put(
-        {
-          kind: "task",
-          id: t.id,
-          scopeId: scope,
-          revision: t.revision + 1,
-          value: {
-            ...t,
-            revision: t.revision + 1,
-            ended: true,
-            endedAt: new Date(Date.now() - 25 * 3600000).toISOString(),
-          },
-        },
-        t.revision,
-      );
-    });
-    const late = await effects.record(host, [
-      {
-        eventId: "late",
-        taskRef: otherTask.taskRef,
-        scopeId: scope,
-        kind: "outcome",
-        outcome: "succeeded",
-        text: "Old buffered result",
-        occurredAt: new Date(Date.now() - 26 * 3600000).toISOString(),
-      },
-    ]);
-    assert.equal(late.results[0]!.status, "rejected");
     const notes = await reviews.notifications(p);
     assert.equal(notes.length, 1);
     assert.equal(notes[0]!.text.includes("Ended"), false);
@@ -221,7 +145,7 @@ test("Serious issue notifications require user-confirmed retained evidence and d
     );
     const evidence = cases.map((c) => ({
       caseId: c.id,
-      eventId: c.events[0]!.eventId,
+      revision: c.revision,
     }));
     const input = {
       scopeId: scope,
@@ -283,8 +207,8 @@ test("Serious issue notifications require user-confirmed retained evidence and d
       notifications: true,
     });
     await store.transaction(async (tx) => {
-      const task = await tx.get<any>("effect_task", evidence[0]!.caseId);
-      await tx.remove("effect_task", task.id, task.revision);
+      const task = await tx.get<any>("task_feedback", evidence[0]!.caseId);
+      await tx.remove("task_feedback", task.id, task.revision);
     });
     const weakened = (await reviews.issues(p))[0]!;
     assert.equal(weakened.status, "suspected");
@@ -298,199 +222,6 @@ test("Serious issue notifications require user-confirmed retained evidence and d
       reviews.recordIssue(p, input),
       /issue_evidence_unavailable/,
     );
-  } finally {
-    await store.close();
-  }
-});
-
-test("Simple feedback keeps delivery, corrected task outcomes and ratings independent across restart and clear", async () => {
-  let store = new ProductStore(url!);
-  await store.open();
-  try {
-    const scope = randomUUID();
-    const host = {
-      id: randomUUID(),
-      channel: "host" as const,
-      scopes: [scope],
-    };
-    const user = { ...host, id: randomUUID(), channel: "user" as const };
-    let core = new CoreService(
-      store,
-      new HindsightEngine("http://127.0.0.1:19888", "unused"),
-    );
-    let effects = new Effects(store);
-    await core.configure(user, {
-      scopeId: scope,
-      expectedRevision: 0,
-      learning: false,
-      recommendation: false,
-      review: true,
-      notifications: false,
-    });
-    const task = await core.startTask(host, scope);
-    const playbook = {
-      kind: "playbook" as const,
-      id: randomUUID(),
-      revision: 3,
-    };
-    await store.transaction(async (tx) => {
-      await tx.put(
-        {
-          kind: "playbook_use",
-          id: "use-" + scope,
-          scopeId: scope,
-          revision: 1,
-          value: {
-            id: "use-" + scope,
-            scopeId: scope,
-            revision: 1,
-            taskRef: task.taskRef,
-            callerId: host.id,
-            playbook,
-            playbookUseRef: "use-" + scope,
-            stepIds: ["legacy"],
-            returnedAt: new Date(Date.now() - 1000).toISOString(),
-          },
-        },
-        null,
-      );
-    });
-    const base = {
-      taskRef: task.taskRef,
-      scopeId: scope,
-      occurredAt: new Date().toISOString(),
-      text: "Retained observation",
-    };
-    const delivery = {
-      ...base,
-      eventId: "delivery",
-      kind: "delivery",
-      playbook,
-      playbookUseRef: "use-" + scope,
-    };
-    assert.equal(
-      (
-        await effects.record(host, [
-          {
-            ...base,
-            eventId: "outcome",
-            kind: "outcome",
-            outcome: "succeeded",
-          },
-        ])
-      ).results[0]!.status,
-      "accepted",
-    );
-    const rate = {
-      taskRef: task.taskRef,
-      playbookUseRef: "use-" + scope,
-      rating: "helpful",
-    };
-    await core.ratePlaybookUse(user, rate, "rating");
-    let record = (await effects.cases([scope]))[0]!.feedback[0]!;
-    assert.deepEqual(record, {
-      taskRef: task.taskRef,
-      playbookId: playbook.id,
-      revision: 3,
-      delivered: null,
-      taskOutcome: "succeeded",
-      userRating: "helpful",
-    });
-    assert.equal(
-      (await effects.record(host, [delivery])).results[0]!.status,
-      "accepted",
-    );
-    assert.equal(
-      (await effects.record(host, [delivery])).results[0]!.status,
-      "duplicate",
-    );
-    await effects.record(host, [
-      {
-        ...base,
-        eventId: "correct-result",
-        kind: "outcome",
-        outcome: "failed",
-      },
-    ]);
-    await core.ratePlaybookUse(
-      user,
-      { ...rate, rating: "incorrect" },
-      "rating-correction",
-    );
-    assert.equal(
-      (
-        await effects.record(host, [
-          { ...delivery, eventId: "old-usage", kind: "usage" },
-        ])
-      ).results[0]!.reason,
-      "invalid_event",
-    );
-    assert.equal(
-      (
-        await effects.record(host, [
-          { ...delivery, eventId: "old-step", stepId: "legacy" },
-        ])
-      ).results[0]!.reason,
-      "invalid_event",
-    );
-    await store.close();
-    store = new ProductStore(url!);
-    await store.open();
-    core = new CoreService(
-      store,
-      new HindsightEngine("http://127.0.0.1:19888", "unused"),
-    );
-    effects = new Effects(store);
-    record = (await effects.cases([scope]))[0]!.feedback[0]!;
-    assert.equal(record.delivered, true);
-    assert.equal(record.taskOutcome, "failed");
-    assert.equal(record.userRating, "incorrect");
-    const summary = await effects.summary([scope]);
-    assert.equal(summary.delivered, 1);
-    assert.equal(summary.succeeded, 0);
-    assert.equal(summary.failed, 1);
-    assert.equal(summary.helpful, 0);
-    assert.equal(summary.reportedIncorrect, 1);
-    const reviews = new Reviews(store);
-    await reviews.maintain([scope], Date.now() + 8 * 86400000);
-    const review = (await reviews.list(user))[0]!;
-    assert.equal(review.summary.failed, 1);
-    assert.equal(review.summary.helpfulCount, 0);
-    assert.equal(review.problems.length, 1);
-    assert.deepEqual(await effects.cases([randomUUID()]), []);
-    await effects.clear(scope);
-    assert.equal(
-      (await effects.record(host, [delivery])).results[0]!.status,
-      "ignored",
-    );
-    assert.equal(
-      (await core.ratePlaybookUse(user, rate, "rating")).results[0]!.status,
-      "ignored",
-    );
-    assert.deepEqual(await effects.cases([scope]), []);
-    assert.equal(
-      (
-        await effects.record(host, [
-          {
-            ...delivery,
-            eventId: "late-old-link",
-            occurredAt: new Date(Date.now() + 1).toISOString(),
-          },
-        ])
-      ).results[0]!.status,
-      "rejected",
-    );
-    // A later independent result cannot restore the cleared preparation link.
-    await effects.record(host, [
-      {
-        ...base,
-        eventId: "later-result",
-        kind: "outcome",
-        occurredAt: new Date(Date.now() + 1).toISOString(),
-        outcome: "unknown",
-      },
-    ]);
-    assert.deepEqual((await effects.cases([scope]))[0]!.feedback, []);
   } finally {
     await store.close();
   }

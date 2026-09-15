@@ -42,7 +42,7 @@ import {
   outputJsonSchema,
 } from "./learning.js";
 import { exportPlaybook } from "../domain/export.js";
-import { Effects } from "./effects.js";
+import { Effects, type TaskFeedback } from "./effects.js";
 import { Reviews } from "./reviews.js";
 import {
   playbookPlanKey,
@@ -1823,31 +1823,6 @@ export class CoreService {
           sequence: j.taskSequence ?? 0,
           sourceFamily: family,
           ...(task ? { taskRef: task.id } : {}),
-          playbookUses: task
-            ? (
-                await tx.list<WorkView["playbookUses"][number]>(
-                  "playbook_use",
-                  [j.scopeId],
-                )
-              )
-                .filter((use) => use.taskRef === task.id)
-                .slice(-8)
-                .map(
-                  ({
-                    playbookUseRef,
-                    taskRef,
-                    callerId,
-                    playbook,
-                    returnedAt,
-                  }) => ({
-                    playbookUseRef,
-                    taskRef,
-                    callerId,
-                    playbook,
-                    returnedAt,
-                  }),
-                )
-            : (cached?.playbookUses ?? []),
         });
         await tx.put(entry("work_view", c), cached?.revision ?? null);
         if (!j.synthesisTopicId) {
@@ -2741,60 +2716,6 @@ export class CoreService {
         })),
     );
   }
-  async ratePlaybookUse(p: Principal, input: unknown, key: string) {
-    this.user(p);
-    const v = z
-      .object({
-        taskRef: z.string(),
-        playbookUseRef: z.string(),
-        rating: z.enum(["helpful", "incorrect", "irrelevant"]),
-        text: z.string().max(512).optional(),
-      })
-      .strict()
-      .parse(input);
-    const event = await this.store.transaction(async (tx) => {
-      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
-      const use = (
-        await tx.list<{
-          taskRef: string;
-          playbookUseRef: string;
-          playbook: ObjectRef;
-        }>("playbook_use", [task.scopeId])
-      ).find(
-        (u) => u.taskRef === task.id && u.playbookUseRef === v.playbookUseRef,
-      );
-      if (!use) throw new ApiError("playbook_use_mismatch", 409);
-      const receiptId = digest([p.id, "rating", key]);
-      const old = await tx.get<{ hash: string; occurredAt: string }>(
-        "rating_receipt",
-        receiptId,
-      );
-      if (old && old.hash !== digest(v)) throw new Conflict("event_conflict");
-      const event = {
-        eventId: receiptId,
-        taskRef: task.id,
-        scopeId: task.scopeId,
-        kind: "user_rating",
-        occurredAt: old?.occurredAt ?? new Date().toISOString(),
-        playbook: use.playbook,
-        playbookUseRef: v.playbookUseRef,
-        rating: v.rating,
-        text: v.text?.trim() || v.rating,
-      };
-      if (!old)
-        await tx.put(
-          entry("rating_receipt", {
-            ...identity(task.scopeId),
-            id: receiptId,
-            hash: digest(v),
-            occurredAt: event.occurredAt,
-          }),
-          null,
-        );
-      return event;
-    });
-    return new Effects(this.store).record(p, [event]);
-  }
   async controlSource(p: Principal, input: unknown, transaction?: Transaction) {
     this.user(p);
     const v = z
@@ -3306,57 +3227,32 @@ export class CoreService {
         const erasedPlaybook = (playbook?: ObjectRef) =>
           playbook &&
           cleanup.affectedPlaybooks.some((m) => m.id === playbook.id);
-        for (const use of await tx.list<{
-          id: string;
-          revision: number;
-          playbook: ObjectRef;
-        }>("playbook_use", [cleanup.scopeId]))
-          if (erasedPlaybook(use.playbook))
-            await tx.remove("playbook_use", use.id, use.revision);
-        for (const effect of await tx.list<{
-          id: string;
-          revision: number;
-          scopeId: string;
-          callerId: string;
-          taskRef: string;
-          events: Array<{
-            eventId: string;
-            text: string;
-            playbook?: ObjectRef;
-          }>;
-        }>("effect_task", [cleanup.scopeId])) {
-          const texts = taskCopies.get(effect.taskRef) ?? [];
-          const removed = effect.events.filter(
-            (e) => texts.includes(e.text) || erasedPlaybook(e.playbook),
+        for (const row of await tx.list<TaskFeedback>("task_feedback", [
+          cleanup.scopeId,
+        ])) {
+          const texts = taskCopies.get(row.id) ?? [];
+          const feedback = row.feedback.filter(
+            (f) =>
+              !erasedPlaybook({
+                kind: "playbook",
+                id: f.playbookId,
+                revision: f.revision,
+              }) && !texts.includes(f.ratingText),
           );
-          if (!removed.length) continue;
-          for (const event of removed) {
-            const key = digest([
-              effect.callerId,
-              effect.scopeId,
-              event.eventId,
-            ]);
-            const seen = await tx.get<{
-              id: string;
-              revision: number;
-              scopeId: string;
-              cleared: boolean;
-            }>("effect_event", key);
-            if (seen)
-              await tx.put(
-                entry("effect_event", mutate(seen, { cleared: true })),
-                seen.revision,
-              );
-          }
-          await tx.put(
-            entry(
-              "effect_task",
-              mutate(effect, {
-                events: effect.events.filter((e) => !removed.includes(e)),
-              }),
-            ),
-            effect.revision,
-          );
+          const erasedOutcome = texts.includes(row.outcomeText);
+          if (feedback.length !== row.feedback.length || erasedOutcome)
+            await tx.put(
+              entry(
+                "task_feedback",
+                mutate(row, {
+                  feedback,
+                  ...(erasedOutcome
+                    ? { taskOutcome: "unknown" as const, outcomeText: "" }
+                    : {}),
+                }),
+              ),
+              row.revision,
+            );
         }
         for (const sibling of await tx.list<Source>("source", [
           source.scopeId,
@@ -3623,6 +3519,7 @@ export class CoreService {
         ...(hostSession ? { hostSession: true } : {}),
       };
       await tx.put(entry("task", t), null);
+      await new Effects(this.store).register(tx, t);
       if (bindingId)
         await tx.put(
           entry("task_binding", {
@@ -3635,17 +3532,6 @@ export class CoreService {
         );
       return { taskRef: t.id, createdAt: t.createdAt };
     });
-    if (p.channel === "host")
-      await new Effects(this.store).record(p, [
-        {
-          eventId: `started:${task.taskRef}`,
-          taskRef: task.taskRef,
-          scopeId,
-          kind: "task_started",
-          occurredAt: task.createdAt,
-          text: "Trusted host task started",
-        },
-      ]);
     return { taskRef: task.taskRef };
   }
   async observe(p: Principal, input: unknown) {
@@ -3771,51 +3657,14 @@ export class CoreService {
         { callerId: t.callerId, ...v },
         await this.eligibility(tx, p),
       );
-      const settings = await this.settings(tx, t.scopeId);
-      if (
-        m &&
-        (settings.learning || settings.review) &&
-        typeof prepared.playbookUseRef === "string"
-      ) {
-        const use = {
-          ...identity(t.scopeId),
-          taskRef: t.id,
-          callerId: t.callerId,
-          playbook: ref("playbook", m),
-          playbookUseRef: prepared.playbookUseRef,
-          returnedAt: new Date().toISOString(),
-        };
-        const storedUse = {
-          ...use,
-          id: prepared.playbookUseRef,
-        };
-        const existing = await tx.get<{
-          id: string;
-          revision: number;
-          returnedAt: string;
-        }>("playbook_use", storedUse.id);
-        if (!existing) await tx.put(entry("playbook_use", storedUse), null);
-        else {
-          const boundary = await tx.get<{ clearedAt: string }>(
-            "effect_boundary",
-            t.scopeId,
-          );
-          if (
-            boundary &&
-            Date.parse(existing.returnedAt) <= Date.parse(boundary.clearedAt)
-          )
-            await tx.put(
-              entry("playbook_use", {
-                ...storedUse,
-                id: existing.id,
-                revision: existing.revision + 1,
-                returnedAt: new Date(
-                  Math.max(Date.now(), Date.parse(boundary.clearedAt) + 1),
-                ).toISOString(),
-              }),
-              existing.revision,
-            );
-        }
+      if (m && prepared.status === "guidance") {
+        const feedbackRevision = await new Effects(this.store).register(
+          tx,
+          t,
+          ref("playbook", m),
+        );
+        if (feedbackRevision !== undefined)
+          prepared.feedbackRevision = feedbackRevision;
       }
       return prepared;
     });

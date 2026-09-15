@@ -201,14 +201,11 @@ test("session binding survives idle expiry; long capture retains all sources wit
       "Current topic",
     );
     assert.equal((await sources()).length, 209);
-    const events = (await new Effects(store).cases([scopeId]))
-      .flatMap((c) => c.events)
-      .filter((e) => e.taskRef === first.taskRef);
-    assert.equal(events.filter((e) => e.kind === "task_started").length, 1);
-    assert.equal(
-      events.some((e) => e.kind === "task_ended" || e.kind === "outcome"),
-      false,
+    const feedback = (await new Effects(store).cases([scopeId])).filter(
+      (c) => c.taskRef === first.taskRef,
     );
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0]!.taskOutcome, "unknown");
   } finally {
     await store.close();
   }

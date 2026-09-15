@@ -21,18 +21,6 @@ test("Only Source, Experience and Playbook have domain references", () => {
       false,
     );
 });
-test("Work views accept only the current playbook association shape", () => {
-  const uses = workViewSchema.innerType().shape.playbookUses;
-  const use = {
-    playbookUseRef: "association",
-    taskRef: "task",
-    callerId: "host",
-    playbook: { kind: "playbook", id: "playbook", revision: 1 },
-    returnedAt: new Date().toISOString(),
-  };
-  assert.ok(uses.safeParse([use]).success);
-  assert.equal(uses.safeParse([{ ...use, stepIds: ["s1"] }]).success, false);
-});
 test("Native ingestion retains every source in original order and uses its sole identity", async () => {
   const requests: any[] = [];
   const server = createServer(async (req, res) => {

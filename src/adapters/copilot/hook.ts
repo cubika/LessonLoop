@@ -32,13 +32,14 @@ type Call = (operation: string, input: any, key: string) => Promise<any>;
 type Playbook = { kind: "playbook"; id: string; revision: number };
 type State = {
   taskRef?: string;
+  collectionGap?: string;
   cursor?: TranscriptCursor;
   tools: Record<string, string>;
   prompts: Array<{
     key: string;
     responseDigest?: string;
     playbook?: Playbook;
-    playbookUseRef?: string;
+    feedbackRevision?: number | undefined;
   }>;
 };
 const api =
@@ -146,36 +147,6 @@ export async function handleHook(
       sessionKey,
     );
     state.taskRef = taskRef;
-    const effect = async (
-      kind: string,
-      eventId: string,
-      text: string,
-      occurredAt: string,
-      extra = {},
-    ) => {
-      if (!setting.review) return;
-      const result = await call(
-        "recordTaskObservation",
-        [
-          {
-            eventId,
-            taskRef,
-            scopeId: config.scopeId,
-            kind,
-            text,
-            occurredAt,
-            ...extra,
-          },
-        ],
-        eventId,
-      );
-      if (
-        result.results?.some((r: { status: string }) =>
-          ["retryable", "conflict"].includes(r.status),
-        )
-      )
-        throw new Error("effect_retryable");
-    };
     const transcript = await readTranscript(event, cwd, state.cursor);
     const gaps = new Set(transcript.gaps);
     for (const record of transcript.records) {
@@ -202,17 +173,35 @@ export async function handleHook(
           typeof output === "string"
             ? state.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
-        if (receipt?.playbook && receipt.playbookUseRef)
-          await effect(
-            "delivery",
-            digest([sessionKey, record.id ?? record]),
-            "Copilot acknowledged the injected playbook.",
-            at,
-            {
-              playbook: receipt.playbook,
-              playbookUseRef: receipt.playbookUseRef,
-            },
-          );
+        if (
+          setting.review &&
+          receipt?.playbook &&
+          receipt.feedbackRevision !== undefined
+        ) {
+          try {
+            await call(
+              "updateTaskFeedback",
+              {
+                taskRef,
+                field: "delivered",
+                playbookId: receipt.playbook.id,
+                revision: receipt.playbook.revision,
+                expectedRevision: receipt.feedbackRevision,
+              },
+              "delivery",
+            );
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              ![
+                "revision_conflict",
+                "feedback_unavailable",
+                "review_disabled",
+              ].includes(error.message)
+            )
+              throw error;
+          }
+        }
       }
       let segment = transcriptEvent(record);
       if (record.type === "tool.execution_complete") {
@@ -269,15 +258,15 @@ export async function handleHook(
         gaps.add(error.message);
       }
     }
-    const at = eventTime(event.timestamp);
-    if (at)
-      for (const reason of gaps)
-        await effect(
-          "collection_gap",
-          digest([sessionKey, reason, at]),
-          `Copilot collection incomplete: ${reason}.`,
-          at,
-        );
+    if (gaps.size) {
+      state.collectionGap = [...gaps].join(", ");
+      process.stderr.write(
+        "LessonLoop collection incomplete: " +
+          state.collectionGap +
+          "." +
+          String.fromCharCode(10),
+      );
+    }
     // Failed submissions leave the previous checkpoint intact. Replays use
     // transcript identities and timestamps, not callback receipt times.
     if (transcript.cursor) state.cursor = transcript.cursor;
@@ -302,7 +291,7 @@ export async function handleHook(
     if (prepared?.status === "guidance")
       Object.assign(receipt, {
         playbook: prepared.playbook,
-        playbookUseRef: prepared.playbookUseRef,
+        feedbackRevision: prepared.feedbackRevision,
         responseDigest: digest(output.modifiedTransformedPrompt),
       });
     state.prompts = [...state.prompts, receipt].slice(-32);

@@ -133,7 +133,6 @@ test("Erasure clears cached source metadata and shared context without deleting 
       ],
       unresolved: [],
       coverage: [],
-      playbookUses: [],
     };
     await store.transaction((tx) =>
       tx.put(

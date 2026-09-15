@@ -219,7 +219,8 @@ export async function runUiLibraryChecks() {
     await click(taskPanel, "评价这次使用");
     await click(taskPanel, "保存评价");
     assert.equal(
-      requests.findLast((r) => r.operation === "ratePlaybookUse").input.taskRef,
+      requests.findLast((r) => r.operation === "updateTaskFeedback").input
+        .taskRef,
       "task-ui",
     );
     assert.ok(!requests.some((r) => r.operation === "observeTask"));
@@ -321,7 +322,7 @@ export async function runUiLibraryChecks() {
               json: async () => ({
                 result: {
                   status: "guidance",
-                  playbookUseRef: "old-task-use",
+                  feedbackRevision: 2,
                   steps: [],
                   completionChecks: [],
                 },

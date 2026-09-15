@@ -7,6 +7,7 @@ import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 import { dispatch } from "../src/core/server.js";
+import { Effects } from "../src/core/effects.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("database required");
 test("Source withdrawal suppresses affected input without canceling unrelated jobs", async () => {
@@ -196,7 +197,23 @@ test("Erasure resumes after native and projection failures, scrubs transient and
         await tx.put(row.entry, null);
       }
       await tx.put(put("playbook", currentPlaybook).entry, 1);
-      // Deleting the experience first must not discard the source binding.
+      const feedback = {
+        ...identity(scope),
+        id: task.taskRef,
+        taskOutcome: "unknown",
+        outcomeText: "",
+        feedback: [
+          {
+            playbookId: playbook.id,
+            revision: 1,
+            delivered: true,
+            userRating: "incorrect",
+            ratingText: sensitive,
+          },
+        ],
+      };
+      await tx.put(put("task_feedback", feedback).entry, null);
+      // Deleting the experience first must not discard the source-to-history binding.
       const job = await tx.get<any>("job", accepted.jobId);
       await tx.put(
         put("job", {
@@ -255,10 +272,24 @@ test("Erasure resumes after native and projection failures, scrubs transient and
       "completed",
     );
     assert.deepEqual(
-      await store.transaction((tx) => tx.list("playbook_use", [scope])),
+      (
+        await store.transaction((tx) => tx.list<any>("task_feedback", [scope]))
+      ).flatMap((t) => t.feedback),
       [],
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
+    const feedback = (await new Effects(store).cases([scope]))[0]!;
+    await core.configure(owner, {scopeId:scope,expectedRevision:1,learning:true,recommendation:false,review:true,notifications:false});
+    await assert.rejects(
+      new Effects(store).update(host, {
+        taskRef: task.taskRef,
+        field: "taskOutcome",
+        taskOutcome: "succeeded",
+        text: sensitive,
+        expectedRevision: feedback.revision,
+      }),
+      /observation_erased/,
+    );
     assert.equal(
       ((await core.inspect(owner, "playbook", playbook.id)) as any).title,
       "Independent playbook B",

@@ -171,7 +171,6 @@ test("Public resources preserve source identity, work provenance and playbook fe
       evidence: [evidence],
       unresolved: [],
       coverage: [],
-      playbookUses: [],
     });
     const playbook = playbookSchema.parse({
       ...identity(scopeId),
@@ -250,26 +249,23 @@ test("Public resources preserve source identity, work provenance and playbook fe
     assert.equal(prepared.playbook.kind, "playbook");
     assert.equal(prepared.method, undefined);
     assert.deepEqual(prepared.completionChecks, playbook.completionChecks);
-    const events = await call(
-      "recordTaskObservation",
-      [
-        {
-          eventId: randomUUID(),
-          taskRef: task.taskRef,
-          scopeId,
-          kind: "delivery",
-          occurredAt: new Date().toISOString(),
-          text: "Host delivery",
-          playbook: prepared.playbook,
-          playbookUseRef: prepared.playbookUseRef,
-        },
-      ],
+    const delivery = await call(
+      "updateTaskFeedback",
+      {
+        taskRef: task.taskRef,
+        field: "delivered",
+        playbookId: playbook.id,
+        revision: 1,
+        expectedRevision: prepared.feedbackRevision,
+      },
       host,
     );
-    assert.equal(events.results[0].status, "accepted");
-    await call("ratePlaybookUse", {
+    await call("updateTaskFeedback", {
       taskRef: task.taskRef,
-      playbookUseRef: prepared.playbookUseRef,
+      field: "userRating",
+      playbookId: playbook.id,
+      revision: 1,
+      expectedRevision: delivery.revision,
       rating: "helpful",
     });
     assert.equal(

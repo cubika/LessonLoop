@@ -59,7 +59,6 @@ export const caseDraftSchema = workViewSchema
     sequence: true,
     taskRef: true,
     sourceFamily: true,
-    playbookUses: true,
     evidence: true,
   })
   .extend({ evidence: z.array(sourceEvidence).max(16) });

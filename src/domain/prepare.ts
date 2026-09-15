@@ -1,6 +1,6 @@
 import { getEncoding } from "js-tiktoken";
 import type { Experience } from "./experience.js";
-import { digest, type Playbook } from "./schema.js";
+import { type Playbook } from "./schema.js";
 
 const encoder = getEncoding("cl100k_base");
 export const tokenCount = (value: unknown) =>
@@ -96,7 +96,6 @@ function usable(
   );
 }
 // The core checks task ownership and lifetime before rendering guidance.
-// The usage reference links feedback; it is not an execution session or permit.
 export function preparePlaybook(
   playbook: Playbook | undefined,
   request: {
@@ -119,13 +118,6 @@ export function preparePlaybook(
       id: playbook.id,
       revision: playbook.revision,
     },
-    playbookUseRef: digest([
-      "playbook-use",
-      request.callerId,
-      request.taskRef,
-      playbook.id,
-      playbook.revision,
-    ]),
     title: playbook.title,
     goal: playbook.goal,
     conditions: playbook.conditions,

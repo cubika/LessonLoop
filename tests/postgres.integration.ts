@@ -145,31 +145,10 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     ).status,
     "target_unavailable",
   );
-  const event = {
-    eventId: "effect-start",
-    taskRef: effectTask.taskRef,
-    scopeId: scope,
-    kind: "task_started",
-    occurredAt: new Date().toISOString(),
-    text: "Task started",
-  };
-  assert.equal(
-    (await effects.record(host, [event])).results[0]?.status,
-    "accepted",
-  );
-  assert.equal(
-    (await effects.record(host, [event])).results[0]?.status,
-    "duplicate",
-  );
   assert.equal((await effects.summary([scope])).unknownOutcome, 1);
   assert.equal((await effects.summary([scope])).succeeded, 0);
-  assert.equal("successRate" in (await effects.summary([scope])), false);
   await effects.clear(scope);
   assert.equal((await effects.summary([scope])).tasks, 0);
-  assert.equal(
-    (await effects.record(host, [event])).results[0]?.status,
-    "ignored",
-  );
   const playbook = playbookSchema.parse({
     ...identity(scope),
     title: "Test playbook",

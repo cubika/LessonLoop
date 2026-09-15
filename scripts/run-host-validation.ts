@@ -249,7 +249,7 @@ try {
   const runtimeTools: Array<{ name: string; success?: boolean }> = [];
   const guidanceReceipts: Array<{
     taskRef: string;
-    playbooks: Array<{ playbookUseRef?: string }>;
+    playbooks: Array<{ playbook: { id: string; revision: number } }>;
   }> = [];
   const toolNames = new Map<string, string>();
   const finalTexts: string[] = [];
@@ -320,9 +320,6 @@ try {
     const inputSources = (await tx.list<any>("source", [report.scope])).filter(
       (m) => taskRefs.has(m.taskRef),
     );
-    const uses = (await tx.list<any>("playbook_use", [report.scope])).filter(
-      (u) => taskRefs.has(u.taskRef),
-    );
     return {
       roles: [...new Set(inputSources.map((m) => m.segment?.role))],
       finalAgentCaptured:
@@ -331,34 +328,15 @@ try {
           (m) =>
             m.segment?.role === "agent" && m.segment.text === finalTexts.at(-1),
         ),
-      sameUseAcrossHostAndAgent: uses.some(
-        (u) =>
-          u.callerId === principal.id &&
-          guidanceReceipts.some(
-            (receipt) =>
-              receipt.taskRef === u.taskRef &&
-              receipt.playbooks.some(
-                (p) => p.playbookUseRef === u.playbookUseRef,
-              ),
-          ),
-      ),
-      playbookUses: uses.map((u) => ({
-        callerId: u.callerId,
-        taskRef: u.taskRef,
-        playbookUseRef: u.playbookUseRef,
-      })),
     };
   });
   const cases = (await new Effects(store).cases([report.scope])).filter((c) =>
     taskRefs.has(c.taskRef),
   );
-  const effectEvents = cases.flatMap((c) => c.events);
   result.evidence = {
     ...evidence,
-    effectKinds: [...new Set(effectEvents.map((e) => e.kind))],
-    outcomes: effectEvents
-      .filter((e) => e.kind === "outcome")
-      .map((e) => e.outcome),
+    feedback: cases,
+    outcomes: cases.map((c) => c.taskOutcome),
     sameSessionUserClarification: "adapter_replay_test_only",
     causalBenefit: "not_inferred",
   };
@@ -368,11 +346,24 @@ try {
     evidence.finalAgentCaptured &&
     evidence.roles.includes("user") &&
     evidence.roles.includes("tool") &&
-    evidence.sameUseAcrossHostAndAgent &&
     traces.some((e) => e.hook === "agentStop" && e.success) &&
-    effectEvents.some((e) => e.kind === "delivery") &&
+    cases.some((c) =>
+      c.feedback.some(
+        (f) =>
+          f.delivered &&
+          guidanceReceipts.some(
+            (r) =>
+              r.taskRef === c.taskRef &&
+              r.playbooks.some(
+                (p) =>
+                  p.playbook.id === f.playbookId &&
+                  p.playbook.revision === f.revision,
+              ),
+          ),
+      ),
+    ) &&
     traces.some((e) => e.hook === "sessionEnd" && e.success) &&
-    !effectEvents.some((e) => e.kind === "outcome")
+    cases.every((c) => c.taskOutcome === "unknown")
       ? "host_loop_observed"
       : "failed";
 } catch (error) {

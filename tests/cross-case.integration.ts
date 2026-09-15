@@ -102,7 +102,6 @@ test("Automatic cross-case review requires independent families and freezes a de
           ],
           unresolved: [],
           coverage: [],
-          playbookUses: [],
         };
         await tx.put(
           {
