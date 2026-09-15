@@ -92,7 +92,11 @@ export class Transaction {
     ) {
       const value = { ...entry.value };
       if (entry.kind === "job") delete value.payload;
-      if (entry.kind === "revision_review") delete value.candidate;
+      if (entry.kind === "revision_review") {
+        delete value.candidate;
+        delete value.modelQuery;
+        delete value.modelSchema;
+      }
       entry = { ...entry, value };
     }
     if (entry.kind === "playbook" && "steps" in entry.value) {

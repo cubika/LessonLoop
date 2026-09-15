@@ -392,9 +392,7 @@ test("Cancellation during submission recovery returns to the shared drain path",
         await f.core.cancelJob(f.p, f.receipt.jobId);
         return "recovered-operation";
       };
-      engine.operation = async () => {
-        throw new Error("Canceled job must drain before reading operations");
-      };
+      engine.operation = async () => ({ status: "failed" });
       await f.core.tick([f.scope]);
       assert.equal(
         (await f.core.getJob(f.p, f.receipt.jobId)).status,

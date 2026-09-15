@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { appendFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ProductStore } from "../src/store/postgres.js";
@@ -14,6 +17,8 @@ import {
   type ObjectRef,
 } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
+import { handleHook } from "../src/adapters/copilot/hook.js";
+import { Effects } from "../src/core/effects.js";
 
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("test database required");
@@ -316,18 +321,58 @@ test("Guidance combines eligible content, preserves leads and rechecks targets a
   }
 });
 
-test("Three MCP tools run through real HTTP and storage, including fixed-reference expansion", async () => {
+test("Three MCP tools run through real HTTP and storage, including expansion delivery confirmed by the host", async (t) => {
   const f = await fixture();
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "lessonloop-delivery-")),
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const transcriptPath = join(root, "events.jsonl");
+  await writeFile(
+    transcriptPath,
+    JSON.stringify({
+      type: "session.start",
+      data: { sessionId: "delivery", context: { cwd: root } },
+    }) + "\n",
+  );
+  const host: Principal = {
+    id: randomUUID(),
+    channel: "host",
+    scopes: [f.scopeId],
+  };
+  f.agent.taskOwnerId = host.id;
   const token = randomUUID();
-  const server = apiServer(f.core, [{ token, principal: f.agent }]);
+  const hostToken = randomUUID();
+  const server = apiServer(f.core, [
+    { token, principal: f.agent },
+    { token: hostToken, principal: host },
+  ]);
   const client = new Client({ name: "three-tools-integration", version: "1" });
   try {
     const { m } = await f.seed(true);
+    const readSources = () =>
+      f.store.transaction((tx) => tx.list("source", [f.scopeId]));
+    const sourcesBefore = await readSources();
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
     );
     const address = server.address();
     assert.ok(address && typeof address !== "string");
+    const baseUrl = "http://127.0.0.1:" + address.port;
+    const hook = () =>
+      handleHook(
+        {
+          baseUrl,
+          token: hostToken,
+          scopeId: f.scopeId,
+          allowedRoots: [root],
+          stateRoot: join(root, "state"),
+        },
+        { sessionId: "delivery", cwd: root, transcriptPath },
+        "agentStop",
+      );
+    await hook();
+    const task = (await f.core.listTasks(f.user))[0]!;
     await client.connect(
       new StdioClientTransport({
         command: process.execPath,
@@ -346,13 +391,18 @@ test("Three MCP tools run through real HTTP and storage, including fixed-referen
       (await client.listTools()).tools.map((t) => t.name).sort(),
       ["feedback", "getGuidance", "submitSource"],
     );
+    let guidanceContent = "";
     const call = async (name: string, input: unknown) => {
       const reply = await client.callTool({ name, arguments: { input } });
       assert.equal(reply.isError, false, JSON.stringify(reply.content));
-      return JSON.parse((reply.content as Array<{ text: string }>)[0]!.text)
-        .result;
+      const content = (reply.content as Array<{ text: string }>)[0]!.text;
+      if (name === "getGuidance") guidanceContent = content;
+      return JSON.parse(content).result;
     };
-    const first = await call("getGuidance", { query: "generated" });
+    const first = await call("getGuidance", {
+      taskRef: task.taskRef,
+      query: "generated",
+    });
     assert.equal(first.playbooks[0].status, "requires_expansion");
     assert.equal(first.playbooks[0].feedbackRevision, undefined);
     assert.equal(
@@ -372,6 +422,41 @@ test("Three MCP tools run through real HTTP and storage, including fixed-referen
     assert.equal(expanded.taskRef, first.taskRef);
     assert.equal(expanded.playbooks[0].status, "guidance");
     assert.equal(expanded.playbooks[0].steps.length, m.steps.length);
+    const effects = new Effects(f.store);
+    const readFeedback = async () => (await effects.cases([f.scopeId]))[0]!;
+    assert.equal((await readFeedback()).feedback[0]!.delivered, null);
+    await appendFile(
+      transcriptPath,
+      [
+        {
+          id: "start",
+          type: "tool.execution_start",
+          data: { toolCallId: "expand", toolName: "lessonloop-getGuidance" },
+        },
+        {
+          id: "complete",
+          type: "tool.execution_complete",
+          data: {
+            toolCallId: "expand",
+            success: true,
+            result: { content: guidanceContent },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") + "\n",
+    );
+    await hook();
+    const delivered = await readFeedback();
+    assert.equal(delivered.feedback[0]!.delivered, true);
+    assert.equal(
+      delivered.revision,
+      expanded.playbooks[0].feedbackRevision + 1,
+    );
+    assert.equal((await effects.summary([f.scopeId])).delivered, 1);
+    assert.deepEqual(await readSources(), sourcesBefore);
+    await hook();
+    assert.deepEqual(await readFeedback(), delivered);
     const receipt = await call("submitSource", {
       scopeId: first.scopeId,
       segments: [

@@ -15,7 +15,10 @@ import { handleHook, type Config } from "../src/adapters/copilot/hook.js";
 import { readTranscript } from "../src/adapters/copilot/transcript.js";
 import { digest } from "../src/domain/schema.js";
 
-async function fixture(t: test.TestContext) {
+async function fixture(
+  t: test.TestContext,
+  guidance?: { playbooks: object[]; experiences: object[] },
+) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "lessonloop-session-")),
   );
@@ -47,12 +50,13 @@ async function fixture(t: test.TestContext) {
   const bindings = new Map<string, string>();
   const received = new Map<string, any>();
   let fail: string | undefined, lose: string | undefined;
+  let failMessage = "temporary_failure";
   let expansion = false;
   const rpc = async (operation: string, input: any, key: string) => {
     calls.push({ operation, input, key });
     if (fail === operation) {
       fail = undefined;
-      throw new Error("temporary_failure");
+      throw new Error(failMessage);
     }
     if (operation === "settings.get") return [settings];
     if (operation === "startTask") {
@@ -78,6 +82,7 @@ async function fixture(t: test.TestContext) {
           },
         ],
         experiences: [],
+        ...guidance,
       };
     }
     const id = operation + key;
@@ -137,8 +142,9 @@ async function fixture(t: test.TestContext) {
     hook,
     sources,
     received,
-    fail: (operation: string) => {
+    fail: (operation: string, message = "temporary_failure") => {
       fail = operation;
+      failMessage = message;
     },
     lose: (operation: string) => {
       lose = operation;
@@ -187,6 +193,93 @@ test("one session retains its binding across stops, resumes and topic changes", 
       JSON.parse(await readFile(join(f.config.stateRoot, file), "utf8")),
     ).sort(),
     ["cursor", "prompts", "taskRef", "tools"],
+  );
+});
+
+test("empty guidance leaves the prompt unchanged, preserves capture and deduplicates only the same callback", async (t) => {
+  const guidance = { playbooks: [] as object[], experiences: [] as object[] };
+  const f = await fixture(t, guidance);
+  await f.append(f.record(1, "user.message", { content: "Inspect" }));
+  const event = {
+    prompt: "Inspect",
+    transformedPrompt: "Host context: Inspect",
+  };
+  const output = await f.hook("userPromptTransformed", 2, event);
+  assert.deepEqual(output, {});
+  assert.deepEqual(await f.hook("userPromptTransformed", 2, event), {});
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 1);
+  assert.equal(f.sources().length, 1);
+  await f.append(
+    f.record(3, "hook.end", {
+      hookType: "userPromptTransformed",
+      success: true,
+      output,
+    }),
+    f.record(4, "assistant.message", { content: "Observed the project" }),
+  );
+  await f.hook("agentStop", 5);
+  assert.deepEqual(
+    f.sources().map((s) => s.text),
+    ["Inspect", "Observed the project"],
+  );
+  assert.equal(
+    f.calls.some((c) => c.operation === "updateTaskFeedback"),
+    false,
+  );
+  assert.deepEqual(await f.hook("userPromptTransformed", 6, event), {});
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 2);
+  guidance.playbooks.push({
+    playbook: { kind: "playbook", id: "available", revision: 1 },
+    status: "guidance",
+    feedbackRevision: 1,
+    steps: [{ instruction: "Read the source and verify" }],
+  });
+  const next = await f.hook("userPromptTransformed", 7, event);
+  assert.match(
+    String(next.modifiedTransformedPrompt),
+    /Read the source and verify/,
+  );
+  assert.equal(f.calls.filter((c) => c.operation === "getGuidance").length, 3);
+  assert.equal(f.bindings.size, 1);
+  assert.ok(
+    f.calls
+      .filter((c) => c.operation === "getGuidance")
+      .every((c) => c.input.taskRef === "task-0"),
+  );
+});
+
+test("experience-only guidance is still injected without playbook delivery feedback", async (t) => {
+  const experience = {
+    experience: { kind: "experience", id: "observed", revision: 1 },
+    level: "lead",
+    summary: "Verify the generated client against its source",
+  };
+  const f = await fixture(t, { playbooks: [], experiences: [experience] });
+  const output = await f.hook("userPromptTransformed", 1, {
+    prompt: "Inspect",
+    transformedPrompt: "Host context: Inspect",
+  });
+  assert.ok(
+    String(output.modifiedTransformedPrompt).startsWith(
+      "Host context: Inspect",
+    ),
+  );
+  assert.ok(
+    String(output.modifiedTransformedPrompt).includes(
+      JSON.stringify(experience),
+    ),
+  );
+  await f.append(
+    f.record(2, "hook.end", {
+      hookType: "userPromptTransformed",
+      success: true,
+      output,
+    }),
+  );
+  await f.hook("agentStop", 3);
+  assert.equal(
+    f.calls.some((c) => c.operation === "updateTaskFeedback"),
+    false,
   );
 });
 
@@ -292,9 +385,270 @@ test("authorization and learning switches precede capture; expanded guidance use
   });
   assert.equal(f.sources().length, 0);
   assert.match(String(output.modifiedTransformedPrompt), /getGuidance/);
+  assert.match(String(output.modifiedTransformedPrompt), /requires_expansion/);
   f.settings.learning = true;
   await f.hook("agentStop", 4);
   assert.equal(f.sources().length, 0, "disabled content is not backfilled");
+});
+
+const expandedGuidance = () => ({
+  result: {
+    taskRef: "task-0",
+    scopeId: "scope",
+    playbooks: [
+      {
+        playbook: { kind: "playbook", id: "Large guidance", revision: 3 },
+        status: "guidance",
+        feedbackRevision: 2,
+        steps: [{ instruction: "Read the source and verify" }],
+      },
+    ],
+    experiences: [],
+  },
+});
+const deliveries = (f: Awaited<ReturnType<typeof fixture>>) =>
+  f.calls.filter(
+    (c) =>
+      c.operation === "updateTaskFeedback" && c.input.field === "delivered",
+  );
+
+test("MCP expansion confirms delivery only after a successful tool receipt and never becomes source material", async (t) => {
+  const f = await fixture(t);
+  f.expand();
+  const output = await f.hook("userPromptTransformed", 1, {
+    prompt: "Large guidance",
+  });
+  await f.append(
+    f.record(2, "hook.end", {
+      hookType: "userPromptTransformed",
+      success: true,
+      output,
+    }),
+    f.record(3, "tool.execution_start", {
+      toolCallId: "expand",
+      toolName: "lessonloop-getGuidance",
+    }),
+  );
+  await f.hook("agentStop", 4);
+  assert.equal(deliveries(f).length, 0);
+  await f.append(
+    f.record(5, "tool.execution_complete", {
+      toolCallId: "expand",
+      success: true,
+      result: { content: JSON.stringify(expandedGuidance()) },
+    }),
+  );
+  await f.hook("agentStop", 6);
+  await f.hook("sessionEnd", 7);
+  assert.deepEqual(
+    deliveries(f).map((c) => c.input),
+    [
+      {
+        taskRef: "task-0",
+        field: "delivered",
+        playbookId: "Large guidance",
+        revision: 3,
+        expectedRevision: 2,
+      },
+    ],
+  );
+  assert.equal(f.sources().length, 0);
+});
+
+test("explicit MCP guidance confirms delivery with learning and automatic recommendations disabled", async (t) => {
+  const f = await fixture(t);
+  f.settings.learning = false;
+  f.settings.recommendation = false;
+  await f.append(
+    f.record(1, "tool.execution_start", {
+      toolCallId: "explicit",
+      toolName: "lessonloop-getGuidance",
+    }),
+    f.record(2, "tool.execution_complete", {
+      toolCallId: "explicit",
+      success: true,
+      result: { textResultForLlm: JSON.stringify(expandedGuidance()) },
+    }),
+  );
+  await f.hook("agentStop", 3);
+  assert.equal(deliveries(f).length, 1);
+  assert.equal(f.sources().length, 0);
+});
+
+test("MCP delivery ignores failed, incomplete, foreign and disabled receipts", async (t) => {
+  const invalid: Array<{
+    name: string;
+    change?: (body: any) => void;
+    completion?: Record<string, unknown>;
+    toolName?: string;
+    review?: boolean;
+    extra?: Record<string, unknown>;
+  }> = [
+    { name: "failed tool", completion: { success: false } },
+    {
+      name: "MCP result error",
+      completion: {
+        result: { content: JSON.stringify(expandedGuidance()), isError: true },
+      },
+    },
+    {
+      name: "truncated model content with a complete UI copy",
+      completion: {
+        result: {
+          content: "truncated",
+          detailedContent: JSON.stringify(expandedGuidance()),
+          textResultForLlm: JSON.stringify(expandedGuidance()),
+        },
+      },
+    },
+    { name: "malformed JSON", completion: { result: { content: "invalid" } } },
+    { name: "null body", completion: { result: { content: "null" } } },
+    {
+      name: "MCP error",
+      change: (body) => {
+        body.isError = true;
+      },
+    },
+    {
+      name: "RPC error",
+      change: (body) => {
+        body.error = "unavailable";
+      },
+    },
+    {
+      name: "other task",
+      change: (body) => {
+        body.result.taskRef = "other";
+      },
+    },
+    {
+      name: "other scope",
+      change: (body) => {
+        body.result.scopeId = "other";
+      },
+    },
+    {
+      name: "requires expansion",
+      change: (body) => {
+        body.result.playbooks[0].status = "requires_expansion";
+      },
+    },
+    {
+      name: "too large",
+      change: (body) => {
+        body.result.playbooks[0].status = "too_large";
+      },
+    },
+    {
+      name: "missing feedback revision",
+      change: (body) => {
+        delete body.result.playbooks[0].feedbackRevision;
+      },
+    },
+    {
+      name: "invalid feedback revision",
+      change: (body) => {
+        body.result.playbooks[0].feedbackRevision = 0;
+      },
+    },
+    {
+      name: "invalid target revision",
+      change: (body) => {
+        body.result.playbooks[0].playbook.revision = 0;
+      },
+    },
+    {
+      name: "experience target",
+      change: (body) => {
+        body.result.playbooks[0].playbook.kind = "experience";
+      },
+    },
+    { name: "unrelated product tool", toolName: "lessonloop-submitSource" },
+    { name: "lookalike tool", toolName: "other-lessonloop-getGuidance" },
+    { name: "review disabled", review: false },
+    { name: "child agent", extra: { agentId: "child" } },
+  ];
+  for (const scenario of invalid)
+    await t.test(scenario.name, async (t) => {
+      const f = await fixture(t);
+      f.settings.review = scenario.review ?? true;
+      const body = expandedGuidance();
+      scenario.change?.(body);
+      await f.append(
+        f.record(
+          1,
+          "tool.execution_start",
+          {
+            toolCallId: "expand",
+            toolName: scenario.toolName ?? "lessonloop-getGuidance",
+          },
+          scenario.extra,
+        ),
+        f.record(
+          2,
+          "tool.execution_complete",
+          {
+            toolCallId: "expand",
+            success: true,
+            result: { content: JSON.stringify(body) },
+            ...scenario.completion,
+          },
+          scenario.extra,
+        ),
+      );
+      await f.hook("agentStop", 3);
+      assert.equal(deliveries(f).length, 0);
+      assert.equal(f.sources().length, 0);
+      f.settings.review = true;
+      await f.hook("agentStop", 4);
+      assert.equal(
+        deliveries(f).length,
+        0,
+        "ignored receipts are not backfilled",
+      );
+    });
+});
+
+test("MCP delivery retries transport failures with the same receipt and respects feedback conflicts", async (t) => {
+  for (const error of [
+    "response_lost",
+    "revision_conflict",
+    "feedback_unavailable",
+    "review_disabled",
+  ]) {
+    await t.test(error, async (t) => {
+      const f = await fixture(t);
+      await f.append(
+        f.record(1, "tool.execution_start", {
+          toolCallId: "expand",
+          toolName: "lessonloop-getGuidance",
+        }),
+        f.record(2, "tool.execution_complete", {
+          toolCallId: "expand",
+          success: true,
+          result: { content: JSON.stringify(expandedGuidance()) },
+        }),
+        f.record(3, "assistant.message", {
+          content: "Continue collecting observations",
+        }),
+      );
+      if (error === "response_lost") {
+        f.lose("updateTaskFeedback");
+        await assert.rejects(f.hook("agentStop", 3), /response_lost/);
+      } else {
+        f.fail("updateTaskFeedback", error);
+        await f.hook("agentStop", 3);
+      }
+      await f.hook("sessionEnd", 4);
+      const updates = deliveries(f);
+      assert.equal(updates.length, error === "response_lost" ? 2 : 1);
+      if (error === "response_lost") assert.deepEqual(updates[0], updates[1]);
+      assert.deepEqual(
+        f.sources().map((source) => source.text),
+        ["Continue collecting observations"],
+      );
+    });
+  }
 });
 
 test("streaming preserves UTF-8 and incomplete lines, reports identity mismatches and truncation", async (t) => {

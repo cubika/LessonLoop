@@ -128,7 +128,7 @@ listTasks按授权范围列出当前任务。getTaskFeedback({taskRef})读取当
 
 字段同值重试不改revision，旧revision不能覆盖新值。清空会保留递增版本的空标记；显式重新准备可恢复登记，旧请求仍不能写入。反馈过期后不可更新。接口不接收事件批次，不重放历史，也不使用迟到窗口。
 
-Copilot仅在真实注入回执后写delivered；反馈版本已变化时保留未知，后续新回执可再次确认。任务结束只更新任务边界，采集缺口留在宿主诊断状态中，均不推断任务结果。
+Copilot仅在真实注入回执或MCP工具成功返回完整guidance的回执后写delivered；产品输出仍不进入学习材料。反馈版本已变化时保留未知，后续新回执可再次确认。任务结束只更新任务边界，采集缺口留在宿主诊断状态中，均不推断任务结果。
 
 getUsageView({playbookId?})与getEffectSummary直接读取当前记录。reviews.issue引用caseId和当前revision；记录更正后，问题确认降为待核实。reviews.export导出当前记录及选定的原始观察，clearEffectData清空回顾。导出不自动上传或启动开发Agent。
 
