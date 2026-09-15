@@ -127,6 +127,18 @@ test("Direct feedback survives restart, accepts independent corrections and reje
       evidence: [{ caseId: task.taskRef, revision: before.revision }],
     });
     await effects.update(user, { ...rate, expectedRevision: before.revision });
+    const corrected = (await reviews.issues(user as any))[0]!;
+    assert.equal(corrected.status, "suspected");
+    assert.equal(corrected.evidence[0]!.revision, (await read()).revision);
+    await reviews.recordIssue(user as any, {
+      scopeId: scope,
+      id: corrected.id,
+      expectedRevision: corrected.revision,
+      category: corrected.category,
+      status: "resolved",
+      severity: "normal",
+      evidence: corrected.evidence,
+    });
     assert.equal(
       (await reviews.issues(user as any)).some(
         (i) => i.id === issue.id && i.status === "confirmed",

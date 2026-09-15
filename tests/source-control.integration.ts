@@ -7,6 +7,7 @@ import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
 import { identity, playbookSchema } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
 import { dispatch } from "../src/core/server.js";
+import { Effects } from "../src/core/effects.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw new Error("database required");
 test("Source withdrawal suppresses affected input without canceling unrelated jobs", async () => {
@@ -275,6 +276,18 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       [],
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
+    const feedback = (await new Effects(store).cases([scope]))[0]!;
+    await core.configure(owner, {scopeId:scope,expectedRevision:1,learning:true,recommendation:false,review:true,notifications:false});
+    await assert.rejects(
+      new Effects(store).update(host, {
+        taskRef: task.taskRef,
+        field: "taskOutcome",
+        taskOutcome: "succeeded",
+        text: sensitive,
+        expectedRevision: feedback.revision,
+      }),
+      /observation_erased/,
+    );
     assert.equal((await core.history(owner, playbook.id)).length, 0);
     assert.equal(
       ((await core.inspect(owner, "playbook", playbook.id)) as any).title,

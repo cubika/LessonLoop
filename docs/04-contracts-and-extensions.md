@@ -49,7 +49,7 @@ preparePlaybook 输入 playbookId/revision、taskRef，可选 requestId 和 view
 
 | 准备结果 | 含义与返回 |
 |---|---|
-| guidance | 完整条件、步骤/分支、全部检查及其stepIds、executionBoundary、ObjectRef、playbookUseRef；不宣称本次已适用或完成 |
+| guidance | 完整条件、步骤/分支、全部检查及其stepIds、executionBoundary、ObjectRef；回顾开启时附feedbackRevision供更新反馈 |
 | target_changed | 旧revision过期，丢弃旧视图后重新准备 |
 | target_unavailable | 不存在、无权或资格失效；不泄露隐藏详情 |
 | requires_expansion / too_large | 自动预算不足可显式expanded；显式上限仍不足则不提供残缺视图 |
@@ -57,9 +57,9 @@ preparePlaybook 输入 playbookId/revision、taskRef，可选 requestId 和 view
 
 Agent 从第一个步骤开始，无 choices 时继续下一步；有 choices 时完成该步骤，再根据当前观察选择唯一匹配的 next 或 stop。条件缺失、无匹配或多匹配时调查或询问。完整展示所有分支便于理解，执行时只走所选路径，并应用全局及该路径绑定的检查。执行后才能得知的结果须来自本轮实际操作，不能用旧结果代替。
 
-preparePlaybook 不维护内存执行会话，不保存当前步骤或分支补查次数。每次获取都重查当前资格；核心重启后，未结束且未过期的任务仍可获取方法。playbookUseRef 按任务归属、任务和方法修订稳定生成，仅关联反馈，不是执行凭据。相同调用身份重复获取不重复记录使用，也不重置已有结果。
+preparePlaybook 每次重查当前资格；未结束且未过期的任务在核心重启后仍可获取方法。回顾开启时，在任务反馈中登记方法id和revision，重复获取不增加记录或重置结果。
 
-学习或回顾开启时保存轻量方法返回关联，学习复盘可将其带入 WorkView.playbookUses，回顾单独记录投递、实际观察及用户评价。返回或投递方法不证明采用和成功；缺少对应依据时保留 unknown。工具结果采集和后台复盘独立于方法获取。
+学习直接使用来源材料和可信工具观察，不复制方法使用关联。任务反馈只保存当前投递、结果和评价，返回方法不代表投递或成功。
 
 ## 直接经验操作
 
@@ -94,6 +94,8 @@ previousUse还可为not_targeted/not_confirmed/superseded/unknown。暂停和新
 
 适配复用事件解析、材料捕获、上下文回填和诊断，将原生API调用转换为产品操作。不能仅换base URL，也不预先实现整个Hindsight兼容服务。宿主若支持plugin包可沿官方格式注册；若复用独立hooks注册，则明确所有权和卸载。用户无需手工复制源码。
 
+采集优先复用官方实现，薄适配负责授权范围、排除 LessonLoop 派生内容、方法注入和产品接口转换。当前固定 coding-agents 0.4.2 的流式读取与消息规范化，源码来源和局部差异见[采集复用](../third-party/copilot-collection.md)。任务边界统一保存在核心任务对象，结束状态与结束事件在一次事务内提交，不从宿主停止推断任务成败；hook 仅保存采集检查点、事件关联与注入回执。任务切分仍沿用 new/continue 规则，升级后重新打开工作会话。
+
 Agent MCP 只公开 getGuidance、submitSource、feedback，三个工具都提供明确的参数结构。工具参数为 input 和可选 eventId；重试同一次请求时复用 eventId。可信事件使用专用宿主入口；对象详情、主题复盘、作业查询、删除、范围、导出和安装管理由 UI/CLI 提供。
 
 getGuidance 接受 query，或 target={kind:playbook/experience,id,revision}。已有 hook 或上次返回的 taskRef 时复用该任务；首次调用可省略，核心按唯一授权范围或显式 scopeId 创建任务，并按请求幂等键复用。多范围时必须指定 scopeId；已有任务只检索自身范围，校验任务身份、结束状态与24小时时限。直接 RPC 首次调用必须携带 Idempotency-Key，MCP 适配器会补齐。
@@ -107,7 +109,6 @@ submitSource 接收 agent/external 材料、可选补充来源引用，返回异
 | taskInjection | 新任务首次规划/行动前搜索并准备方法；只配置MCP不算自动路径 |
 | explicitPrepare | 显式获取完整方法与刷新当前版本可运行 |
 | trustedCapture | 实际来源角色、尝试与结果可核对；工具配置存在不等于覆盖完整 |
-| stepToolRefresh | 可选增强：工具动作能关联playbookUseRef/stepId并在开始前刷新，失败不重新取得旧资格 |
 | trustedOutcome | 声明能观察哪些检查/产物与任务结束，未观察的结果为unknown |
 | asyncReceipt | 支持异步回执位置，缺少时明确使用UI/CLI查询 |
 
@@ -123,13 +124,13 @@ submitSource 接收 agent/external 材料、可选补充来源引用，返回异
 
 ## 本地效果回顾接口
 
-listTasks按用户授权范围列出当前任务供页面关联。ratePlaybookUse({taskRef,playbookUseRef,rating,text?})仅接收真实用户评价，检查已返回的方法引用、回顾开关和清空边界；用户不能通过recordTaskObservation冒充宿主事件。
+listTasks按授权范围列出当前任务。getTaskFeedback({taskRef})读取当前反馈及revision；updateTaskFeedback按expectedRevision更新一个字段。field=delivered需要playbookId/revision，仅可信宿主可确认；field=taskOutcome需要taskOutcome和可选text，仅任务所属宿主可写；field=userRating需要playbookId/revision、rating和可选text，仅用户可写。
 
-recordTaskObservation是可信适配专用批量入口，事件包含eventId、taskRef、kind、occurredAt、可选responseRef/playbookUseRef/ObjectRef/stepId和短证据。kind包括task_started/task_ended/delivery/usage/outcome/user_rating/collection_gap。核心按真实通道确定known/unknown，不能由模型赋值获得可信身份。
+字段同值重试不改revision，旧revision不能覆盖新值。清空会保留递增版本的空标记；显式重新准备可恢复登记，旧请求仍不能写入。反馈过期后不可更新。接口不接收事件批次，不重放历史，也不使用迟到窗口。
 
-相同事件ID与相同内容为duplicate，不同内容为conflict；逐项accepted/rejected/retryable，重试只处理未确认项。任务结束不表示成功，结果迟到窗口由07定义。学习与回顾独立授权，同一原始事件去重后可分别路由，标签不直接触发知识升级。
+Copilot仅在真实注入回执后写delivered；反馈版本已变化时保留未知，后续新回执可再次确认。任务结束只更新任务边界，采集缺口留在宿主诊断状态中，均不推断任务结果。
 
-UI/CLI 使用 getUsageView({playbookId?}) 按需查看使用记录，getEffectSummary 汇总效果，reviews.issue 保存用户复核，reviews.export 导出，clearEffectData 清空回顾。工作记录通过 getWorkView 展开。视图保留底层事件关联，摘要不成为独立学习证据。开发导出需选择范围、脱敏预览和本地路径，不自动上传或启动开发 Agent。
+getUsageView({playbookId?})与getEffectSummary直接读取当前记录。reviews.issue引用caseId和当前revision；记录更正后，问题确认降为待核实。reviews.export导出当前记录及选定的原始观察，clearEffectData清空回顾。导出不自动上传或启动开发Agent。
 
 ## Connector 接口
 

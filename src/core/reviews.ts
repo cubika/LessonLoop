@@ -90,7 +90,7 @@ export class Reviews {
         throw new Conflict("issue_category_changed");
       const evidence = [
         ...new Map(
-          [...(old?.evidence ?? []), ...v.evidence].map((r) => [digest(r), r]),
+          [...(old?.evidence ?? []), ...v.evidence].map((r) => [r.caseId, r]),
         ).values(),
       ];
       if (evidence.length > 32) throw new Error("issue_evidence_budget");
@@ -166,10 +166,16 @@ export class Reviews {
               c.id === r.caseId &&
               c.scopeId === issue.scopeId &&
               !c.cleared &&
-              c.revision === r.revision &&
               Date.parse(c.createdAt) > Date.now() - 30 * DAY,
           ),
         );
+        const confirmed =
+          !!issue.confirmedBy &&
+          (issue.confirmedEvidence ?? issue.evidence).every(
+            (r) =>
+              evidence.some((e) => e.caseId === r.caseId) &&
+              cases.some((c) => c.id === r.caseId && c.revision === r.revision),
+          );
         if (
           evidence.length &&
           Date.parse(issue.createdAt) > Date.now() - 90 * DAY
@@ -177,25 +183,15 @@ export class Reviews {
           result.push({
             ...issue,
             status:
-              issue.status === "confirmed" &&
-              !(issue.confirmedEvidence ?? issue.evidence).every((r) =>
-                evidence.some(
-                  (e) => e.caseId === r.caseId && e.revision === r.revision,
-                ),
-              )
+              issue.status === "confirmed" && !confirmed
                 ? "suspected"
                 : issue.status,
-            evidence,
+            evidence: evidence.map((r) => ({
+              caseId: r.caseId,
+              revision: cases.find((c) => c.id === r.caseId)!.revision,
+            })),
             affectedTasks: new Set(evidence.map((e) => e.caseId)).size,
-            confirmation:
-              issue.confirmedBy &&
-              (issue.confirmedEvidence ?? issue.evidence).every((r) =>
-                evidence.some(
-                  (e) => e.caseId === r.caseId && e.revision === r.revision,
-                ),
-              )
-                ? "user_confirmed"
-                : "needs_verification",
+            confirmation: confirmed ? "user_confirmed" : "needs_verification",
           });
       }
       return result;

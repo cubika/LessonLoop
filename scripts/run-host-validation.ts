@@ -20,7 +20,7 @@ await mkdir(folder, { recursive: true });
 const workspace = join(folder, "workspace");
 await mkdir(workspace, { recursive: true });
 const prompt =
-  "Read fixture.txt once. Diagnose the generated client field that disappears after regeneration using the complete method supplied by the LessonLoop hook. Choose the relevant branch from the file contents and explain the remaining check. Do not request step unlocking or report completion. If method references are present, call lessonloop-getGuidance once with input {taskRef, target: {kind: 'playbook', id, revision}} using the supplied playbook reference to check that explicit retrieval also returns complete guidance. Stop after these tools. If a tool returns an error, report the limitation. Do not guess identifiers, inspect other files, retry tools, edit files, or claim task success.";
+  "Read fixture.txt once. Diagnose the generated client field that disappears after regeneration using the complete method supplied by the LessonLoop hook. Choose the relevant branch from the file contents and explain the remaining check. Do not request step unlocking or report completion. Read taskRef from the lessonloop-playbook tag and the playbook id/revision from its JSON in this prompt; those references are not in fixture.txt. Call lessonloop-getGuidance once with input {taskRef, target: {kind: 'playbook', id, revision}} using those supplied references to check explicit retrieval. Stop after these two tools. If the hook context is absent or a tool returns an error, report the limitation. Do not guess identifiers, inspect other files, retry tools, edit files, or claim task success.";
 const plugin = join(folder, "plugin");
 await mkdir(join(plugin, "com.github.copilot/hooks"), { recursive: true });
 const token = randomBytes(32).toString("hex");
@@ -31,7 +31,8 @@ const principal = {
   scopes: [report.scope],
 };
 const store = new ProductStore(
-  `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
+  process.env.LESSONLOOP_TEST_DATABASE_URL ??
+    `postgresql://lessonloop:${encodeURIComponent(secret.password)}@127.0.0.1:19432/postgres`,
 );
 await store.open();
 const core = new CoreService(
@@ -252,6 +253,10 @@ try {
   }).catch(() => []);
   const traces = [];
   const runtimeTools: Array<{ name: string; success?: boolean }> = [];
+  const guidanceReceipts: Array<{
+    taskRef: string;
+    playbooks: Array<{ playbook: { id: string; revision: number } }>;
+  }> = [];
   const toolNames = new Map<string, string>();
   const finalTexts: string[] = [];
   for (const directory of directories) {
@@ -282,6 +287,18 @@ try {
             name: toolNames.get(e.data.toolCallId) ?? "unknown",
             success: e.data.success,
           });
+        if (
+          e.type === "tool.execution_complete" &&
+          toolNames.get(e.data.toolCallId) === "lessonloop-getGuidance" &&
+          e.data.success
+        ) {
+          const response = JSON.parse(e.data.result.content);
+          if (
+            response.result?.taskRef &&
+            Array.isArray(response.result.playbooks)
+          )
+            guidanceReceipts.push(response.result);
+        }
         if (e.type === "hook.end")
           traces.push({
             hook: e.data.hookType,
@@ -302,16 +319,15 @@ try {
   for (const name of await readdir(join(folder, "state")).catch(() => []))
     if (name.endsWith(".json"))
       stateTasks.push(
-        ...JSON.parse(await readFile(join(folder, "state", name), "utf8"))
-          .tasks,
+        ...Object.keys(
+          JSON.parse(await readFile(join(folder, "state", name), "utf8"))
+            .captures,
+        ).map((taskRef) => ({ taskRef })),
       );
   const taskRefs = new Set(stateTasks.map((t) => t.taskRef));
   const evidence = await store.transaction(async (tx) => {
     const inputSources = (await tx.list<any>("source", [report.scope])).filter(
       (m) => taskRefs.has(m.taskRef),
-    );
-    const uses = (await tx.list<any>("playbook_use", [report.scope])).filter(
-      (u) => taskRefs.has(u.taskRef),
     );
     return {
       roles: [...new Set(inputSources.map((m) => m.segment?.role))],
@@ -321,33 +337,15 @@ try {
           (m) =>
             m.segment?.role === "agent" && m.segment.text === finalTexts.at(-1),
         ),
-      sameUseAcrossHostAndAgent: uses.some(
-        (u) =>
-          u.callerId === principal.id &&
-          uses.some(
-            (other) =>
-              other.callerId === "host-validation-agent" &&
-              other.playbookUseRef === u.playbookUseRef,
-          ),
-      ),
-      playbookUses: uses.map((u) => ({
-        callerId: u.callerId,
-        taskRef: u.taskRef,
-        playbookUseRef: u.playbookUseRef,
-        stepIds: u.stepIds,
-      })),
     };
   });
   const cases = (await new Effects(store).cases([report.scope])).filter((c) =>
     taskRefs.has(c.taskRef),
   );
-  const effectEvents = cases.flatMap((c) => c.events);
   result.evidence = {
     ...evidence,
-    effectKinds: [...new Set(effectEvents.map((e) => e.kind))],
-    outcomes: effectEvents
-      .filter((e) => e.kind === "outcome")
-      .map((e) => e.outcome),
+    feedback: cases,
+    outcomes: cases.map((c) => c.taskOutcome),
     sameSessionUserClarification: "adapter_replay_test_only",
     causalBenefit: "not_inferred",
   };
@@ -357,10 +355,10 @@ try {
     evidence.finalAgentCaptured &&
     evidence.roles.includes("user") &&
     evidence.roles.includes("tool") &&
-    evidence.sameUseAcrossHostAndAgent &&
     traces.some((e) => e.hook === "agentStop" && e.success) &&
     effectEvents.some((e) => e.kind === "delivery") &&
-    effectEvents.some((e) => e.kind === "outcome" && e.outcome === "unknown")
+    effectEvents.some((e) => e.kind === "task_ended") &&
+    !effectEvents.some((e) => e.kind === "outcome")
       ? "host_loop_observed"
       : "failed";
 } catch (error) {

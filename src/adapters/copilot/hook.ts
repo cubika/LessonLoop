@@ -20,6 +20,7 @@ import {
   type HookEvent,
 } from "./protocol.js";
 import { readTranscript, type TranscriptCursor } from "./transcript.js";
+import type { HostTaskBinding } from "../../core/host-tasks.js";
 
 export type Config = {
   baseUrl: string;
@@ -30,11 +31,9 @@ export type Config = {
 };
 type Call = (operation: string, input: any, key: string) => Promise<any>;
 type Playbook = { kind: "playbook"; id: string; revision: number };
-type Task = {
-  taskRef: string;
-  startedAt: string;
-  endedAt?: string;
-  stopped?: boolean;
+type Capture = {
+  eventTimes: Record<string, string>;
+  collectionGap?: string;
   playbook?: Playbook;
   feedbackRevision?: number | undefined;
   prompts: Array<{
@@ -45,13 +44,17 @@ type Task = {
     playbook?: Playbook;
     feedbackRevision?: number | undefined;
   }>;
-  inputSources: string[];
-  observations: string[];
-  collectionGap?: string;
   lastAgentDigest?: string;
 };
+type Task = Capture & HostTaskBinding;
 type State = {
-  tasks: Task[];
+  captures: Record<string, Capture>;
+  pendingBoundary?: {
+    action: "stop" | "end";
+    occurredAt: string;
+    reason?: string;
+    capturePending?: boolean;
+  };
   cursor?: TranscriptCursor;
   tools: Record<string, { name: unknown; eventId?: string }>;
 };
@@ -96,16 +99,9 @@ export async function handleHook(
     if (!rel || (!rel.startsWith("..") && !isAbsolute(rel))) allowed = true;
   }
   if (!allowed) return {};
-  const settings = (await call("settings.get", {}, "settings")) as Array<{
-    scopeId: string;
-    learning: boolean;
-    recommendation: boolean;
-    review: boolean;
-  }>;
-  const setting = settings.find((v) => v.scopeId === config.scopeId);
-  if (!setting) return {};
   await mkdir(config.stateRoot, { recursive: true });
-  const path = join(config.stateRoot, `${digest([cwd, event.sessionId])}.json`);
+  const sessionKey = digest([cwd, event.sessionId, config.scopeId]);
+  const path = join(config.stateRoot, `${sessionKey}.json`);
   const lock = `${path}.lock`;
   // A busy hook fails open; the next transcript read recovers missed events.
   let locked = false;
@@ -129,25 +125,134 @@ export async function handleHook(
   }
   if (!locked) throw new Error("hook_state_busy");
   try {
-    let state: State = { tasks: [], tools: {} };
+    let state: State = { captures: {}, tools: {} };
     try {
-      const previous = JSON.parse(await readFile(path, "utf8"));
-      if (!Array.isArray(previous.tasks)) throw new Error("hook_state_invalid");
-      state = previous;
+      state = JSON.parse(await readFile(path, "utf8"));
+      if (!state.captures || !state.tools)
+        throw new Error("hook_state_invalid");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // Existing alpha sessions used a different task protocol. Do not replay
+      // their transcript under new task identities during a rolling upgrade.
+      const legacy = join(
+        config.stateRoot,
+        `${digest([cwd, event.sessionId])}.json`,
+      );
+      if (
+        await stat(legacy).then(
+          () => true,
+          (error) => {
+            if (error.code === "ENOENT") return false;
+            throw error;
+          },
+        )
+      )
+        throw new Error("host_session_restart_required");
     }
     const save = async () => {
       await writeFile(`${path}.tmp`, JSON.stringify(state));
       await rename(`${path}.tmp`, path);
     };
+    const flushBoundary = async () => {
+      if (!state.pendingBoundary) return;
+      const { capturePending, ...pending } = state.pendingBoundary;
+      const result = await call(
+        "hostTaskBoundary",
+        { scopeId: config.scopeId, sessionKey, ...pending },
+        digest([sessionKey, pending]),
+      );
+      if (capturePending && result.taskRef) {
+        const capture = state.captures[result.taskRef] ?? {
+          eventTimes: {},
+          prompts: [],
+        };
+        capture.collectionGap =
+          "Host capture was interrupted; later reads recover available material.";
+        state.captures[result.taskRef] = capture;
+      }
+      delete state.pendingBoundary;
+      await save();
+    };
+    await flushBoundary();
     const now = eventTime(event.timestamp) ?? new Date().toISOString();
-    const current = () => state.tasks.at(-1);
+    if (["agentStop", "sessionEnd"].includes(type)) {
+      state.pendingBoundary = {
+        action: type === "agentStop" ? "stop" : "end",
+        occurredAt: now,
+        capturePending: true,
+        ...(type === "sessionEnd"
+          ? { reason: event.reason ?? "session_end" }
+          : {}),
+      };
+      await save();
+    }
+    const settings = (await call("settings.get", {}, "settings")) as Array<{
+      scopeId: string;
+      learning: boolean;
+      recommendation: boolean;
+      review: boolean;
+    }>;
+    const setting = settings.find((v) => v.scopeId === config.scopeId);
+    if (!setting) return {};
+    const prompt = stripInjectedMemory(
+      event.prompt ?? event.transformedPrompt ?? "",
+    );
+    const promptKey = digest([event.sessionId, event.timestamp ?? "", prompt]);
+    const marker = /^\s*\/lessonloop\s+(new|continue)\b/i
+      .exec(prompt)?.[1]
+      ?.toLowerCase();
+    const boundary = (action: string) =>
+      call(
+        "hostTaskBoundary",
+        {
+          scopeId: config.scopeId,
+          sessionKey,
+          occurredAt: now,
+          action,
+          ...(action === "prompt"
+            ? { promptKey, ...(marker ? { boundary: marker } : {}) }
+            : {}),
+          ...(action === "end"
+            ? { reason: event.reason ?? "session_end" }
+            : {}),
+        },
+        digest([sessionKey, action, now, promptKey]),
+      );
+    const binding = await boundary(
+      type === "userPromptTransformed" ? "prompt" : "read",
+    );
+    const tasks: Task[] = binding.tasks.map((task: HostTaskBinding) => ({
+      ...(state.captures[task.taskRef] ?? {
+        eventTimes: {},
+        prompts: [],
+      }),
+      ...task,
+    }));
+    // Task lifecycle is authoritative in the core; only collection receipts
+    // and the transcript checkpoint are persisted by the adapter.
+    const saveCapture = async () => {
+      state.captures = Object.fromEntries(
+        tasks.map(({ taskRef, startedAt, endedAt, ...capture }) => [
+          taskRef,
+          capture,
+        ]),
+      );
+      await save();
+    };
     const taskAt = (time: string) =>
-      [...state.tasks].reverse().find((t) => t.startedAt <= time);
+      [...tasks].reverse().find((t) => t.startedAt <= time);
+    // Hooks and the later transcript can describe one event at different
+    // times. Persist its first observed time before sending any product call.
+    const receiptTime = async (task: Task, id: string, at: string) => {
+      if (task.eventTimes[id]) return task.eventTimes[id];
+      if (Object.keys(task.eventTimes).length >= 128) return;
+      task.eventTimes[id] = at;
+      await saveCapture();
+      return at;
+    };
     const gap = async (task: Task, reason: string, _at = now) => {
       task.collectionGap = reason;
-      await save();
+      await saveCapture();
     };
     const inputSource = async (
       task: Task,
@@ -156,12 +261,13 @@ export async function handleHook(
       id: string,
       at: string,
     ) => {
-      if (!setting.learning || task.inputSources.includes(id) || !text.trim())
-        return;
-      if (Buffer.byteLength(text) > 28000 || task.inputSources.length >= 16) {
+      if (!setting.learning || !text.trim()) return;
+      if (Buffer.byteLength(text) > 28000) {
         await gap(task, "source_input_budget", at);
         return;
       }
+      const observedAt = await receiptTime(task, id, at);
+      if (!observedAt) return;
       try {
         await call(
           "submitSource",
@@ -172,7 +278,7 @@ export async function handleHook(
                 text,
                 role,
                 locator: `copilot:${event.sessionId}:${task.taskRef}`,
-                observedAt: at,
+                observedAt,
               },
             ],
             context: { taskRef: task.taskRef },
@@ -192,9 +298,7 @@ export async function handleHook(
           throw error;
         await gap(task, error.message, at);
       }
-      task.inputSources.push(id);
       if (role === "agent") task.lastAgentDigest = digest(text);
-      await save();
     };
     const observeTool = async (
       task: Task,
@@ -202,19 +306,20 @@ export async function handleHook(
       id: string,
       at: string,
     ) => {
-      if (task.observations.includes(id)) return;
       if (task.endedAt) {
         await gap(task, "late_tool_after_end", at);
         return;
       }
-      if (Buffer.byteLength(text) > 16000 || task.observations.length >= 16) {
+      if (Buffer.byteLength(text) > 16000) {
         await gap(task, "observation_budget", at);
         return;
       }
+      const occurredAt = await receiptTime(task, id, at);
+      if (!occurredAt) return;
       try {
         await call(
           "recordHostObservation",
-          { taskRef: task.taskRef, eventId: id, text, occurredAt: at },
+          { taskRef: task.taskRef, eventId: id, text, occurredAt },
           id,
         );
       } catch (error) {
@@ -227,75 +332,19 @@ export async function handleHook(
           throw error;
         await gap(task, error.message, at);
       }
-      task.observations.push(id);
-      await save();
     };
-    const finish = async (task: Task, at: string, reason: string) => {
-      if (task.endedAt) return;
-      await call(
-        "observeTask",
-        {
-          taskRef: task.taskRef,
-          eventId: "copilot-ended",
-          text: "Copilot task ended. Task success was not inferred.",
-          values: {},
-          ended: true,
-        },
-        digest([task.taskRef, "ended"]),
-      );
-      task.endedAt = at;
-      await save();
-    };
-    const prompt = stripInjectedMemory(
-      event.prompt ?? event.transformedPrompt ?? "",
-    );
-    const promptKey = digest([event.sessionId, event.timestamp ?? "", prompt]);
-    const replayTask = state.tasks.find((t) =>
-      t.prompts.some((p) => p.key === promptKey && p.done),
-    );
-    const replay = replayTask?.prompts.find(
-      (p) => p.key === promptKey && p.done,
-    );
-    if (type === "userPromptTransformed" && replayTask?.endedAt) return {};
-    // A replay must not re-inject a playbook that may have since been withdrawn.
-    if (type === "userPromptTransformed" && replay) return {};
-    const marker = /^\s*\/lessonloop\s+(new|continue)\b/i
-      .exec(prompt)?.[1]
-      ?.toLowerCase();
+    const active = tasks.at(-1);
+    if (!active) return {};
     if (type === "userPromptTransformed") {
-      const old = current();
-      if (old && (now < old.startedAt || (old.endedAt && now <= old.endedAt))) {
-        await gap(old, "late_prompt");
+      if (binding.late) {
+        await gap(active, "late_prompt");
         return {};
       }
       if (
-        old &&
-        !old.endedAt &&
-        (marker === "new" || (old.stopped && marker !== "continue"))
+        tasks.some((t) => t.prompts.some((p) => p.key === promptKey && p.done))
       )
-        await finish(old, now, "new_prompt");
-      if (!old || old.endedAt) {
-        const task = await call(
-          "startTask",
-          {
-            scopeId: config.scopeId,
-            eventId: digest([cwd, event.sessionId, promptKey]),
-          },
-          promptKey,
-        );
-        state.tasks.push({
-          taskRef: task.taskRef,
-          startedAt: now,
-          prompts: [],
-          inputSources: [],
-          observations: [],
-        });
-        state.tasks = state.tasks.slice(-8);
-        await save();
-      }
+        return {};
     }
-    const active = current();
-    if (!active) return {};
     if (recoveredLock) await gap(active, "interrupted_hook");
     const transcript = await readTranscript(event, cwd, state.cursor);
     let toolCallId = event.toolCallId;
@@ -406,7 +455,7 @@ export async function handleHook(
     if (transcript.cursor) state.cursor = transcript.cursor;
     if (["agentStop", "sessionEnd"].includes(type))
       for (const reason of transcript.gaps) await gap(active, reason);
-    await save();
+    await saveCapture();
     const task = taskAt(now);
     if (!task) return {};
     if (
@@ -425,7 +474,6 @@ export async function handleHook(
       await inputSource(task, text, "tool", id, now);
     }
     if (type === "userPromptTransformed") {
-      task.stopped = false;
       let output: Record<string, unknown> = {};
       const promptRecord: Task["prompts"][number] = task.prompts.find(
         (p) => p.key === promptKey,
@@ -474,7 +522,7 @@ export async function handleHook(
             promptRecord.feedbackRevision = task.feedbackRevision;
             output = promptEnvelope(
               event,
-              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
+              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify({ taskRef: task.taskRef, ...prepared })}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. Reuse this taskRef for getGuidance. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
             );
             promptRecord.responseDigest = digest(
               output.modifiedTransformedPrompt,
@@ -496,13 +544,15 @@ export async function handleHook(
         }
       }
       promptRecord.done = true;
-      await save();
+      await saveCapture();
       return output;
     }
-    if (type === "agentStop") {
-      task.stopped = true;
-      await save();
-    }
+    const finishCapture = async () => {
+      if (state.pendingBoundary) state.pendingBoundary.capturePending = false;
+      await saveCapture();
+      await flushBoundary();
+    };
+    if (type === "agentStop") await finishCapture();
     if (type === "sessionEnd") {
       if (
         event.finalMessage &&
@@ -516,7 +566,7 @@ export async function handleHook(
           digest([task.taskRef, "final", event.finalMessage]),
           now,
         );
-      await finish(task, now, event.reason ?? "session_end");
+      await finishCapture();
     }
     // Copilot can dispatch sessionStart after userPromptTransformed. A new
     // session has its own sessionId; this notification must not close its task.
@@ -549,9 +599,11 @@ if (
 )
   run()
     .then((result) => process.stdout.write(JSON.stringify(result)))
-    .catch(() => {
+    .catch((error) => {
       process.stderr.write(
-        "LessonLoop hook unavailable; continue the task and inspect doctor.\n",
+        error.message === "host_session_restart_required"
+          ? "LessonLoop collection changed; start a new Copilot session to enable it.\n"
+          : "LessonLoop hook unavailable; continue the task and inspect doctor.\n",
       );
       process.stdout.write("{}");
     });

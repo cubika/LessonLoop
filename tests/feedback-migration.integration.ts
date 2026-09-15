@@ -120,8 +120,11 @@ test("Legacy feedback migrates atomically once without inferring adoption or los
       ],
     });
     await put("effect_task", "cleared-case", {
-      taskRef: "cleared-task", createdAt: at(-11000),
-      events: [{ kind: "outcome", occurredAt: at(-5000), outcome: "succeeded" }],
+      taskRef: "cleared-task",
+      createdAt: at(-11000),
+      events: [
+        { kind: "outcome", occurredAt: at(-5000), outcome: "succeeded" },
+      ],
     });
     await put(
       "effect_task",

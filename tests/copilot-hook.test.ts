@@ -1,10 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+  readdir,
+  readFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleHook, type Config } from "../src/adapters/copilot/hook.js";
 import { readTranscript } from "../src/adapters/copilot/transcript.js";
+import { hostTaskBoundary } from "../src/core/host-tasks.js";
+import { digest } from "../src/domain/schema.js";
+import type { CoreService } from "../src/core/service.js";
 
 async function fixture(t: test.TestContext) {
   const root = await realpath(
@@ -27,16 +38,54 @@ async function fixture(t: test.TestContext) {
     review: true,
   };
   const playbook = { kind: "playbook", id: "playbook", revision: 1 };
-  let tasks = 0;
+  let rows = new Map<string, any>();
+  // Exercise the actual core boundary logic; each transaction commits together.
+  const core = {
+    store: {
+      transaction: async (fn: any) => {
+        const next = structuredClone(rows);
+        const result = await fn({
+          get: async (kind: string, id: string) =>
+            kind === "settings" ? settings : next.get(kind + id),
+          list: async (kind: string) =>
+            [...next]
+              .filter(([key]) => key.startsWith(kind))
+              .map(([, value]) => value),
+          put: async (entry: any) => {
+            next.set(entry.kind + entry.id, structuredClone(entry.value));
+          },
+        });
+        rows = next;
+        return result;
+      },
+    },
+  } as unknown as CoreService;
+  const principal = { id: "host", channel: "host" as const, scopes: ["scope"] };
+  const taskRows = () =>
+    [...rows]
+      .filter(([, value]) => value.hostSession)
+      .map(([, value]) => value);
   let fail: string | undefined;
+  const receipts = new Map<string, any>();
+  const payloads = new Map<string, string>();
   const rpc = async (operation: string, input: any, key: string) => {
+    const receiptKey = operation + key;
+    if (receipts.has(receiptKey)) {
+      assert.equal(
+        digest(input),
+        payloads.get(receiptKey),
+        "same idempotency key must preserve its payload",
+      );
+      return receipts.get(receiptKey);
+    }
     calls.push({ operation, input, key });
-    if (fail === operation) {
+    if (fail === operation || fail === operation + ":" + input.action) {
       fail = undefined;
       throw new Error("temporary_failure");
     }
     if (operation === "settings.get") return [settings];
-    if (operation === "startTask") return { taskRef: `task-${++tasks}` };
+    if (operation === "hostTaskBoundary")
+      return hostTaskBoundary(core, principal, input);
     if (operation === "searchPlaybooks")
       return { results: [{ playbook: playbook }] };
     if (operation === "preparePlaybook")
@@ -58,6 +107,10 @@ async function fixture(t: test.TestContext) {
       };
     if (operation === "updateTaskFeedback")
       return { accepted: true, revision: 3 };
+    if (["submitSource", "recordHostObservation"].includes(operation)) {
+      receipts.set(receiptKey, { accepted: true });
+      payloads.set(receiptKey, digest(input));
+    }
     return { accepted: true };
   };
   const config: Config = {
@@ -96,6 +149,7 @@ async function fixture(t: test.TestContext) {
     hook,
     config,
     time,
+    taskRows,
     failOnce: (operation: string) => {
       fail = operation;
     },
@@ -211,23 +265,21 @@ test("active clarification and explicit continuation reuse the task; completed t
   await f.hook("userPromptTransformed", 5, {
     prompt: "/lessonloop continue verify it",
   });
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  assert.equal(f.taskRows().length, 1);
   await f.hook("agentStop", 6);
   await f.hook("userPromptTransformed", 7, { prompt: "A different task" });
   await f.hook("userPromptTransformed", 8, {
     prompt: "/lessonloop new Another task",
   });
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 3);
-  const taskKeys = f.calls
-    .filter((c) => c.operation === "startTask")
-    .map((c) => c.input.eventId);
+  assert.equal(f.taskRows().length, 3);
+  const taskKeys = f.taskRows().map((t) => t.id);
   assert.equal(new Set(taskKeys).size, 3);
 });
 
 test("session end retries after interruption and late transcript inputSource stays with the closed task", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "First task" });
-  f.failOnce("observeTask");
+  f.failOnce("hostTaskBoundary:end");
   await assert.rejects(
     f.hook("sessionEnd", 3, { reason: "timeout" }),
     /temporary_failure/,
@@ -243,17 +295,15 @@ test("session end retries after interruption and late transcript inputSource sta
       c.operation === "submitSource" &&
       c.input.segments[0].text === "Late final answer",
   );
-  assert.equal(late?.input.context.taskRef, "task-1");
-  const outcomes = f.calls.filter(
-    (c) =>
-      c.operation === "updateTaskFeedback" && c.input.field === "taskOutcome",
-  );
-  assert.equal(outcomes.length, 0);
+  assert.equal(late?.input.context.taskRef, f.taskRows()[0].id);
   assert.equal(
-    f.calls.filter((c) => c.operation === "observeTask" && c.input.ended)
-      .length,
-    2,
+    f.calls.some(
+      (c) =>
+        c.operation === "updateTaskFeedback" && c.input.field === "taskOutcome",
+    ),
+    false,
   );
+  assert.ok(f.taskRows()[0].ended);
 });
 
 test("an interrupted preparation retries the same prompt instead of caching an empty result", async (t) => {
@@ -267,7 +317,7 @@ test("an interrupted preparation retries the same prompt instead of caching an e
     prompt: "Read input",
   });
   assert.match(String(result.modifiedTransformedPrompt), /lessonloop-playbook/);
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  assert.equal(f.taskRows().length, 1);
   assert.equal(f.calls.filter((c) => c.operation === "submitSource").length, 1);
 });
 
@@ -354,7 +404,7 @@ test("unacknowledged injection is never counted as delivery, and completed promp
     await f.hook("userPromptTransformed", 1, { prompt: "Inspect" }),
     {},
   );
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  assert.equal(f.taskRows().length, 1);
   const effects = f.calls
     .filter((c) => c.operation === "updateTaskFeedback")
     .flatMap((c) => c.input);
@@ -411,11 +461,7 @@ test("session closure leaves the result unknown and preserves raw evidence", asy
     toolResult: { resultType: "success", textResultForLlm: "Source exists" },
   });
   await f.hook("sessionEnd", 3, { reason: "complete" });
-  assert.ok(
-    f.calls.some(
-      (c) => c.operation === "observeTask" && c.input.ended === true,
-    ),
-  );
+  assert.ok(f.taskRows().some((t) => t.ended));
   assert.equal(
     f.calls.some((c) => c.operation === "reassessTask"),
     false,
@@ -434,6 +480,10 @@ test("the first prompt receives full guidance and tool observations never trigge
   const text = String(result.modifiedTransformedPrompt);
   assert.ok(text.includes("Edit the source and regenerate"));
   assert.ok(text.includes("Read the input schema"));
+  const guidance = JSON.parse(
+    text.split("<lessonloop-playbook")[1]!.split("\n")[1]!,
+  );
+  assert.equal(guidance.taskRef, f.taskRows()[0].id);
   assert.ok(text.includes("current observations"));
   assert.equal(text.includes("reassessTask"), false);
   assert.equal(text.includes("completedStepIds"), false);
@@ -454,12 +504,12 @@ test("the first prompt receives full guidance and tool observations never trigge
   await f.hook("userPromptTransformed", 4, {
     prompt: "/lessonloop continue apply the change",
   });
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  assert.equal(f.taskRows().length, 1);
   await f.hook("sessionEnd", 5, { reason: "complete" });
   await f.hook("userPromptTransformed", 6, {
     prompt: "/lessonloop continue check a new result",
   });
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 2);
+  assert.equal(f.taskRows().length, 2);
 });
 
 test("oversized automatic guidance exposes a bounded explicit retrieval without claiming delivery", async (t) => {
@@ -470,7 +520,8 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
     "userPromptTransformed",
     async (operation, input) => {
       if (operation === "settings.get") return [f.settings];
-      if (operation === "startTask") return { taskRef: "large-task" };
+      if (operation === "hostTaskBoundary")
+        return { tasks: [{ taskRef: "large-task", startedAt: f.time(1) }] };
       if (operation === "searchPlaybooks")
         return {
           results: [
@@ -504,10 +555,10 @@ test("Copilot sessionStart following the first prompt does not close the newly b
   await f.hook("sessionStart", 2, { source: "new" });
   await f.hook("userPromptTransformed", 3, { prompt: "More detail" });
   assert.equal(
-    f.calls.some((c) => c.operation === "observeTask" && c.input.ended),
+    f.taskRows().some((t) => t.ended),
     false,
   );
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  assert.equal(f.taskRows().length, 1);
   assert.equal(
     f.calls.filter((c) => c.operation === "preparePlaybook").at(-1)?.input
       .playbookUseRef,
@@ -540,9 +591,120 @@ test("a guidance MCP response is not execution evidence and does not change the 
   );
   await f.hook("agentStop", 4);
   await f.hook("userPromptTransformed", 5, { prompt: "Another task" });
-  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 2);
+  assert.equal(f.taskRows().length, 2);
   assert.equal(
     f.calls.filter((c) => c.operation === "recordHostObservation").length,
     0,
+  );
+});
+
+test("official streaming preserves UTF-8 chunk boundaries and retries only a complete final line", async (t) => {
+  const f = await fixture(t);
+  const content = "汉字🙂".repeat(10000);
+  await f.append(f.record(1, "assistant.message", { content }));
+  const first = await readTranscript(f.event(2), f.root);
+  assert.equal(first.records.at(-1)?.data.content, content);
+  assert.equal(first.cursor?.offset, (await readFile(f.path)).length);
+  const partial = JSON.stringify(
+    f.record(3, "assistant.message", { content: "继续🙂" }),
+  );
+  await appendFile(f.path, partial);
+  const pending = await readTranscript(f.event(4), f.root, first.cursor);
+  assert.equal(pending.records.length, 0);
+  assert.deepEqual(pending.cursor, first.cursor);
+  await appendFile(f.path, "\n");
+  const complete = await readTranscript(f.event(5), f.root, pending.cursor);
+  assert.equal(complete.records[0]?.data.content, "继续🙂");
+  const bounded = await readTranscript(f.event(6), f.root, undefined, 70000);
+  assert.ok(bounded.gaps.includes("transcript_truncated"));
+  assert.equal(bounded.records.at(-1)?.data.content, "继续🙂");
+  assert.equal(bounded.cursor?.offset, (await readFile(f.path)).length);
+});
+
+test("hook checkpoints contain collection receipts without a second task lifecycle", async (t) => {
+  const f = await fixture(t);
+  await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
+  await f.hook("agentStop", 2);
+  const name = (await readdir(f.config.stateRoot)).find((n) =>
+    n.endsWith(".json"),
+  )!;
+  const saved = JSON.parse(
+    await readFile(join(f.config.stateRoot, name), "utf8"),
+  );
+  assert.equal(saved.tasks, undefined);
+  assert.equal(Object.keys(saved.captures).length, 1);
+  const capture = Object.values(saved.captures)[0] as any;
+  for (const field of ["startedAt", "endedAt", "stopped"])
+    assert.equal(capture[field], undefined);
+  assert.ok(capture.prompts[0].done);
+  assert.equal(f.taskRows()[0].stopped, true);
+});
+
+test("a failed stop receipt is retried before the next prompt and stale stops do not undo continuation", async (t) => {
+  const f = await fixture(t);
+  await f.hook("userPromptTransformed", 1, { prompt: "First" });
+  f.failOnce("hostTaskBoundary:stop");
+  await assert.rejects(f.hook("agentStop", 2), /temporary_failure/);
+  await f.hook("userPromptTransformed", 3, { prompt: "Second" });
+  assert.equal(f.taskRows().length, 2);
+  await f.hook("agentStop", 4);
+  await f.hook("userPromptTransformed", 5, {
+    prompt: "/lessonloop continue More",
+  });
+  await f.hook("agentStop", 4);
+  await f.hook("userPromptTransformed", 6, { prompt: "Clarification" });
+  assert.equal(f.taskRows().length, 2);
+  f.failOnce("hostTaskBoundary:end");
+  await assert.rejects(f.hook("sessionEnd", 7), /temporary_failure/);
+  await f.hook("userPromptTransformed", 8, {
+    prompt: "/lessonloop continue After end",
+  });
+  assert.equal(f.taskRows().length, 3);
+});
+
+test("legacy sessions require a new session without replaying materials into new tasks", async (t) => {
+  const f = await fixture(t);
+  await f.hook("sessionStart", 0);
+  await writeFile(
+    join(f.config.stateRoot, digest([f.root, "session"]) + ".json"),
+    JSON.stringify({ tasks: [{ taskRef: "legacy" }] }),
+  );
+  await assert.rejects(
+    f.hook("userPromptTransformed", 1, { prompt: "Inspect" }),
+    /host_session_restart_required/,
+  );
+  assert.equal(f.taskRows().length, 0);
+});
+
+test("boundary receipt survives a failed initial read and rejects a previously unseen late prompt", async (t) => {
+  const f = await fixture(t);
+  await f.hook("userPromptTransformed", 1, { prompt: "First" });
+  f.failOnce("hostTaskBoundary:read");
+  await assert.rejects(f.hook("agentStop", 4), /temporary_failure/);
+  await f.hook("userPromptTransformed", 3, { prompt: "Late clarification" });
+  assert.equal(f.taskRows().length, 1);
+  assert.equal(f.taskRows()[0].stopped, true);
+  const interrupted = JSON.parse(await readFile(join(f.config.stateRoot, digest([f.root, "session", "scope"]) + ".json"), "utf8"));
+  assert.equal(interrupted.pendingBoundary, undefined);
+  assert.ok(Object.values(interrupted.captures).some((c: any) => c.collectionGap));
+  await f.hook("userPromptTransformed", 5, { prompt: "Next task" });
+  assert.equal(f.taskRows().length, 2);
+});
+
+test("a failed preparation still preserves the prompt receipt for later transcript collection", async (t) => {
+  const f = await fixture(t);
+  f.failOnce("preparePlaybook");
+  await assert.rejects(
+    f.hook("userPromptTransformed", 1, { prompt: "Inspect" }),
+    /temporary_failure/,
+  );
+  await f.append(f.record(1, "user.message", { content: "Inspect" }));
+  await f.hook("agentStop", 2);
+  assert.equal(
+    f.calls.filter(
+      (c) =>
+        c.operation === "submitSource" && c.input.segments[0].role === "user",
+    ).length,
+    1,
   );
 });

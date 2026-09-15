@@ -1546,8 +1546,9 @@ async function issueForm(parent, caseData) {
       ...(old ? { id: old.id } : { problemKey: key.value }),
       expectedRevision: old?.revision ?? 0,
       category: old?.category ?? category.value,
-      status: old?.status ?? (confirmed.checked ? "confirmed" : "suspected"),
-      severity: old?.severity ?? (serious.checked ? "serious" : "normal"),
+      status: confirmed.checked ? "confirmed" : "suspected",
+      severity: serious.checked ? "serious" : "normal",
+      reconfirm: confirmed.checked,
       evidence: [{ caseId: caseData.id, revision: caseData.revision }],
     });
     panel.remove();
@@ -1576,6 +1577,12 @@ async function renderIssues() {
     );
     const confirm = node("button", "确认为严重问题"),
       resolve = node("button", "标为已解决");
+    for (const evidence of issue.evidence) {
+      const current = await rpc("getTaskFeedback", {
+        taskRef: evidence.caseId,
+      });
+      card.append(node("pre", JSON.stringify(current, null, 2)));
+    }
     const update = async (status, severity) => {
       await rpc("reviews.issue", {
         scopeId: issue.scopeId,

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
-import type { ObjectRef } from "../domain/schema.js";
+import { digest, type ObjectRef } from "../domain/schema.js";
+import { ApiError } from "./service.js";
 
 const DAY = 86400000;
 const outcome = z.enum(["succeeded", "failed", "abandoned", "unknown"]);
@@ -109,13 +110,14 @@ export class Effects {
   async update(caller: Caller, input: unknown) {
     const v = updateSchema.parse(input);
     if (caller.channel !== (v.field === "userRating" ? "user" : "host"))
-      throw new Error("feedback_writer_denied");
+      throw new ApiError("feedback_writer_denied", 403);
     return this.store.transaction(async (tx) => {
       const row = await tx.get<TaskFeedback>("task_feedback", v.taskRef);
-      const task = await tx.get<{ callerId: string; scopeId: string }>(
-        "task",
-        v.taskRef,
-      );
+      const task = await tx.get<{
+        callerId: string;
+        scopeId: string;
+        erasedObservationHashes?: string[];
+      }>("task", v.taskRef);
       if (
         !row ||
         !retained(row) ||
@@ -124,9 +126,15 @@ export class Effects {
         task.scopeId !== row.scopeId ||
         (caller.channel === "host" && task.callerId !== caller.id)
       )
-        throw new Error("feedback_unavailable");
+        throw new ApiError("feedback_unavailable", 404);
       if (!(await tx.get<{ review: boolean }>("settings", row.scopeId))?.review)
-        throw new Error("review_disabled");
+        throw new ApiError("review_disabled", 409);
+      if (
+        "text" in v &&
+        v.text &&
+        task.erasedObservationHashes?.includes(digest(v.text))
+      )
+        throw new ApiError("observation_erased", 409);
       const next = structuredClone(row);
       if (v.field === "taskOutcome") {
         next.taskOutcome = v.taskOutcome;
@@ -135,7 +143,7 @@ export class Effects {
         const f = next.feedback.find(
           (f) => f.playbookId === v.playbookId && f.revision === v.revision,
         );
-        if (!f) throw new Error("feedback_unavailable");
+        if (!f) throw new ApiError("feedback_unavailable", 404);
         if (v.field === "delivered") f.delivered = true;
         else {
           f.userRating = v.rating;
