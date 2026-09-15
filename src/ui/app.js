@@ -795,7 +795,7 @@ async function prepareMethod(parent) {
     node("h3", "关联宿主任务"),
     node(
       "p",
-      "选择正在进行的宿主任务，按该任务已有观察准备方法。继续工作和核实分支仍在宿主中进行。",
+      "选择正在进行的宿主任务，获取完整方法。Agent 在工作中核实条件并选择分支。",
     ),
   );
   parent.append(panel);
@@ -827,40 +827,77 @@ async function prepareMethod(parent) {
     use = undefined;
     output.replaceChildren();
   };
-  const prepare = async () => {
+  const prepare = async (viewMode = "auto") => {
     const taskRef = task.value,
       request = ++preparationRequest;
     const result = await rpc("prepareMethod", {
       methodId: method.id,
       revision: method.revision,
       taskRef,
-      ...(use ? { methodUseRef: use } : {}),
+      viewMode,
       requestId: crypto.randomUUID(),
     });
     if (request !== preparationRequest || task.value !== taskRef) return;
-    use = result.methodUseRef ?? use;
+    use = result.methodUseRef;
     output.replaceChildren(node("h4", "本次任务的方法"));
-    if (result.status === "lead") {
+    if (result.status === "guidance") {
       output.append(
-        node("p", "请回到宿主核实以下条件。取得实际观察后再准备步骤。"),
+        node(
+          "p",
+          "先核实适用条件，再按实际结果选择分支。只执行所选路径，并检查本次实际结果。",
+        ),
       );
-      result.missingChecks.forEach((c) =>
-        output.append(node("p", c.text ?? c.question ?? String(c))),
-      );
-    } else if (result.status === "guidance") {
+      for (const [key, label] of [
+        ["conditions", "适用条件"],
+        ["exceptions", "例外"],
+      ])
+        (result[key] ?? []).forEach((c) =>
+          output.append(node("p", label + "：" + c.text)),
+        );
       const steps = node("ol", "");
-      result.steps.forEach((s) => steps.append(node("li", s.instruction)));
+      result.steps.forEach((s) => {
+        const item = node("li", s.stepId + "：" + s.instruction);
+        (s.choices ?? []).forEach((c) =>
+          item.append(
+            node(
+              "p",
+              c.when.text + " → " + (c.next === "stop" ? "停止" : c.next),
+            ),
+          ),
+        );
+        steps.append(item);
+      });
       output.append(steps);
-      if (result.pendingDecision)
-        output.append(node("p", "取得实际观察后才能选择后续分支。"));
-      result.completionChecks.forEach((c) =>
-        output.append(node("p", `完成检查：${c.text}`)),
+      for (const [key, label] of [
+        ["completionChecks", "完成检查"],
+        ["stopConditions", "停止条件"],
+      ])
+        (result[key] ?? []).forEach((c) =>
+          output.append(
+            node(
+              "p",
+              label +
+                "（" +
+                (c.stepIds?.join("、") ?? "全局") +
+                "）：" +
+                c.text,
+            ),
+          ),
+        );
+    } else if (result.status === "requires_expansion") {
+      const expand = node("button", "展开完整方法");
+      expand.onclick = handle(() => prepare("expanded"));
+      output.append(
+        node("p", "完整方法超出默认显示长度，请展开查看。"),
+        expand,
       );
     } else
       output.append(
         node(
           "p",
-          `准备结果：${result.status}${result.reason ? " · " + result.reason : ""}`,
+          "准备结果：" +
+            result.status +
+            (result.reason ? " · " + result.reason : ""),
         ),
       );
     if (use) {
@@ -882,8 +919,8 @@ async function prepareMethod(parent) {
       output.append(rate);
     }
   };
-  const refresh = node("button", "按任务观察准备");
-  refresh.onclick = handle(prepare);
+  const refresh = node("button", "获取完整方法");
+  refresh.onclick = handle(() => prepare());
   panel.append(refresh, output);
 }
 function feedbackForm(parent, kind, value, refresh) {

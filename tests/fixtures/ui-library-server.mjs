@@ -157,8 +157,20 @@ export async function startUiFixture() {
           result = {
             status: "guidance",
             methodUseRef: "use-ui",
-            steps: base.steps,
-            completionChecks: base.completionChecks,
+            conditions: [{ text: "使用生成器维护文件" }],
+            exceptions: [{ text: "外部系统只读文件" }],
+            steps: [
+              {
+                ...base.steps[0],
+                choices: [
+                  { when: { text: "生成文件" }, next: "s2" },
+                  { when: { text: "手工文件" }, next: "stop" },
+                ],
+              },
+              base.steps[1],
+            ],
+            completionChecks: [{ text: "字段符合预期", stepIds: ["s2"] }],
+            stopConditions: [{ text: "来源不明" }],
           };
           break;
         case "submitMaterial":

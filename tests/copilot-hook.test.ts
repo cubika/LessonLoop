@@ -27,8 +27,7 @@ async function fixture(t: test.TestContext) {
     review: true,
   };
   const method = { kind: "method", id: "method", revision: 1 };
-  let tasks = 0,
-    prepares = 0;
+  let tasks = 0;
   let fail: string | undefined;
   const rpc = async (operation: string, input: any, key: string) => {
     calls.push({ operation, input, key });
@@ -41,18 +40,20 @@ async function fixture(t: test.TestContext) {
     if (operation === "searchMethods") return { results: [{ method }] };
     if (operation === "prepareMethod")
       return {
-        status: ++prepares === 1 ? "lead" : "guidance",
+        status: "guidance",
         method,
-        methodUseRef: input.methodUseRef ?? `use-${tasks}`,
-        ...(prepares === 1
-          ? { missingChecks: ["Read the input schema"] }
-          : { steps: [{ stepId: "inspect" }] }),
-      };
-    if (operation === "reassessTask")
-      return {
-        status: "assessed",
-        completedStepIds: ["inspect"],
-        rawDigest: "tool-evidence",
+        methodUseRef: "use-" + input.taskRef,
+        conditions: [{ text: "Read the input schema" }],
+        steps: [
+          {
+            stepId: "inspect",
+            choices: [
+              { when: { text: "Generated" }, next: "source" },
+              { when: { text: "Manual" }, next: "stop" },
+            ],
+          },
+          { stepId: "source", instruction: "Edit the source and regenerate" },
+        ],
       };
     if (operation === "recordTaskObservation")
       return {
@@ -180,7 +181,7 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
     .filter((c) => c.operation === "recordTaskObservation")
     .flatMap((c) => c.input);
   assert.equal(effects.filter((e) => e.kind === "delivery").length, 1);
-  assert.equal(effects.filter((e) => e.kind === "usage").length, 1);
+  assert.equal(effects.filter((e) => e.kind === "usage").length, 0);
   assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "unknown");
   assert.equal(
     effects.some((e) => e.outcome === "succeeded"),
@@ -188,17 +189,17 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
   );
 });
 
-test("pending clarification reuses a method use; explicit new and completed turns isolate tasks", async (t) => {
+test("active clarification and explicit continuation reuse the task; completed turns isolate tasks", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, {
     prompt: "Investigate",
   });
-  await f.hook("agentStop", 2);
   await f.hook("userPromptTransformed", 3, {
     prompt: "The source is schema.json",
   });
   const prepares = f.calls.filter((c) => c.operation === "prepareMethod");
-  assert.equal(prepares[1]?.input.methodUseRef, "use-1");
+  assert.equal(prepares[1]?.input.methodUseRef, undefined);
+  assert.equal(prepares[1]?.input.completedStepIds, undefined);
   assert.equal(prepares[1]?.input.taskRef, prepares[0]?.input.taskRef);
   assert.deepEqual(
     await f.hook("userPromptTransformed", 1, { prompt: "Investigate" }),
@@ -402,7 +403,7 @@ test("disabled learning does not ingest transcript material and disallowed works
   assert.equal(called, false);
 });
 
-test("assessment outages cannot prevent host session closure", async (t) => {
+test("session closure records outcomes without an observation assessment", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.hook("postToolUse", 2, {
@@ -410,20 +411,89 @@ test("assessment outages cannot prevent host session closure", async (t) => {
     toolCallId: "real-read",
     toolResult: { resultType: "success", textResultForLlm: "Source exists" },
   });
-  f.failOnce("reassessTask");
   await f.hook("sessionEnd", 3, { reason: "complete" });
   assert.ok(
     f.calls.some(
       (c) => c.operation === "observeTask" && c.input.ended === true,
     ),
   );
-  assert.ok(
-    f.calls.some(
-      (c) =>
-        c.operation === "recordTaskObservation" &&
-        c.input[0].text.includes("assessment_unavailable_at_end"),
-    ),
+  assert.equal(
+    f.calls.some((c) => c.operation === "reassessTask"),
+    false,
   );
+  assert.equal(
+    f.calls.filter((c) => c.operation === "prepareMethod").length,
+    1,
+  );
+});
+
+test("the first prompt receives full guidance and tool observations never trigger branch unlocking", async (t) => {
+  const f = await fixture(t);
+  const result = await f.hook("userPromptTransformed", 1, {
+    prompt: "Inspect generated output",
+  });
+  const text = String(result.modifiedTransformedPrompt);
+  assert.ok(text.includes("Edit the source and regenerate"));
+  assert.ok(text.includes("Read the input schema"));
+  assert.ok(text.includes("current observations"));
+  assert.equal(text.includes("reassessTask"), false);
+  assert.equal(text.includes("completedStepIds"), false);
+  await f.hook("postToolUse", 2, {
+    toolName: "view",
+    toolCallId: "read",
+    toolResult: { content: "Generated file confirmed" },
+  });
+  await f.hook("agentStop", 3);
+  assert.equal(
+    f.calls.filter((c) => c.operation === "prepareMethod").length,
+    1,
+  );
+  assert.equal(
+    f.calls.some((c) => c.operation === "reassessTask"),
+    false,
+  );
+  await f.hook("userPromptTransformed", 4, {
+    prompt: "/lessonloop continue apply the change",
+  });
+  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
+  await f.hook("sessionEnd", 5, { reason: "complete" });
+  await f.hook("userPromptTransformed", 6, {
+    prompt: "/lessonloop continue check a new result",
+  });
+  assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 2);
+});
+
+test("oversized automatic guidance exposes a bounded explicit retrieval without claiming delivery", async (t) => {
+  const f = await fixture(t);
+  const result = await handleHook(
+    f.config,
+    f.event(1, { prompt: "Inspect" }),
+    "userPromptTransformed",
+    async (operation, input) => {
+      if (operation === "settings.get") return [f.settings];
+      if (operation === "startTask") return { taskRef: "large-task" };
+      if (operation === "searchMethods")
+        return {
+          results: [
+            { method: { kind: "method", id: "large-method", revision: 1 } },
+          ],
+        };
+      if (operation === "prepareMethod")
+        return { status: "requires_expansion" };
+      if (operation === "recordTaskObservation")
+        return {
+          results: input.map((e: any) => ({
+            eventId: e.eventId,
+            status: "accepted",
+          })),
+        };
+      return { accepted: true };
+    },
+  );
+  const text = String(result.modifiedTransformedPrompt);
+  assert.ok(text.includes("large-task") && text.includes("large-method"));
+  assert.ok(text.includes("viewMode=expanded"));
+  assert.equal(text.includes("methodUseRef"), false);
 });
 
 test("Copilot sessionStart following the first prompt does not close the newly bound task", async (t) => {
@@ -439,11 +509,11 @@ test("Copilot sessionStart following the first prompt does not close the newly b
   assert.equal(
     f.calls.filter((c) => c.operation === "prepareMethod").at(-1)?.input
       .methodUseRef,
-    "use-1",
+    undefined,
   );
 });
 
-test("a bound MCP preparation receipt clears pending clarification without becoming evidence", async (t) => {
+test("a method MCP response is not execution evidence and does not change the task boundary", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.append(

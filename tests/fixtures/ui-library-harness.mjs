@@ -214,7 +214,18 @@ export async function runUiLibraryChecks() {
     let taskPanel = $("detail").children.findLast((e) =>
       e.textContent.includes("宿主任务"),
     );
-    await click(taskPanel, "按任务观察准备");
+    await click(taskPanel, "获取完整方法");
+    assert.ok(taskPanel.textContent.includes("适用条件：使用生成器维护文件"));
+    assert.ok(taskPanel.textContent.includes("例外：外部系统只读文件"));
+    assert.ok(taskPanel.textContent.includes("生成文件 → s2"));
+    assert.ok(taskPanel.textContent.includes("手工文件 → 停止"));
+    assert.ok(taskPanel.textContent.includes("完成检查（s2）：字段符合预期"));
+    assert.ok(taskPanel.textContent.includes("停止条件（全局）：来源不明"));
+    assert.equal(
+      requests.findLast((r) => r.operation === "prepareMethod").input
+        .methodUseRef,
+      undefined,
+    );
     await click(taskPanel, "评价这次使用");
     await click(taskPanel, "保存评价");
     assert.equal(
@@ -330,7 +341,7 @@ export async function runUiLibraryChecks() {
         });
       return blockingFetch(path, options);
     };
-    const pendingPrepare = button(taskPanel, "按任务观察准备").click();
+    const pendingPrepare = button(taskPanel, "获取完整方法").click();
     await Promise.resolve();
     taskSelector.value = "new-task";
     taskSelector.onchange();

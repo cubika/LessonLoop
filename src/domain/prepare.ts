@@ -1,12 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { getEncoding } from "js-tiktoken";
 import type { Experience } from "./experience.js";
-import {
-  digest,
-  type Condition,
-  type Method,
-  type ObjectRef,
-} from "./schema.js";
+import { digest, type Method } from "./schema.js";
 
 const encoder = getEncoding("cl100k_base");
 export const tokenCount = (value: unknown) =>
@@ -86,291 +80,48 @@ function usable(
     (!v.validUntil || Date.parse(v.validUntil) > data.now)
   );
 }
-export interface TaskFacts {
-  values: Record<string, string | string[]>;
-  trustedKeys: ReadonlySet<string>;
-  conditions: ReadonlyMap<string, boolean>;
-  completed: ReadonlySet<string>;
-}
-export function evaluate(c: Condition, facts: TaskFacts): boolean | undefined {
-  const assessed = facts.conditions.get(digest(c));
-  if (!c.match) return assessed;
-  if (assessed !== undefined && !facts.trustedKeys.has(c.match.key))
-    return assessed;
-  if (!facts.trustedKeys.has(c.match.key)) return undefined;
-  const actual = facts.values[c.match.key];
-  if (actual === undefined) return undefined;
-  return (Array.isArray(actual) ? actual : [actual]).some((v) =>
-    c.match!.values.includes(v),
-  );
-}
-type Session = {
-  callerId: string;
-  taskRef: string;
-  method: ObjectRef;
-  startedAt: number;
-  touchedAt: number;
-  delivered: Set<string>;
-  completed: Set<string>;
-  checks: Map<string, number>;
-};
-export class Preparation {
-  private readonly sessions = new Map<string, Session>();
-  private readonly tasks = new Map<
-    string,
-    {
-      count: number;
-      closed: boolean;
-      startedAt: number;
-      checks: Map<string, number>;
-      requests: Map<string, { hash: string; use?: string }>;
-    }
-  >();
-  sweep(now = Date.now()) {
-    for (const [id, s] of this.sessions)
-      if (now - s.touchedAt >= 1800000 || now - s.startedAt >= 86400000)
-        this.sessions.delete(id);
-    for (const [id, t] of this.tasks)
-      if (now - t.startedAt >= 86400000) this.tasks.delete(id);
-  }
-  activeUse(
-    callerId: string,
-    taskRef: string,
-    useRef: string,
-    methodId: string,
-    revision: number,
-  ) {
-    this.sweep();
-    const s = this.sessions.get(useRef);
-    return s &&
-      s.callerId === callerId &&
-      s.taskRef === taskRef &&
-      s.method.id === methodId &&
-      s.method.revision === revision
-      ? new Set(s.delivered)
-      : undefined;
-  }
-  endTask(callerId: string, taskRef: string) {
-    const key = `${callerId}:${taskRef}`;
-    const t = this.tasks.get(key);
-    if (t) t.closed = true;
-    else
-      this.tasks.set(key, {
-        count: 0,
-        closed: true,
-        startedAt: Date.now(),
-        checks: new Map(),
-        requests: new Map(),
-      });
-    for (const [id, s] of this.sessions)
-      if (s.callerId === callerId && s.taskRef === taskRef)
-        this.sessions.delete(id);
-  }
-  prepare(
-    method: Method | undefined,
-    request: {
-      callerId: string;
-      taskRef: string;
-      revision: number;
-      methodUseRef?: string | undefined;
-      completedStepIds?: string[] | undefined;
-      viewMode?: "auto" | "expanded" | undefined;
-      requestId?: string | undefined;
-    },
-    facts: TaskFacts,
-    data: Eligibility,
-  ): Record<string, unknown> {
-    this.sweep(data.now);
-    if (!method || !data.scopes.has(method.scopeId))
-      return { status: "target_unavailable" };
-    if (method.revision !== request.revision)
-      return { status: "target_changed" };
-    if (!eligible(method, data)) return { status: "target_unavailable" };
-    const key = `${request.callerId}:${request.taskRef}`;
-    let task = this.tasks.get(key);
-    if (!task) {
-      task = {
-        count: 0,
-        closed: false,
-        startedAt: data.now,
-        checks: new Map(),
-        requests: new Map(),
-      };
-      this.tasks.set(key, task);
-    }
-    if (task.closed || data.now - task.startedAt >= 86400000)
-      return { status: "unavailable", reason: "task_ended_or_expired" };
-    const requestHash = digest({
-      methodId: method.id,
-      revision: request.revision,
-      methodUseRef: request.methodUseRef,
-      completedStepIds: [...(request.completedStepIds ?? [])].sort(),
-      viewMode: request.viewMode ?? "auto",
-      facts: {
-        values: facts.values,
-        trustedKeys: [...facts.trustedKeys].sort(),
-        conditions: [...facts.conditions].sort(([a], [b]) =>
-          a.localeCompare(b),
-        ),
-        completed: [...facts.completed].sort(),
-      },
-    });
-    const previous = request.requestId
-      ? task.requests.get(request.requestId)
-      : undefined;
-    if (previous && previous.hash !== requestHash)
-      return { status: "unavailable", reason: "request_id_conflict" };
-    if (!previous && request.viewMode !== "expanded" && ++task.count > 8)
-      return { status: "unavailable", reason: "task_prepare_budget" };
-    let use = request.methodUseRef ?? previous?.use;
-    let s = use ? this.sessions.get(use) : undefined;
-    if (
-      use &&
-      (!s ||
-        s.callerId !== request.callerId ||
-        s.taskRef !== request.taskRef ||
-        s.method.id !== method.id ||
-        s.method.revision !== method.revision ||
-        data.now - s.touchedAt >= 1800000 ||
-        data.now - s.startedAt >= 86400000)
-    )
-      return { status: "unavailable", reason: "prepare_context_expired" };
-    if (!s) {
-      if (request.completedStepIds?.length)
-        return {
-          status: "unavailable",
-          reason: "completion_not_previously_delivered",
-        };
-      use = randomUUID();
-      s = {
-        callerId: request.callerId,
-        taskRef: request.taskRef,
-        method: { kind: "method", id: method.id, revision: method.revision },
-        startedAt: data.now,
-        touchedAt: data.now,
-        delivered: new Set(),
-        completed: new Set(),
-        checks: new Map(),
-      };
-      this.sessions.set(use, s);
-    }
-    if (request.requestId && !previous)
-      task.requests.set(request.requestId, {
-        hash: requestHash,
-        ...(use ? { use } : {}),
-      });
-    s.touchedAt = data.now;
-    for (const step of s.completed)
-      if (!facts.completed.has(step)) s.completed.delete(step);
-    for (const step of request.completedStepIds ?? []) {
-      if (!s.delivered.has(step) || !facts.completed.has(step))
-        return {
-          status: "unavailable",
-          reason: "completion_requires_evidence",
-        };
-    }
-    (request.completedStepIds ?? []).forEach((step) => s!.completed.add(step));
-    const missing: string[] = [];
-    let excluded = false;
-    for (const c of method.conditions) {
-      const v = evaluate(c, facts);
-      if (v === false) excluded = true;
-      else if (v === undefined) missing.push(c.text);
-    }
-    for (const c of method.exceptions) {
-      const v = evaluate(c, facts);
-      if (v === true) excluded = true;
-      else if (v === undefined) missing.push(c.text);
-    }
-    if (excluded) return { status: "not_applicable" };
-    const check = (point: string) => {
-      const key = `${method.id}:${point}`;
-      const n = task!.checks.get(key) ?? 0;
-      if (previous) return n <= 3;
-      task!.checks.set(key, n + 1);
-      return n < 3;
+// The core checks task ownership and lifetime before rendering guidance.
+// The usage reference links feedback; it is not an execution session or permit.
+export function prepareMethod(
+  method: Method | undefined,
+  request: {
+    callerId: string;
+    taskRef: string;
+    revision: number;
+    viewMode?: "auto" | "expanded" | undefined;
+  },
+  data: Eligibility,
+): Record<string, unknown> {
+  if (!method || !data.scopes.has(method.scopeId))
+    return { status: "target_unavailable" };
+  if (method.revision !== request.revision) return { status: "target_changed" };
+  if (!eligible(method, data)) return { status: "target_unavailable" };
+  const view = {
+    status: "guidance",
+    method: { kind: "method", id: method.id, revision: method.revision },
+    methodUseRef: digest([
+      "method-use",
+      request.callerId,
+      request.taskRef,
+      method.id,
+      method.revision,
+    ]),
+    title: method.title,
+    goal: method.goal,
+    conditions: method.conditions,
+    exceptions: method.exceptions,
+    validFrom: method.validFrom,
+    validUntil: method.validUntil,
+    steps: method.steps,
+    completionChecks: method.completionChecks,
+    stopConditions: method.stopConditions,
+    executionBoundary:
+      "Guidance only; the agent checks applicability and chooses the path. Check all global conditions and exceptions before acting. Start at the first step; a step without choices continues to the next step. At a choice, complete the step and use current observations to follow exactly one matching next step or stop. If facts are missing, no choice matches, or choices conflict, investigate or ask instead of guessing. Do not run unselected branches. Apply global checks and checks scoped to the selected steps. Use fresh results for checks that depend on execution; old results do not prove this run completed. Respect task permissions. Verify the actual outcome before reporting success.",
+  };
+  if (tokenCount(view) > (request.viewMode === "expanded" ? 8192 : 2400))
+    return {
+      status:
+        request.viewMode === "expanded" ? "too_large" : "requires_expansion",
     };
-    if (missing.length)
-      return check("global")
-        ? {
-            status: "lead",
-            taskApplicability: "undetermined",
-            method: s.method,
-            methodUseRef: use,
-            missingChecks: missing,
-          }
-        : { status: "unavailable", reason: "condition_check_budget" };
-    const selected: string[] = [];
-    const steps: Method["steps"] = [];
-    let pendingDecision: Record<string, unknown> | undefined;
-    let position = 0;
-    while (position < method.steps.length) {
-      const step = method.steps[position]!;
-      selected.push(step.stepId);
-      if (!s.completed.has(step.stepId)) steps.push(step);
-      if (step.choices) {
-        if (!s.completed.has(step.stepId)) {
-          pendingDecision = {
-            stepId: step.stepId,
-            reason: "complete_step_then_observe",
-            choices: step.choices,
-          };
-          break;
-        }
-        const matches = step.choices.map((c) => evaluate(c.when, facts));
-        if (
-          matches.filter((v) => v === true).length !== 1 ||
-          matches.some((v) => v === undefined)
-        ) {
-          if (!check(step.stepId))
-            return { status: "unavailable", reason: "decision_check_budget" };
-          pendingDecision = {
-            stepId: step.stepId,
-            reason: matches.some((v) => v === undefined)
-              ? "unknown"
-              : matches.filter((v) => v === true).length > 1
-                ? "multiple_matches"
-                : "no_match",
-            choices: step.choices,
-          };
-          break;
-        }
-        const next = step.choices[matches.indexOf(true)]!.next;
-        if (next === "stop") break;
-        position = method.steps.findIndex((v) => v.stepId === next);
-      } else position++;
-    }
-    // New observations can change an already visited decision. Never reuse completion of an unselected path.
-    for (const step of s.completed)
-      if (!selected.includes(step)) s.completed.delete(step);
-    const checks = (items: Method["completionChecks"]) =>
-      items.filter(
-        (c) => !c.stepIds || c.stepIds.some((id) => selected.includes(id)),
-      );
-    const view = {
-      status: "guidance",
-      taskApplicability: "applicable",
-      method: s.method,
-      methodUseRef: use,
-      title: method.title,
-      goal: method.goal,
-      conditions: method.conditions,
-      exceptions: method.exceptions,
-      steps,
-      completionChecks: checks(method.completionChecks),
-      stopConditions: checks(method.stopConditions),
-      pendingDecision,
-      executionBoundary:
-        "Guidance only. Respect the task permissions. Completing a prefix is not proof of overall success.",
-      pathComplete: !pendingDecision && steps.length === 0,
-    };
-    const tokens = tokenCount(view);
-    if (tokens > (request.viewMode === "expanded" ? 8192 : 2400))
-      return {
-        status:
-          request.viewMode === "expanded" ? "too_large" : "requires_expansion",
-      };
-    steps.forEach((step) => s!.delivered.add(step.stepId));
-    return view;
-  }
+  return view;
 }

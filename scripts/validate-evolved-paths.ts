@@ -1,3 +1,4 @@
+import { methodPaths } from "../src/domain/method-paths.js";
 import { readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { ProductStore } from "../src/store/postgres.js";
@@ -22,7 +23,7 @@ const core = new CoreService(
   new HindsightEngine("http://127.0.0.1:19888", secret.engineToken),
 );
 const report: any = {
-  classification: "real_automatic_method_current_task_checks",
+  classification: "real_automatic_method_guidance_structure",
   cases: [],
   status: "failed",
 };
@@ -48,65 +49,35 @@ try {
   ] as const) {
     const host = { id: name, channel: "host" as const, scopes: [source.scope] };
     const task = await core.startTask(host, source.scope);
-    const first = await core.prepare(host, {
+    const guidance = await core.prepare(host, {
       methodId: method.id,
       revision: method.revision,
       taskRef: task.taskRef,
+      viewMode: "expanded",
     });
-    await core.recordHostObservation(host, {
-      taskRef: task.taskRef,
-      eventId: "inspection",
-      text: observation,
-    });
-    const checked = await core.reassessTask(host, {
-      taskRef: task.taskRef,
-      methodId: method.id,
-      revision: method.revision,
-      methodUseRef: first.methodUseRef,
-    });
-    const prefix = await core.prepare(host, {
-      methodId: method.id,
-      revision: method.revision,
-      taskRef: task.taskRef,
-      methodUseRef: first.methodUseRef,
-    });
-    assert.equal(prefix.status, "guidance", `${name}: global scope excluded`);
-    const step = (prefix.steps as any[])[0];
-    assert.ok(step);
-    await core.recordHostObservation(host, {
-      taskRef: task.taskRef,
-      eventId: "selection",
-      text:
-        observation +
-        " The branch selection inspection is complete. Selected " +
-        name +
-        " based on the inspected pipeline and requested change.",
-    });
-    const nextCheck = await core.reassessTask(host, {
-      taskRef: task.taskRef,
-      methodId: method.id,
-      revision: method.revision,
-      methodUseRef: first.methodUseRef,
-    });
-    const next = await core.prepare(host, {
-      methodId: method.id,
-      revision: method.revision,
-      taskRef: task.taskRef,
-      methodUseRef: first.methodUseRef,
-      completedStepIds: (nextCheck as any).completedStepIds ?? [],
-    });
-    assert.equal(next.status, "guidance");
+    assert.equal(guidance.status, "guidance");
+    assert.deepEqual(guidance.steps, method.steps);
+    assert.deepEqual(guidance.conditions, method.conditions);
+    const paths = methodPaths(method);
+    assert.equal(paths.truncated, false);
     assert.ok(
-      JSON.stringify(next.steps).includes(expectedInstruction),
-      `${name}: intended operation unreachable`,
+      paths.paths.some((path) =>
+        path.steps.some((id) =>
+          method.steps
+            .find((s) => s.stepId === id)
+            ?.instruction.includes(expectedInstruction),
+        ),
+      ),
+      name + ": operation absent from all paths",
     );
     report.cases.push({
       name,
-      checked,
-      prefix,
-      nextCheck,
-      next,
+      scenario: observation,
+      guidance,
+      paths,
       status: "passed",
+      limitation:
+        "Structural check only; agent branch selection was not executed.",
     });
   }
   report.status = "passed";

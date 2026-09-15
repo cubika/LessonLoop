@@ -55,7 +55,7 @@ try:
     fresh=rpc("startTask",{"scopeId":scope},"host")
     prepared=rpc("prepareMethod",{"methodId":method["id"],"revision":method["revision"],"taskRef":fresh["taskRef"]},"host")
     report["prepared"]=prepared
-    if prepared["status"] not in ["lead","guidance"]:raise RuntimeError("Method preparation unavailable")
+    if prepared["status"] != "guidance":raise RuntimeError("Method preparation unavailable")
     report["status"]="passed"
 except Exception as error:report["error"]=str(error)
 finally:

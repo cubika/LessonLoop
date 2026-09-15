@@ -8,10 +8,9 @@ import {
   conditionSchema,
 } from "../src/domain/schema.js";
 import {
-  Preparation,
+  prepareMethod,
   eligible,
   type Eligibility,
-  type TaskFacts,
 } from "../src/domain/prepare.js";
 import { experienceSchema } from "../src/domain/experience.js";
 
@@ -96,7 +95,6 @@ function fixture() {
 }
 function setup() {
   const m = fixture();
-  const p = new Preparation();
   const d: Eligibility = {
     now: Date.now(),
     scopes: new Set(["test"]),
@@ -108,13 +106,7 @@ function setup() {
       [experience.id, 1],
     ]),
   };
-  const f: TaskFacts = {
-    values: {},
-    trustedKeys: new Set(),
-    conditions: new Map(),
-    completed: new Set(),
-  };
-  return { m, p, d, f };
+  return { m, d };
 }
 test("canonical conditions reject misleading text and fingerprints separate identities", () => {
   assert.throws(() =>
@@ -134,126 +126,116 @@ test("method rejects backward branches, dangling checks and support", () => {
   m.steps[0]!.choices![0]!.next = "inspect";
   assert.equal(methodSchema.safeParse(m).success, false);
 });
-test("diagnostic prefix then observed branch; branch-specific checks stay scoped", () => {
-  const { m, p, d, f } = setup();
-  const r = p.prepare(m, { callerId: "c", taskRef: "t", revision: 1 }, f, d);
-  assert.deepEqual(
-    (r.steps as Array<{ stepId: string }>).map((s) => s.stepId),
-    ["inspect"],
-  );
-  assert.equal((r.completionChecks as unknown[]).length, 1);
-  const facts = {
-    ...f,
-    values: { kind: "manual" },
-    trustedKeys: new Set(["kind"]),
-    completed: new Set(["inspect"]),
-  };
-  const next = p.prepare(
-    m,
-    {
-      callerId: "c",
-      taskRef: "t",
-      revision: 1,
-      methodUseRef: String(r.methodUseRef),
-      completedStepIds: ["inspect"],
-    },
-    facts,
-    d,
-  );
-  assert.deepEqual(
-    (next.steps as Array<{ stepId: string }>).map((s) => s.stepId),
-    ["manual"],
-  );
-  assert.equal(next.pathComplete, false);
+test("complete guidance preserves branches and scoped checks without task observations", () => {
+  const { m, d } = setup();
+  const r = prepareMethod(m, { callerId: "c", taskRef: "t", revision: 1 }, d);
+  assert.equal(r.status, "guidance");
+  assert.deepEqual(r.steps, m.steps);
+  assert.deepEqual(r.completionChecks, m.completionChecks);
+  assert.deepEqual(r.stopConditions, m.stopConditions);
+  assert.equal("pendingDecision" in r, false);
+  assert.equal("pathComplete" in r, false);
+  assert.equal("taskApplicability" in r, false);
 });
-test("self-reported completion and old revision cannot advance", () => {
-  const { m, p, d, f } = setup();
-  const r = p.prepare(m, { callerId: "c", taskRef: "t", revision: 1 }, f, d);
+
+test("unknown applicability returns all boundaries for the agent to check", () => {
+  const { m, d } = setup();
+  m.applicability = "conditional";
+  m.conditions = [{ text: "The task uses the observed generator" }];
+  m.exceptions = [{ text: "The output is maintained by another tool" }];
+  m.stopConditions = [{ text: "The generator cannot be identified" }];
+  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  for (let i = 0; i < 12; i++) {
+    const r = prepareMethod(m, request, d);
+    assert.equal(r.status, "guidance");
+    assert.deepEqual(r.conditions, m.conditions);
+    assert.deepEqual(r.exceptions, m.exceptions);
+    assert.deepEqual(r.steps, m.steps);
+    assert.deepEqual(r.stopConditions, m.stopConditions);
+  }
+});
+
+test("usage references are stable without sessions and separate tasks, owners and revisions", () => {
+  const { m, d } = setup();
+  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  const ref = prepareMethod(m, request, d).methodUseRef;
   assert.equal(
-    p.prepare(
-      m,
-      {
-        callerId: "c",
-        taskRef: "t",
-        revision: 1,
-        methodUseRef: String(r.methodUseRef),
-        completedStepIds: ["inspect"],
-      },
-      f,
-      d,
-    ).status,
-    "unavailable",
+    prepareMethod(m, request, { ...d, now: d.now + 1800001 }).methodUseRef,
+    ref,
   );
   assert.equal(
-    p.prepare(m, { callerId: "c", taskRef: "t", revision: 2 }, f, d).status,
+    prepareMethod(m, { ...request, viewMode: "expanded" }, d).methodUseRef,
+    ref,
+  );
+  assert.notEqual(
+    prepareMethod(m, { ...request, taskRef: "other" }, d).methodUseRef,
+    ref,
+  );
+  assert.notEqual(
+    prepareMethod(m, { ...request, callerId: "other" }, d).methodUseRef,
+    ref,
+  );
+  const updated = { ...m, revision: 2 };
+  const published = new Map(d.published).set(m.id, 2);
+  assert.notEqual(
+    prepareMethod(updated, { ...request, revision: 2 }, { ...d, published })
+      .methodUseRef,
+    ref,
+  );
+});
+
+test("repeated preparation checks current revisions, permissions and supporting sources", () => {
+  const { m, d } = setup();
+  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  assert.equal(prepareMethod(m, request, d).status, "guidance");
+  assert.equal(
+    prepareMethod(m, { ...request, revision: 2 }, d).status,
     "target_changed",
   );
-});
-test("unpublished, withdrawn and stale supports cannot deliver", () => {
-  const { m, d } = setup();
-  assert.equal(eligible(m, d), true);
-  assert.equal(eligible(m, { ...d, blockedSources: new Set([fp]) }), false);
-  assert.equal(eligible(m, { ...d, published: new Map([[m.id, 1]]) }), false);
-});
-test("expanded and fresh sessions do not reset condition checks", () => {
-  const { m, p, d, f } = setup();
-  m.applicability = "conditional";
-  m.conditions = [{ text: "Check authorized environment" }];
-  for (let i = 0; i < 3; i++)
-    assert.equal(
-      p.prepare(
-        m,
-        { callerId: "c", taskRef: "t", revision: 1, viewMode: "expanded" },
-        f,
-        d,
-      ).status,
-      "lead",
-    );
+  for (const data of [
+    { ...d, scopes: new Set<string>() },
+    { ...d, blockedObjects: new Set([m.id]) },
+    { ...d, blockedSources: new Set([fp]) },
+    { ...d, published: new Map([[m.id, 1]]) },
+    {
+      ...d,
+      experiences: new Map([[experience.id, { ...experience, revision: 2 }]]),
+    },
+  ])
+    assert.equal(prepareMethod(m, request, data).status, "target_unavailable");
   assert.equal(
-    p.prepare(
-      m,
-      { callerId: "c", taskRef: "t", revision: 1, viewMode: "expanded" },
-      f,
-      d,
-    ).status,
-    "unavailable",
-  );
-});
-test("ending a task and restarting preparation invalidate continuation", () => {
-  const { m, p, d, f } = setup();
-  const r = p.prepare(m, { callerId: "c", taskRef: "t", revision: 1 }, f, d);
-  p.endTask("c", "t");
-  assert.equal(
-    p.prepare(m, { callerId: "c", taskRef: "t", revision: 1 }, f, d).status,
-    "unavailable",
-  );
-  assert.equal(
-    new Preparation().prepare(
-      m,
-      {
-        callerId: "c",
-        taskRef: "t",
-        revision: 1,
-        methodUseRef: String(r.methodUseRef),
-      },
-      f,
-      d,
-    ).status,
-    "unavailable",
-  );
-});
-test("duplicate preparation rechecks current eligibility without spending another budget", () => {
-  const { m, p, d, f } = setup();
-  const request = {
-    callerId: "c",
-    taskRef: "t",
-    revision: 1,
-    requestId: "event-1",
-  };
-  for (let i = 0; i < 12; i++)
-    assert.equal(p.prepare(m, request, f, d).status, "guidance");
-  assert.equal(
-    p.prepare(m, request, f, { ...d, blockedObjects: new Set([m.id]) }).status,
+    prepareMethod({ ...m, state: "disabled" }, request, d).status,
     "target_unavailable",
   );
+  assert.equal(
+    prepareMethod(
+      { ...m, validUntil: new Date(d.now - 1).toISOString() },
+      request,
+      d,
+    ).status,
+    "target_unavailable",
+  );
+  assert.equal(eligible(m, d), true);
+});
+
+test("oversized guidance requires explicit expansion without dropping branches or checks", () => {
+  const { m, d } = setup();
+  m.steps = Array.from({ length: 12 }, (_, i) => ({
+    stepId: "s" + i,
+    instruction: "Check actual output before changing it. ".repeat(26),
+    supportIndexes: [0],
+  }));
+  m.completionChecks = [{ text: "Verify actual output" }];
+  const request = { callerId: "c", taskRef: "t", revision: 1 };
+  assert.deepEqual(prepareMethod(m, request, d), {
+    status: "requires_expansion",
+  });
+  const expanded = prepareMethod(m, { ...request, viewMode: "expanded" }, d);
+  assert.equal(expanded.status, "guidance");
+  assert.deepEqual(expanded.steps, m.steps);
+  assert.deepEqual(expanded.completionChecks, m.completionChecks);
+  m.steps.forEach((s) => (s.instruction = "x ".repeat(900)));
+  assert.deepEqual(prepareMethod(m, { ...request, viewMode: "expanded" }, d), {
+    status: "too_large",
+  });
 });

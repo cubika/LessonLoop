@@ -86,14 +86,27 @@ async function setup(store: ProductStore) {
       title,
       goal: "Preserve extensions",
       topics: ["pipeline"],
-      applicability: "general",
-      conditions: [],
+      applicability: "conditional",
+      conditions: [{ text: "The task changes a generated file" }],
       exceptions: [],
       state: "active",
       steps: [
-        { stepId: "s1", instruction: "Check output", supportIndexes: [0] },
+        {
+          stepId: "s1",
+          instruction: "Check output",
+          supportIndexes: [0],
+          choices: [
+            { when: { text: "The file is generated" }, next: "s2" },
+            { when: { text: "The file is maintained manually" }, next: "stop" },
+          ],
+        },
+        {
+          stepId: "s2",
+          instruction: "Edit the source and regenerate",
+          supportIndexes: [0],
+        },
       ],
-      completionChecks: [{ text: "Output checked" }],
+      completionChecks: [{ text: "Output checked", stepIds: ["s2"] }],
       stopConditions: [],
       supportRefs: [{ kind: "experience", id: e.id, revision: 1 }],
       change: {
@@ -175,19 +188,25 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
       revision: m.revision,
     });
     assert.ok(prepared.methodUseRef);
+    assert.equal(prepared.status, "guidance");
+    assert.deepEqual(prepared.steps, m.steps);
+    assert.deepEqual(prepared.conditions, m.conditions);
+    assert.deepEqual(prepared.completionChecks, m.completionChecks);
+    assert.equal(f.engine.calls, 0);
     assert.equal((await f.core.listTasks(f.owner))[0]?.taskRef, task.taskRef);
     await f.core.recordHostObservation(f.host, {
       taskRef: task.taskRef,
       eventId: "actual",
       text: "Observed version 2",
     });
-    const assessed = await f.core.reassessTask(f.owner, {
+    const refreshed = await f.core.prepare(f.owner, {
       taskRef: task.taskRef,
       methodId: m.id,
       revision: m.revision,
-      methodUseRef: prepared.methodUseRef,
+      requestId: "after-observation",
     });
-    assert.equal((assessed as any).status, "assessed");
+    assert.deepEqual(refreshed, prepared);
+    assert.equal(f.engine.calls, 0);
     await assert.rejects(
       dispatch(f.core, f.owner, "recordTaskObservation", [], "fake"),
       /trusted_host_required/,
@@ -242,6 +261,152 @@ test("Method library pagination binds filters, pins persist, and users cannot fo
     await store.close();
   }
 });
+test("Method guidance survives core restart and retains task, source and feedback boundaries", async () => {
+  const store = new ProductStore(url);
+  await store.open();
+  try {
+    const f = await setup(store),
+      m = f.methods[0]!;
+    const task = await f.core.startTask(f.host, f.scope);
+    const agent = {
+      id: "working-agent",
+      channel: "agent" as const,
+      taskOwnerId: f.host.id,
+      scopes: [f.scope],
+    };
+    const input = {
+      taskRef: task.taskRef,
+      methodId: m.id,
+      revision: m.revision,
+      requestId: "first",
+    };
+    const first = await f.core.prepare(f.host, input);
+    const restarted = new CoreService(store, f.engine);
+    assert.deepEqual(
+      await restarted.prepare(f.host, { ...input, requestId: "again" }),
+      first,
+    );
+    assert.deepEqual(await restarted.prepare(agent, input), first);
+    const uses = await store.transaction((tx) =>
+      tx.list<any>("method_use", [f.scope]),
+    );
+    assert.equal(uses.length, 2); // One return record for each caller, independent of requestId.
+    assert.ok(
+      uses.every(
+        (u) =>
+          u.methodUseRef === first.methodUseRef &&
+          u.delivery === "unknown" &&
+          u.adoption === "unknown" &&
+          u.outcome === "unknown",
+      ),
+    );
+    assert.equal(f.engine.calls, 0);
+    const newTask = await restarted.startTask(f.host, f.scope);
+    assert.notEqual(
+      (await restarted.prepare(f.host, { ...input, taskRef: newTask.taskRef }))
+        .methodUseRef,
+      first.methodUseRef,
+    );
+    await assert.rejects(
+      restarted.prepare({ ...agent, taskOwnerId: "other-host" }, input),
+      /task_unavailable/,
+    );
+    await assert.rejects(
+      restarted.prepare({ ...agent, scopes: [] }, input),
+      /not_found/,
+    );
+    const other = await setup(store);
+    assert.equal(
+      (
+        await restarted.prepare(
+          { ...f.owner, scopes: [f.scope, other.scope] },
+          { ...input, methodId: other.methods[0]!.id },
+        )
+      ).status,
+      "target_unavailable",
+    );
+    assert.equal(
+      (await restarted.prepare(agent, { ...input, revision: 2 })).status,
+      "target_changed",
+    );
+    await assert.rejects(
+      restarted.prepare(agent, { ...input, completedStepIds: ["s1"] }),
+    );
+    await store.transaction(async (tx) => {
+      const t = await tx.get<any>("task", newTask.taskRef);
+      await tx.put(
+        row("task", {
+          ...t,
+          revision: t.revision + 1,
+          createdAt: new Date(Date.now() - 86400001).toISOString(),
+        }),
+        t.revision,
+      );
+    });
+    await assert.rejects(
+      restarted.prepare(agent, { ...input, taskRef: newTask.taskRef }),
+      /task_unavailable/,
+    );
+    await restarted.observe(f.host, {
+      taskRef: task.taskRef,
+      eventId: "end",
+      text: "Ended",
+      values: {},
+      completedStepIds: [],
+      conditionResults: {},
+      ended: true,
+    });
+    await assert.rejects(
+      new CoreService(store, f.engine).prepare(agent, input),
+      /task_unavailable/,
+    );
+    const active = await restarted.startTask(f.host, f.scope);
+    const current = { ...input, taskRef: active.taskRef };
+    await store.transaction(async (tx) => {
+      const source = await tx.get<any>("source", f.e.sourceFingerprints[0]!);
+      await tx.put(
+        row("source", {
+          ...source,
+          revision: source.revision + 1,
+          blocked: true,
+        }),
+        source.revision,
+      );
+    });
+    assert.equal(
+      (await restarted.prepare(agent, current)).status,
+      "target_unavailable",
+    );
+    const settings = (await other.core.getSettings(other.owner))[0]!;
+    await other.core.configure(other.owner, {
+      scopeId: other.scope,
+      expectedRevision: settings.revision,
+      learning: false,
+      recommendation: true,
+      review: false,
+      notifications: false,
+    });
+    const privateTask = await other.core.startTask(other.host, other.scope);
+    assert.equal(
+      (
+        await other.core.prepare(other.host, {
+          methodId: other.methods[0]!.id,
+          revision: 1,
+          taskRef: privateTask.taskRef,
+        })
+      ).status,
+      "guidance",
+    );
+    assert.equal(
+      (await store.transaction((tx) => tx.list("method_use", [other.scope])))
+        .length,
+      0,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
 test("Targeted recall uses stored host evidence, caches checks and rejects stale or foreign context", async () => {
   const store = new ProductStore(url);
   await store.open();

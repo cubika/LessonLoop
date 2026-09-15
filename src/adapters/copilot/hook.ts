@@ -35,7 +35,6 @@ type Task = {
   startedAt: string;
   endedAt?: string;
   stopped?: boolean;
-  pending?: boolean;
   method?: Method;
   methodUseRef?: string;
   prompts: Array<{
@@ -70,7 +69,7 @@ const api =
         "Idempotency-Key": key,
       },
       body: JSON.stringify({ operation, input }),
-      signal: AbortSignal.timeout(operation === "reassessTask" ? 45000 : 8000),
+      signal: AbortSignal.timeout(8000),
     });
     const body = (await response.json()) as { result: unknown; error?: string };
     if (!response.ok) throw new Error(body.error ?? "host_api_failed");
@@ -333,8 +332,7 @@ export async function handleHook(
       if (
         old &&
         !old.endedAt &&
-        (marker === "new" ||
-          (old.stopped && !old.pending && marker !== "continue"))
+        (marker === "new" || (old.stopped && marker !== "continue"))
       )
         await finish(old, now, "new_prompt");
       if (!old || old.endedAt) {
@@ -411,33 +409,8 @@ export async function handleHook(
       }
       if (record.type === "tool.execution_complete") {
         const start = state.tools[data.toolCallId];
-        // Our own recalled guidance and assessments are derived data, not
-        // independent evidence from the environment being diagnosed.
-        if (isProductTool(start?.name)) {
-          // The host-delivered MCP response can update continuation state. It
-          // remains excluded from source material and environmental evidence.
-          if (
-            data.success === true &&
-            typeof start?.name === "string" &&
-            start.name.endsWith("prepareMethod") &&
-            typeof data.result?.content === "string"
-          ) {
-            try {
-              const prepared = JSON.parse(data.result.content).result;
-              if (
-                ["guidance", "lead"].includes(prepared?.status) &&
-                prepared.method?.id === task.method?.id &&
-                prepared.method?.revision === task.method?.revision &&
-                prepared.methodUseRef === task.methodUseRef
-              )
-                task.pending =
-                  prepared.status === "lead" || !!prepared.pendingDecision;
-            } catch {
-              /* An invalid MCP result cannot change the task boundary. */
-            }
-          }
-          continue;
-        }
+        // Product guidance is not independent evidence of execution.
+        if (isProductTool(start?.name)) continue;
         const result =
           data.result && typeof data.result === "object"
             ? { ...data.result, success: data.success }
@@ -493,50 +466,6 @@ export async function handleHook(
       await observeTool(task, text, id, now);
       await material(task, text, "tool", id, now);
     }
-    const reassess = async () => {
-      if (
-        !setting.recommendation ||
-        !task.method ||
-        !task.methodUseRef ||
-        !task.observations.length ||
-        task.endedAt
-      )
-        return;
-      try {
-        const result = await call(
-          "reassessTask",
-          {
-            taskRef: task.taskRef,
-            methodId: task.method.id,
-            revision: task.method.revision,
-            methodUseRef: task.methodUseRef,
-          },
-          digest([task.taskRef, "assess", task.observations]),
-        );
-        for (const stepId of result.completedStepIds ?? [])
-          await effect(
-            task,
-            "usage",
-            digest([task.taskRef, result.rawDigest, stepId]),
-            "A delivered method step was observed in trusted tool evidence; causal benefit was not inferred.",
-            now,
-            { method: task.method, methodUseRef: task.methodUseRef, stepId },
-          );
-        return result;
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          ![
-            "prepare_context_expired",
-            "observation_assessment_budget",
-            "target_unavailable",
-          ].includes(error.message)
-        )
-          throw error;
-        await gap(task, error.message);
-        return { status: "unavailable", reason: error.message };
-      }
-    };
     if (type === "userPromptTransformed") {
       task.stopped = false;
       let output: Record<string, unknown> = {};
@@ -557,7 +486,6 @@ export async function handleHook(
         now,
       );
       if (setting.recommendation && prompt.trim()) {
-        const assessment = await reassess();
         if (!task.method) {
           const search = await call(
             "searchMethods",
@@ -572,41 +500,40 @@ export async function handleHook(
           task.method = search.results[0]?.method;
         }
         if (task.method) {
-          const prepared =
-            assessment?.reason === "prepare_context_expired"
-              ? assessment
-              : await call(
-                  "prepareMethod",
-                  {
-                    methodId: task.method.id,
-                    revision: task.method.revision,
-                    taskRef: task.taskRef,
-                    ...(task.methodUseRef
-                      ? { methodUseRef: task.methodUseRef }
-                      : {}),
-                    ...(assessment?.completedStepIds
-                      ? { completedStepIds: assessment.completedStepIds }
-                      : {}),
-                    requestId: promptKey,
-                  },
-                  promptKey,
-                );
-          if (["guidance", "lead"].includes(prepared.status)) {
+          const prepared = await call(
+            "prepareMethod",
+            {
+              methodId: task.method.id,
+              revision: task.method.revision,
+              taskRef: task.taskRef,
+              requestId: promptKey,
+            },
+            promptKey,
+          );
+          if (prepared.status === "guidance") {
             task.methodUseRef = prepared.methodUseRef;
             promptRecord.method = task.method;
             if (task.methodUseRef)
               promptRecord.methodUseRef = task.methodUseRef;
-            task.pending =
-              prepared.status === "lead" || !!prepared.pendingDecision;
             output = promptEnvelope(
               event,
-              `<lessonloop-method task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse these taskRef and methodUseRef values for reassessTask and prepareMethod after checking the missing facts. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-method>`,
+              `<lessonloop-method task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete method as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. The methodUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-method>`,
             );
             promptRecord.responseDigest = digest(
               output.modifiedTransformedPrompt,
             );
+          } else if (prepared.status === "requires_expansion") {
+            output = promptEnvelope(
+              event,
+              "<lessonloop-method>" +
+                JSON.stringify({
+                  ...prepared,
+                  taskRef: task.taskRef,
+                  method: task.method,
+                }) +
+                " Full guidance exceeds the automatic budget. To read it, call prepareMethod with these task and method references and viewMode=expanded.</lessonloop-method>",
+            );
           } else {
-            task.pending = false;
             if (prepared.reason) await gap(task, prepared.reason);
           }
         }
@@ -618,7 +545,6 @@ export async function handleHook(
     if (type === "agentStop") {
       task.stopped = true;
       await save();
-      await reassess();
     }
     if (type === "sessionEnd") {
       if (
@@ -633,11 +559,6 @@ export async function handleHook(
           digest([task.taskRef, "final", event.finalMessage]),
           now,
         );
-      try {
-        await reassess();
-      } catch {
-        await gap(task, "assessment_unavailable_at_end");
-      }
       await finish(task, now, event.reason ?? "session_end");
     }
     // Copilot can dispatch sessionStart after userPromptTransformed. A new

@@ -7,12 +7,7 @@ import {
   decide,
   type Experience,
 } from "../domain/experience.js";
-import {
-  Preparation,
-  eligible,
-  tokenCount,
-  type TaskFacts,
-} from "../domain/prepare.js";
+import { prepareMethod, eligible, tokenCount } from "../domain/prepare.js";
 import {
   canonical,
   contextSchema,
@@ -258,7 +253,6 @@ const ref = (
   v: { id: string; revision: number },
 ): ObjectRef => ({ kind, id: v.id, revision: v.revision });
 export class CoreService {
-  private preparation = new Preparation();
   private ticking = false;
   private tickOffset = 0;
   private projectionOffset = 0;
@@ -3339,7 +3333,6 @@ export class CoreService {
             erasedObservationHashes: [...hashes],
           });
           await tx.put(entry("task", next), task.revision);
-          this.preparation.endTask(task.callerId, task.id);
         }
         for (const kind of ["feedback", "task_assessment"]) {
           for (const record of await tx.list<{
@@ -3694,7 +3687,6 @@ export class CoreService {
       if (byteSize(next) > 65536)
         throw new ApiError("task_observations_too_large", 413);
       await tx.put(entry("task", next), t.revision);
-      if (v.ended) this.preparation.endTask(p.id, t.id);
       return { accepted: true, duplicate: false };
     });
   }
@@ -3741,199 +3733,12 @@ export class CoreService {
       return { accepted: true, duplicate: false };
     });
   }
-  async reassessTask(p: Principal, input: unknown) {
-    const v = z
-      .object({
-        taskRef: z.string(),
-        methodId: z.string(),
-        revision: z.number().int().positive(),
-        methodUseRef: z.string().min(1),
-      })
-      .strict()
-      .parse(input);
-    const snapshot = await this.store.transaction(async (tx) => {
-      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
-      if (
-        task.ended ||
-        Date.now() - Date.parse(task.createdAt) >= 86400000 ||
-        (task.callerId !== p.id &&
-          p.channel !== "user" &&
-          !(p.channel === "agent" && p.taskOwnerId === task.callerId))
-      )
-        throw new ApiError("task_unavailable", 409);
-      const method = await this.owned<Method>(tx, p, "method", v.methodId);
-      if (
-        method.revision !== v.revision ||
-        !eligible(method, await this.eligibility(tx, p))
-      )
-        throw new ApiError("target_unavailable", 409);
-      const uses = await tx.list<{
-        taskRef: string;
-        methodUseRef: string;
-        stepIds: string[];
-        method: ObjectRef;
-        returnedAt: string;
-      }>("method_use", [task.scopeId]);
-      const delivered = new Set(
-        uses
-          .filter(
-            (u) =>
-              u.taskRef === task.id &&
-              u.method.id === method.id &&
-              u.method.revision === method.revision &&
-              (!v.methodUseRef || u.methodUseRef === v.methodUseRef),
-          )
-          .flatMap((u) => u.stepIds),
-      );
-      const active = this.preparation.activeUse(
-        task.callerId,
-        task.id,
-        v.methodUseRef,
-        method.id,
-        method.revision,
-      );
-      if (!active) throw new ApiError("prepare_context_expired", 409);
-      for (const step of delivered)
-        if (!active.has(step)) delivered.delete(step);
-      const deliveredAt = new Map<string, number>();
-      for (const use of uses)
-        if (
-          use.taskRef === task.id &&
-          use.methodUseRef === v.methodUseRef &&
-          use.method.id === method.id &&
-          use.method.revision === method.revision
-        )
-          for (const step of use.stepIds)
-            deliveredAt.set(
-              step,
-              Math.min(
-                deliveredAt.get(step) ?? Infinity,
-                Date.parse(use.returnedAt),
-              ),
-            );
-      return { task, method, delivered, deliveredAt };
-    });
-    const conditions = [
-      ...snapshot.method.conditions,
-      ...snapshot.method.exceptions,
-      ...snapshot.method.steps
-        .filter((s) => snapshot.delivered.has(s.stepId))
-        .flatMap((s) => s.choices?.map((c) => c.when) ?? []),
-    ];
-    const key = digest([
-      snapshot.task.id,
-      digest(snapshot.task.rawObservations ?? []),
-      snapshot.method.id,
-      snapshot.method.revision,
-      v.methodUseRef,
-      [...snapshot.delivered].sort(),
-    ]);
-    const previous = await this.store.transaction((tx) =>
-      tx.get<{ result: unknown }>("task_assessment", key),
-    );
-    if (previous) return previous.result;
-    const evidence = snapshot.task.rawObservations ?? [];
-    if (!evidence.length)
-      return { status: "lead", reason: "no_trusted_observations" };
-    await this.store.transaction(async (tx) => {
-      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
-      if (task.revision !== snapshot.task.revision) throw new Conflict();
-      if ((task.reassessmentCount ?? 0) >= 8)
-        throw new ApiError("observation_assessment_budget", 409);
-      const next = mutate(task, {
-        reassessmentCount: (task.reassessmentCount ?? 0) + 1,
-      });
-      await tx.put(entry("task", next), task.revision);
-      snapshot.task = next;
-    });
-    const evaluated = await this.engine.checkObservations({
-      observations: evidence.map((e) => e.text),
-      conditions: conditions.map((c) => ({ key: digest(c), text: c.text })),
-      steps: snapshot.method.steps
-        .filter((s) => snapshot.delivered.has(s.stepId))
-        .map((s) => ({ key: s.stepId, text: s.instruction })),
-    });
-    const conditionResults: Record<string, boolean> = {};
-    for (const check of evaluated.result.conditions)
-      if (
-        conditions.some((c) => digest(c) === check.key) &&
-        check.result !== "unknown" &&
-        check.excerpt.trim() &&
-        evidence.some((e) => e.text.includes(check.excerpt))
-      )
-        conditionResults[check.key] = check.result === "true";
-    const completed = evaluated.result.completed_steps
-      .filter(
-        (c) =>
-          snapshot.delivered.has(c.key) &&
-          c.result === "true" &&
-          evidence.some(
-            (e) =>
-              e.text.includes(c.excerpt) &&
-              Date.parse(e.occurredAt) >=
-                (snapshot.deliveredAt.get(c.key) ?? Infinity),
-          ),
-      )
-      .map((c) => c.key);
-    return this.store.transaction(async (tx) => {
-      const task = await this.owned<Task>(tx, p, "task", v.taskRef);
-      const method = await tx.get<Method>("method", v.methodId);
-      if (
-        task.revision !== snapshot.task.revision ||
-        task.ended ||
-        method?.revision !== v.revision ||
-        !eligible(method, await this.eligibility(tx, p))
-      )
-        throw new Conflict("task_changed_during_assessment");
-      const next = mutate(task, {
-        observations: [
-          ...task.observations,
-          {
-            id: key,
-            text: "Conditions assessed from trusted host observations",
-            values: {},
-            completedStepIds: completed,
-            conditionResults,
-            ended: false,
-            rawDigest: digest(task.rawObservations ?? []),
-            methodRef: ref("method", method),
-            ...(v.methodUseRef ? { methodUseRef: v.methodUseRef } : {}),
-          },
-        ],
-      });
-      if (byteSize(next) > 65536)
-        throw new ApiError("task_observations_too_large", 413);
-      await tx.put(entry("task", next), task.revision);
-      const result = {
-        status: "assessed",
-        completedStepIds: completed,
-        conditionResults,
-        usage: evaluated.usage,
-        evidence: evaluated.result,
-        rawDigest: digest(task.rawObservations ?? []),
-        methodRef: ref("method", method),
-      };
-      await tx.put(
-        entry("task_assessment", {
-          id: key,
-          revision: 1,
-          scopeId: task.scopeId,
-          taskRef: task.id,
-          result,
-        }),
-        null,
-      );
-      return result;
-    });
-  }
   async prepare(p: Principal, input: unknown) {
     const v = z
       .object({
         methodId: z.string(),
         revision: z.number().int().positive(),
         taskRef: z.string(),
-        methodUseRef: z.string().optional(),
-        completedStepIds: z.array(z.string()).max(12).optional(),
         viewMode: z.enum(["auto", "expanded"]).optional(),
         requestId: z.string().min(1).max(128).optional(),
       })
@@ -3950,27 +3755,9 @@ export class CoreService {
       )
         throw new ApiError("task_unavailable", 409);
       const m = await tx.get<Method>("method", v.methodId);
-      const latestRecord = t.observations.at(-1);
-      const latest =
-        latestRecord?.rawDigest &&
-        (latestRecord.rawDigest !== digest(t.rawObservations ?? []) ||
-          latestRecord.methodRef?.id !== m?.id ||
-          latestRecord.methodRef?.revision !== m?.revision ||
-          latestRecord.methodUseRef !== v.methodUseRef)
-          ? undefined
-          : latestRecord;
-      const facts: TaskFacts = {
-        values: t.values,
-        trustedKeys: new Set(
-          t.observations.flatMap((o) => Object.keys(o.values)),
-        ),
-        conditions: new Map(Object.entries(latest?.conditionResults ?? {})),
-        completed: new Set(latest?.completedStepIds ?? []),
-      };
-      const prepared = this.preparation.prepare(
-        m,
+      const prepared = prepareMethod(
+        m?.scopeId === t.scopeId ? m : undefined,
         { callerId: t.callerId, ...v },
-        facts,
         await this.eligibility(tx, p),
       );
       const settings = await this.settings(tx, t.scopeId);
@@ -4002,7 +3789,6 @@ export class CoreService {
             m.revision,
             prepared.methodUseRef,
             use.stepIds,
-            v.requestId ?? null,
           ]),
         };
         if (!(await tx.get("method_use", storedUse.id)))

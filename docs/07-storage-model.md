@@ -82,19 +82,19 @@ review={reason,question,reviewBy}；reason=verification_requested/conflict/sourc
 
 predecessors 保存被本次方法修订或拆分替代的 Method ObjectRef，仅表示沿革。change 中案例引用只解释变化来源，长期事实支持由 supportRefs 承担。
 
-方法按 steps 顺序开始。无 choices 时进入下一步；有 choices 时，在对应步骤完成后判断，只有恰好一条匹配且其他条明确不匹配才推进。零匹配、多匹配或未知时停在 pendingDecision；没有隐含默认路径，条件和跳转不允许循环或悬空。
+方法按 steps 顺序开始。无 choices 时进入下一步；有 choices 时，在对应步骤完成后判断，只有恰好一条匹配且其他条明确不匹配才推进。零匹配、多匹配或未知时由 Agent 继续调查或询问；没有隐含默认路径，条件和跳转不允许循环或悬空。
 
-检查引用的stepIds须存在。prepare返回全局停止条件、全局完成标准及当前前缀/已选路径的检查；全局完成标准可以显示为最终目标，不因诊断前缀完成就判定方法成功。未知和未选分支检查不作为本次路径完成要求，无须实现检查代码或执行DSL。
+检查引用的stepIds须存在。prepare返回全部完成检查和停止条件，保留stepIds以说明路径归属。Agent执行全局及所选路径的检查；未选分支不作为本次完成要求。返回指导或完成某一步不代表任务成功。无需执行DSL或服务端逐步推进。
 
 Method 维护当前正文与有限旧版快照。旧版只用于查看变化或作为新修订的输入，不取得当前使用资格。删除来源时清理所有受控快照中的相关复制内容；缺失旧依据明确显示，不能拿当前正文冒充旧内容。
 
 ## Condition 与任务准备
 
-Condition={text,match?}；match={key,values} 表示已规范化上下文值属于给定集合。text 必须与 match 等价；自由文本条件由真实 contextEvidence 判断，不支持任意代码或正则执行。未知值保持未知，路径和版本不能用裸前缀相似来猜测。
+Condition={text,match?}；match={key,values} 表示已规范化上下文值属于给定集合。text 必须与 match 等价；方法自由文本条件由工作 Agent 结合实际任务观察判断，直接经验定向核实仍使用 contextEvidence，不支持任意代码或正则执行。未知值保持未知，路径和版本不能用裸前缀相似来猜测。
 
 方法全局条件为 AND，例外任一成立就排除。分支条件只在相应决策点判断，不要求所有互斥分支同时成立。支持经验的当前资格先统一检查，本次适用性按方法与当前路径判断。
 
-PrepareContext 在核心内存中保存调用身份、taskRef、methodUseRef、方法修订、已给出的步骤和计数。它控制当前准备与续用，结束、取消、过期或核心重启后失效。历史返回关联分别写入获准的 WorkCase.methodUses 或 EffectTask，用于迟到结果核对，不能恢复 PrepareContext。
+方法准备不保存执行会话。Task保留归属、范围、结束状态和创建时间；每次获取检查任务仍有效。methodUseRef稳定绑定任务归属、taskRef及方法id/revision，用于真实结果与反馈关联。记录不表示步骤已经执行，也不授予权限。
 
 ## 发布投影与引擎映射
 
@@ -139,7 +139,7 @@ EffectTask 保存 taskRef、起止与覆盖、ObjectRef/步骤关联、投递/�
 | Method 旧版 | 最近 10 个旧修订且不超过 90 天，两项限制同时生效 |
 | EffectTask、EffectCase | 原始观察后 30 天，复核和复制不延期 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
-| PrepareContext | 空闲 30 分钟或最长 24 小时，结束/取消/重启更早失效 |
+| 方法获取所关联的Task | 创建后最长24小时；结束即停止获取，核心重启不额外缩短期限 |
 | 迟到结果 | 可信任务结束后24小时内等待结果；无结束信号保持结束未知，已保存历史关联仍按对应记录期限清理 |
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
@@ -166,9 +166,7 @@ Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系
 | 依赖展开 | 一个方法或经验请求共32个经验、深度5；超限不取得使用资格 |
 | 方法搜索 | 请求16 KiB；最多3个摘要，约800 token；摘要不带执行资格 |
 | 方法准备 | 请求16 KiB；一个方法自动视图2400 token，显式expanded最多8192 token且不超正文容量 |
-| 准备推进 | 前置适用性补查2轮、每决策点额外补查2轮；全任务自动prepare最多8次；正常步骤不算额外补查 |
 | 直接经验召回 | 请求16 KiB；最多3项、约800 token，最多1个lead；不与方法视图默认叠加 |
-| PrepareContext | 单项8 KiB、最多12个步骤引用；ID/reference各128 B |
 | 观察与回顾 | 单任务64 KiB、关联对象64；EffectCase8 KiB；每日1000任务/100新效果案例 |
 | Connector批次 | 256 KiB、最多8个Material片段；超长对象使用稳定子资源 |
 
