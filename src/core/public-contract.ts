@@ -3,7 +3,6 @@ export const publicOperations: Record<string, string> = {
   searchPlaybooks: "searchMethods",
   browsePlaybooks: "browseMethods",
   inspectPlaybook: "inspectMethod",
-  playbookHistory: "methodHistory",
   preparePlaybook: "prepareMethod",
   revisePlaybook: "reviseMethod",
   setPlaybookState: "setMethodState",
@@ -28,7 +27,6 @@ const names: Record<string, string> = {
   methodRefs: "playbookRefs",
   comparedMethodRefs: "comparedPlaybookRefs",
   affectedMethods: "affectedPlaybooks",
-  historicalMethods: "historicalPlaybooks",
 };
 const privateFields = new Set([
   "materialId",

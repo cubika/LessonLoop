@@ -13,7 +13,20 @@ export interface Eligibility {
   published: ReadonlyMap<string, number>;
   now: number;
 }
-export function eligible(method: Method, data: Eligibility): boolean {
+export function eligible(
+  method: Pick<
+    Method,
+    | "id"
+    | "scopeId"
+    | "revision"
+    | "state"
+    | "applicability"
+    | "validFrom"
+    | "validUntil"
+    | "supportRefs"
+  >,
+  data: Eligibility,
+): boolean {
   if (
     !data.scopes.has(method.scopeId) ||
     !usable(method, data) ||

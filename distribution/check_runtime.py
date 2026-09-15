@@ -19,7 +19,7 @@ db=psycopg2.connect(config["databaseUrl"],options="-c default_transaction_read_o
 with db:
     with db.cursor() as cur:
         cur.execute("SELECT version FROM lessonloop.schema_version")
-        if cur.fetchall()!=[(1,)]:raise SystemExit("Product schema mismatch")
+        if cur.fetchall()!=[(2,)]:raise SystemExit("Product schema mismatch")
         cur.execute("SELECT name FROM (VALUES ('vector'),('pg_trgm')) AS expected(name) WHERE NOT EXISTS(SELECT 1 FROM pg_extension WHERE extname=expected.name)")
         if cur.fetchall():raise SystemExit("Required database extension missing")
         cur.execute("SELECT to_regclass('hindsight.banks'),to_regclass('hindsight.async_operations'),to_regclass('lessonloop.objects')")

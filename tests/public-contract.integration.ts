@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/method-engine.js";
 import { dispatch } from "../src/core/server.js";
 import {
   identity,
@@ -180,6 +180,7 @@ test("Public resources preserve source identity, work provenance and playbook fe
         confirmed: true,
         objectKind: object === method ? "method" : "experience",
       });
+    await core.syncProjections([scopeId]);
     const detail = await call("inspectPlaybook", { id: method.id });
     assert.equal(detail.change.caseRefs, undefined);
     const view = await call("getWorkView", { kind: "playbook", id: method.id });

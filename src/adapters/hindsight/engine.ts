@@ -5,6 +5,7 @@ import {
   type MentalModelTriggerInput,
 } from "@vectorize-io/hindsight-client";
 import { digest, type Material, type ObjectRef } from "../../domain/schema.js";
+import type { MethodContent, MethodWrite } from "../../store/method-content.js";
 
 export const PROFILE_VERSION = "p0-0.1";
 export const LEARNING_MISSION =
@@ -46,6 +47,23 @@ export class HindsightEngine {
   }
   supportBank(scopeId: string, fingerprint: string) {
     return `lessonloop-support-${digest([scopeId, fingerprint]).slice(0, 32)}`;
+  }
+  readMethodContent(scopeId: string, id: string, hash: string) {
+    return this.productCall<MethodContent>("method-content", {
+      scope_id: scopeId,
+      id,
+      hash,
+    });
+  }
+  async writeMethodContent(write: MethodWrite) {
+    await this.productCall(
+      "commit-method",
+      { id: write.id, token: write.token },
+      30000,
+    );
+  }
+  async clearMethodCandidates(id: string, kind: "job" | "revision_review") {
+    await this.productCall("clear-method-candidates", { id, kind });
   }
   private async productCall<T>(
     path: string,

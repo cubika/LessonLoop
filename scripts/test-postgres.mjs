@@ -15,6 +15,7 @@ const files = [
   "tests/task-learning.integration.ts",
   "tests/reviews.integration.ts",
   "tests/method-evolution.integration.ts",
+  "tests/native-method.integration.ts",
   "tests/cross-case.integration.ts",
   "tests/recall.integration.ts",
   "tests/verification.integration.ts",

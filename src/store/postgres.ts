@@ -1,4 +1,12 @@
 import pg from "pg";
+import { randomUUID } from "node:crypto";
+import { digest, methodSchema, type Method } from "../domain/schema.js";
+import {
+  splitMethod,
+  type MethodContentStore,
+  type MethodRecord,
+  type MethodWrite,
+} from "./method-content.js";
 
 export interface Entry {
   kind: string;
@@ -13,24 +21,115 @@ export class Conflict extends Error {
   }
 }
 export class Transaction {
-  constructor(private readonly db: pg.PoolClient) {}
-  async get<T>(kind: string, id: string): Promise<T | undefined> {
+  constructor(
+    private readonly db: pg.PoolClient,
+    private readonly contents?: MethodContentStore,
+  ) {}
+  private async hydrate(value: MethodRecord): Promise<Method> {
+    const pending = await this.get<MethodWrite>("method_write", value.id);
+    const content =
+      pending?.hash === value.contentHash && pending.content
+        ? pending.content
+        : await this.contents?.readMethodContent(
+            value.scopeId,
+            value.id,
+            value.contentHash,
+          );
+    if (!content || digest(content) !== value.contentHash)
+      throw new Error("method_content_unavailable");
+    const { contentHash: _hash, planHash: _plan, ...record } = value;
+    return methodSchema.parse({ ...record, ...content });
+  }
+  async get<T>(
+    kind: string,
+    id: string,
+    metadataOnly = false,
+  ): Promise<T | undefined> {
     const r = await this.db.query(
       "SELECT value FROM lessonloop.objects WHERE kind=$1 AND id=$2",
       [kind, id],
     );
-    return r.rows[0]?.value as T | undefined;
+    const value = r.rows[0]?.value;
+    return (
+      value && kind === "method" && !metadataOnly
+        ? await this.hydrate(value)
+        : value
+    ) as T | undefined;
   }
-  async list<T>(kind: string, scopes?: string[]): Promise<T[]> {
+  async readableMethod(id: string): Promise<Method | undefined> {
+    try {
+      return await this.get<Method>("method", id);
+    } catch (error) {
+      if (error instanceof Conflict) throw error;
+      return undefined;
+    }
+  }
+  async list<T>(
+    kind: string,
+    scopes?: string[],
+    metadataOnly = false,
+  ): Promise<T[]> {
     const r = await this.db.query(
       "SELECT value FROM lessonloop.objects WHERE kind=$1 AND ($2::text[] IS NULL OR scope_id=ANY($2)) ORDER BY id",
       [kind, scopes ?? null],
     );
-    return r.rows.map((v) => v.value as T);
+    const values = r.rows.map((v) => v.value);
+    if (kind !== "method" || metadataOnly) return values as T[];
+    const results = await Promise.allSettled(
+      values.map((v) => this.hydrate(v)),
+    );
+    return results.flatMap((r) =>
+      r.status === "fulfilled" ? [r.value as T] : [],
+    );
   }
   async put(entry: Entry, expected: number | null): Promise<void> {
     if (entry.revision !== (expected === null ? 1 : expected + 1))
       throw new Conflict("revision_must_increment");
+    if (
+      ["job", "revision_review"].includes(entry.kind) &&
+      ["completed", "failed", "canceled"].includes(String(entry.value.status))
+    ) {
+      const value = { ...entry.value };
+      for (const field of [
+        "candidate",
+        "modelQuery",
+        "assessmentQuery",
+        "comparisonMethods",
+        "retainedSupport",
+        "verificationTarget",
+        "verificationControl",
+      ])
+        delete value[field];
+      entry = { ...entry, value };
+    }
+    if (entry.kind === "method" && "steps" in entry.value) {
+      const { content, record } = splitMethod(methodSchema.parse(entry.value));
+      const old = await this.get<MethodRecord>("method", entry.id, true);
+      if (old?.contentHash !== record.contentHash) {
+        const pending = await this.get<MethodWrite>("method_write", entry.id);
+        const value = {
+          token: randomUUID(),
+          previousSupport: [
+            ...new Map(
+              [
+                ...(pending?.previousSupport ?? []),
+                ...(old?.supportRefs ?? []),
+              ].map((r) => [r.id + ":" + r.revision, r]),
+            ).values(),
+          ],
+          id: entry.id,
+          scopeId: entry.scopeId,
+          revision: (pending?.revision ?? 0) + 1,
+          hash: record.contentHash,
+          content,
+        };
+        await this.put(
+          { ...entry, kind: "method_write", revision: value.revision, value },
+          pending?.revision ?? null,
+        );
+      }
+      entry = { ...entry, value: record as unknown as Record<string, unknown> };
+    }
     if (expected === null) {
       const r = await this.db.query(
         "INSERT INTO lessonloop.objects(kind,id,scope_id,revision,value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id",
@@ -59,51 +158,41 @@ export class Transaction {
     }
   }
   async remove(kind: string, id: string, expected: number) {
+    if (kind === "method") {
+      const method = await this.get<MethodRecord>(kind, id, true);
+      if (!method || method.revision !== expected) throw new Conflict();
+      const pending = await this.get<MethodWrite>("method_write", id);
+      const value = {
+        token: randomUUID(),
+        previousSupport: [
+          ...(pending?.previousSupport ?? []),
+          ...method.supportRefs,
+        ],
+        id,
+        scopeId: method.scopeId,
+        revision: (pending?.revision ?? 0) + 1,
+        hash: "",
+      };
+      await this.put(
+        {
+          kind: "method_write",
+          id,
+          scopeId: method.scopeId,
+          revision: value.revision,
+          value,
+        },
+        pending?.revision ?? null,
+      );
+    }
     const r = await this.db.query(
       "DELETE FROM lessonloop.objects WHERE kind=$1 AND id=$2 AND revision=$3 RETURNING id",
       [kind, id, expected],
     );
     if (!r.rowCount) throw new Conflict();
   }
-  async history(kind: string, id: string): Promise<Record<string, unknown>[]> {
-    return (
-      await this.db.query(
-        "SELECT value FROM lessonloop.history WHERE kind=$1 AND id=$2 AND created_at>now()-interval '90 days' ORDER BY revision DESC LIMIT 10",
-        [kind, id],
-      )
-    ).rows.map((v) => v.value);
-  }
-  async snapshot(entry: Entry) {
-    await this.db.query(
-      "INSERT INTO lessonloop.history(kind,id,revision,value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
-      [entry.kind, entry.id, entry.revision, JSON.stringify(entry.value)],
-    );
-    await this.db.query(
-      "DELETE FROM lessonloop.history WHERE kind=$1 AND id=$2 AND (created_at<=now()-interval '90 days' OR revision NOT IN (SELECT revision FROM lessonloop.history WHERE kind=$1 AND id=$2 ORDER BY revision DESC LIMIT 10))",
-      [entry.kind, entry.id],
-    );
-  }
-  async eraseHistory(kind: string, id: string) {
-    await this.db.query(
-      "DELETE FROM lessonloop.history WHERE kind=$1 AND id=$2",
-      [kind, id],
-    );
-  }
-  async listHistory<T>(kind: string, scopeId: string): Promise<T[]> {
-    const result = await this.db.query(
-      "SELECT value FROM lessonloop.history WHERE kind=$1 AND value->>'scopeId'=$2",
-      [kind, scopeId],
-    );
-    return result.rows.map((row) => row.value as T);
-  }
-  async eraseHistoryRevisions(kind: string, id: string, revisions: number[]) {
-    await this.db.query(
-      "DELETE FROM lessonloop.history WHERE kind=$1 AND id=$2 AND revision=ANY($3::bigint[])",
-      [kind, id, revisions],
-    );
-  }
 }
 export class ProductStore {
+  methodContents?: MethodContentStore;
   private readonly pool: pg.Pool;
   private owner: pg.PoolClient | undefined;
   private ready = false;
@@ -149,16 +238,15 @@ export class ProductStore {
         await this.owner.query(`BEGIN;
         CREATE SCHEMA IF NOT EXISTS lessonloop;
         CREATE TABLE lessonloop.schema_version(version integer PRIMARY KEY);
-        INSERT INTO lessonloop.schema_version VALUES(1);
+        INSERT INTO lessonloop.schema_version VALUES(2);
         CREATE TABLE lessonloop.objects(kind text NOT NULL,id text NOT NULL,scope_id text NOT NULL,revision bigint NOT NULL CHECK(revision>0),value jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(kind,id));
         CREATE INDEX objects_scope_kind ON lessonloop.objects(scope_id,kind);
-        CREATE TABLE lessonloop.history(kind text NOT NULL,id text NOT NULL,revision bigint NOT NULL,value jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(kind,id,revision));
         COMMIT;`);
       }
       const versions = await this.owner.query(
         "SELECT version FROM lessonloop.schema_version",
       );
-      if (versions.rows.length !== 1 || versions.rows[0].version !== 1)
+      if (versions.rows.length !== 1 || versions.rows[0].version !== 2)
         throw new Error("incompatible_product_schema");
       this.ready = true;
     } catch (error) {
@@ -181,7 +269,10 @@ export class ProductStore {
       // lock therefore also aborts the transaction; another core cannot overlap it.
       try {
         await db.query("BEGIN");
-        const result = await fn(new Transaction(db));
+        // Native content commits take this same transaction lock while checking
+        // the durable write intent. User/source changes cannot pass that check.
+        await db.query("SELECT pg_advisory_xact_lock(761259484)");
+        const result = await fn(new Transaction(db, this.methodContents));
         if (!this.ready) throw new Error("writer_ownership_lost");
         await db.query("COMMIT");
         return result;

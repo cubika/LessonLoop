@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore, Conflict } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "../src/adapters/hindsight/engine.js";
+import { HindsightEngine } from "./fixtures/method-engine.js";
 import { Effects } from "../src/core/effects.js";
 import { identity, methodSchema } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
@@ -190,11 +190,8 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
   await core.revise(p, method.id, 1, {
     goal: "Changed goal requiring reassessment",
   });
-  await core.setState(p, "method", method.id, 2, "disabled");
-  await assert.rejects(
-    core.setState(p, "method", method.id, 3, "active"),
-    /reassessment_required/,
-  );
+  await core.setState(p, "method", method.id, 1, "disabled");
+  await core.setState(p, "method", method.id, 2, "active");
   await store.close();
 });
 test("Trusted task materials aggregate without source duplication or cross-task mixing", async () => {

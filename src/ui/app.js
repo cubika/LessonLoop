@@ -218,41 +218,7 @@ async function show(id) {
     await show(id);
     await list();
   });
-  const history = node("button", "查看历史");
-  history.onclick = handle(async () => {
-    const versions = await rpc("playbookHistory", { id });
-    const panel = node("section", "");
-    panel.append(node("h3", "修订比较"));
-    if (!versions.length) panel.append(node("p", "暂无保留的历史修订。"));
-    for (const version of versions) {
-      const details = node("details", "");
-      details.append(
-        node("summary", `修订 ${version.revision} → ${current.revision}`),
-      );
-      for (const [key, label] of [
-        ["goal", "目标"],
-        ["steps", "步骤和分支"],
-        ["conditions", "条件"],
-        ["exceptions", "例外"],
-        ["completionChecks", "完成检查"],
-        ["state", "状态"],
-      ])
-        if (JSON.stringify(version[key]) !== JSON.stringify(current[key]))
-          details.append(
-            node("h4", label),
-            node(
-              "pre",
-              `此前：${JSON.stringify(version[key], null, 2)}\n现在：${JSON.stringify(current[key], null, 2)}`,
-            ),
-          );
-      panel.append(details);
-      const restore = node("button", "用这版内容修改并送审");
-      restore.onclick = handle(() => editMethod(d, version));
-      details.append(restore);
-    }
-    d.append(panel);
-  });
-  d.append(state, history);
+  d.append(state);
   addWorkView(d, { kind: "playbook", id });
   const usage = node("button", "查看使用记录");
   usage.onclick = handle(async () => {
@@ -483,16 +449,13 @@ function selectField(parent, label, options, value) {
   parent.append(wrapper);
   return input;
 }
-async function editMethod(parent, previous) {
+async function editMethod(parent) {
   const latest = structuredClone(current),
-    method = structuredClone(previous ?? current),
+    method = structuredClone(current),
     panel = node("section", "");
   panel.append(
-    node(
-      "h3",
-      previous ? `以修订 ${previous.revision} 为基础修改` : "修改方法",
-    ),
-    node("p", "提交后暂停旧建议，依据审查通过后再启用新修订。"),
+    node("h3", "修改方法"),
+    node("p", "先自动检查修改内容，通过后替换当前方法；未通过时保留当前内容。"),
   );
   parent.append(panel);
   const title = field(panel, "名称", method.title),
@@ -731,12 +694,7 @@ async function editMethod(parent, previous) {
   });
   panel.append(addStep, checkArea);
   renderChecks();
-  const reason = field(
-    panel,
-    "修改说明",
-    previous ? `基于修订 ${previous.revision} 的内容重新审查` : "",
-    true,
-  );
+  const reason = field(panel, "修改说明", "", true);
   const save = node("button", "提交审查"),
     cancel = node("button", "取消");
   cancel.onclick = () => panel.remove();
