@@ -95,6 +95,7 @@ interface Job {
   comparisonMethods?: Method[];
   synthesisTopicId?: string;
   inputCaseRefs?: ObjectRef[];
+  methodRepairCount?: number;
   cancelRequestedAt?: string;
   results: ObjectRef[];
   decisions: unknown[];
@@ -630,6 +631,11 @@ export class CoreService {
       } = j;
       return {
         ...visible,
+        usage: {
+          status: "not_aggregated",
+          nativeOperationIds: j.engineOperations ?? [],
+          includesRepair: (j.methodRepairCount ?? 0) > 0,
+        },
         results,
         receipt: {
           accepted: true,
@@ -1077,7 +1083,12 @@ export class CoreService {
       if (!found && !modelSubmissionClosed)
         throw new ApiError("native_model_identity_unconfirmed");
       if (found && found !== j.operationId)
-        j = await this.updateJob(j.id, { operationId: found });
+        j = await this.updateJob(j.id, {
+          operationId: found,
+          engineOperations: [
+            ...new Set([...(j.engineOperations ?? []), found]),
+          ],
+        });
     }
     if (j.assessmentId && !j.assessmentOperationId) {
       let found = await engine.findModelOperation(j.scopeId, j.assessmentId);
@@ -1107,7 +1118,12 @@ export class CoreService {
       if (!found && !assessmentSubmissionClosed)
         throw new ApiError("assessment_identity_unconfirmed");
       if (found)
-        j = await this.updateJob(j.id, { assessmentOperationId: found });
+        j = await this.updateJob(j.id, {
+          assessmentOperationId: found,
+          engineOperations: [
+            ...new Set([...(j.engineOperations ?? []), found]),
+          ],
+        });
     }
     if (j.cancelRequestedAt) {
       for (const id of [
@@ -1299,9 +1315,9 @@ export class CoreService {
       );
     }
     if (j.stage === "assess" && !j.assessmentId) {
-      const assessmentId = `assess-${j.id}`;
+      const assessmentId = "assess-" + randomUUID();
       const assessmentQuery =
-        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
+        "Assess the proposal against authorized source data and the frozen retained support. Do not add evidence. Reject unsupported causal/generalized claims, temporary requests, agent assertions posing as observations, misleading conditions and unsupported steps. Check each L1-L5 claim, not just labels or counts. A bounded logical implication of an explicitly observed mechanism is allowed; do not demand a separate observation for every input value of the same stated deterministic copy operation. Reject empirical equivalence claims about additional unobserved tools or unrelated pipelines. Judge meaning rather than reference-answer wording. Retained support is not another independent case. Return acceptedExperienceIndexes, methodSupported, substantiveChange, supportedEvidenceChange, acceptedMethodIndexes, splitCoherent and reasons. Method indexes follow splitMethods or the single method at index 0. Check executablePaths, not just individual sentences: a step without choices always continues to the next array element. Reject any path that falls through into another version or mutually exclusive procedure. Reject a new global condition that excludes a still-valid original task unless new evidence disproves that task. For a split require every child to be supported, distinct scope/behavior, and the group to preserve valid portions of the original. A rejected child rejects the whole split. substantiveChange is false for paraphrase/title-only changes, repeated success without new behavior, or no new supported step/condition/check. supportedEvidenceChange is true only when new independent evidence changes or strengthens the specific support for an existing method. Changing IDs or repeating the same source is false. Data: " +
         JSON.stringify({
           materials,
           retainedSupport: j.retainedSupport ?? [],
@@ -1361,6 +1377,48 @@ export class CoreService {
               j.assessmentSchema,
             )
           : assessmentSchema.parse(model.reflect_response?.structured_output);
+      const hasMethod =
+        !!j.candidate?.method || !!j.candidate?.splitMethods?.length;
+      if (
+        hasMethod &&
+        !verdict.methodSupported &&
+        (j.methodRepairCount ?? 0) < 1 &&
+        j.learningProfile === "methods-2"
+      ) {
+        j = await this.store.transaction(async (tx) => {
+          const old = await tx.get<Job>("job", j.id);
+          if (!old || old.cancelRequestedAt || old.revision !== j.revision)
+            throw new Conflict();
+          const query =
+            (old.modelQuery ?? "") +
+            "\nONE BOUNDED REVISION: the proposal below was rejected by independent support/path review. Correct only the cited problems using the same authorized evidence; do not weaken scope or invent facts. If no supported method is possible return method=null.\nREJECTED PROPOSAL (not evidence):\n" +
+            JSON.stringify(old.candidate) +
+            "\nREVIEW FINDINGS (not evidence):\n" +
+            JSON.stringify(verdict.reasons);
+          if (byteSize(query) > 524288)
+            throw new ApiError("learning_query_budget", 413);
+          const next = mutate(old, {
+            stage: "compose",
+            status: "running",
+            modelId: "job-" + randomUUID(),
+            modelQuery: query,
+            methodRepairCount: 1,
+            decisions: [
+              ...old.decisions,
+              { reason: "method_repair_requested", review: verdict.reasons },
+            ],
+          });
+          delete next.operationId;
+          delete next.assessmentId;
+          delete next.assessmentOperationId;
+          delete next.assessmentQuery;
+          delete next.candidate;
+          delete next.verdict;
+          await tx.put(entry("job", next), old.revision);
+          return next;
+        });
+        return;
+      }
       j = await this.updateJob(
         j.id,
         { stage: "publish", verdict, status: "running" },
@@ -3406,40 +3464,83 @@ export class CoreService {
     query: string,
     context: Record<string, string | string[]> = {},
   ) {
+    const decideWith = (
+      e: Experience,
+      data: Awaited<ReturnType<CoreService["eligibility"]>>,
+      relevant: boolean,
+    ) =>
+      decide(
+        e,
+        {
+          scopes: data.scopes,
+          context,
+          includeLeads: true,
+          relevant,
+          trustedContextKeys: new Set(),
+          trustedUserConstraint: true,
+          blockedIds: data.blockedObjects,
+          blockedSources: data.blockedSources,
+          published: data.published,
+        },
+        data.experiences,
+      );
+    const allowed = await this.store.transaction(async (tx) => {
+      const data = await this.eligibility(tx, p);
+      return [...data.experiences.values()]
+        .filter((e) => "usage" in decideWith(e, data, true))
+        .map((e) => ({ ...ref("experience", e), scopeId: e.scopeId }));
+    });
+    const scores = new Map<string, number>();
+    for (const scope of p.scopes) {
+      const refs = allowed.filter((e) => e.scopeId === scope);
+      if (!refs.length) continue;
+      const hits = await this.engine.searchPublished(
+        scope,
+        query,
+        refs,
+        "experience",
+      );
+      hits.forEach((hit, index) => {
+        const id = hit.metadata?.product_id,
+          reference = refs.find((r) => r.id === id);
+        if (reference)
+          scores.set(reference.id + ":" + reference.revision, 1 / (index + 1));
+      });
+    }
     return this.store.transaction(async (tx) => {
       const data = await this.eligibility(tx, p);
-      const rows = [];
-      for (const e of data.experiences.values()) {
-        const d = decide(
-          e,
-          {
-            scopes: data.scopes,
-            context,
-            includeLeads: true,
-            relevant:
-              e.conclusion.toLowerCase().includes(query.toLowerCase()) ||
-              e.entities.some((v) => query.includes(v)),
-            trustedContextKeys: new Set(),
-            trustedUserConstraint: true,
-            blockedIds: data.blockedObjects,
-            blockedSources: data.blockedSources,
-            published: data.published,
-          },
-          data.experiences,
-        );
-        if ("usage" in d) {
-          const row = {
-            experience: ref("experience", e),
-            conclusion: e.conclusion,
-            conditions: e.conditions,
-            exceptions: e.exceptions,
-            ...d,
+      const ranked = [...data.experiences.values()]
+        .map((e) => {
+          const entity = e.entities.some((value) =>
+            query.toLowerCase().includes(value.toLowerCase()),
+          );
+          return {
+            e,
+            score:
+              (entity ? 10 : 0) + (scores.get(e.id + ":" + e.revision) ?? 0),
           };
-          if (rows.length < 3 && tokenCount([...rows, row]) <= 800)
-            rows.push(row);
-        }
+        })
+        .filter((v) => v.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const results = [];
+      for (const { e } of ranked) {
+        const d = decideWith(e, data, true);
+        if (!("usage" in d)) continue;
+        const row = {
+          experience: ref("experience", e),
+          conclusion: e.conclusion,
+          conditions: e.conditions,
+          exceptions: e.exceptions,
+          ...d,
+        };
+        if (results.length >= 3) break;
+        if (tokenCount([...results, row]) <= 800) results.push(row);
       }
-      return { results: rows };
+      return {
+        results,
+        retrieval: "native_multilingual_and_exact",
+        semanticAvailable: true,
+      };
     });
   }
   private async pendingGroup(tx: Transaction, scopeId: string, id: string) {

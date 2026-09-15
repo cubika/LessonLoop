@@ -18,6 +18,9 @@ function sample(core: CoreService) {
   return connector;
 }
 
+export async function tickConnectors(core: CoreService, scopes: string[]) {
+  return sample(core).tick(scopes);
+}
 export interface Credential {
   token: string;
   principal: Principal;
@@ -39,6 +42,8 @@ export async function dispatch(
       return sample(core).add(p, input);
     case "connector.list":
       return sample(core).list(p);
+    case "connector.schedule":
+      return sample(core).schedule(p, input);
     case "connector.sync":
       return sample(core).sync(p, identifier.parse(input).id);
     case "connector.bindings":

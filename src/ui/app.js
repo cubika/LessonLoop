@@ -514,6 +514,24 @@ async function renderConnections() {
         await renderConnections();
       });
       card.append(state, sync, remove);
+      const interval = field(
+        card,
+        "自动同步间隔（分钟，0 为手动）",
+        String(connection.intervalMinutes ?? 0),
+      );
+      interval.type = "number";
+      interval.min = "0";
+      interval.max = "1440";
+      const saveSchedule = node("button", "保存同步间隔");
+      saveSchedule.onclick = handle(async () => {
+        await rpc("connector.schedule", {
+          id: connection.id,
+          expectedRevision: connection.revision,
+          intervalMinutes: Number(interval.value),
+        });
+        await renderConnections();
+      });
+      card.append(saveSchedule);
     }
     const bindings = await rpc("connector.bindings", { id: connection.id });
     for (const binding of bindings) {

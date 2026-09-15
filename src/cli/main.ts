@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { ProductStore } from "../store/postgres.js";
 import { HindsightEngine } from "../adapters/hindsight/engine.js";
 import { CoreService } from "../core/service.js";
-import { apiServer, type Credential } from "../core/server.js";
+import { apiServer, tickConnectors, type Credential } from "../core/server.js";
 const args = process.argv.slice(2);
 const command = args.shift() ?? "help";
 const configPath = resolve(
@@ -58,6 +58,7 @@ async function main() {
         ...new Set(config.credentials.flatMap((c) => c.principal.scopes)),
       ];
       void core.tick(scopes).catch(() => undefined);
+      void tickConnectors(core, scopes).catch(() => undefined);
     }, 1500);
     const stop = () => {
       clearInterval(timer);
@@ -112,6 +113,7 @@ async function main() {
         add: "connector.add",
         list: "connector.list",
         sync: "connector.sync",
+        schedule: "connector.schedule",
         bindings: "connector.bindings",
         state: "connector.state",
         forget: "connector.forget",

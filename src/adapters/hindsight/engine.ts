@@ -482,7 +482,12 @@ export class HindsightEngine {
       throw new Error("projection_readback_mismatch");
     return documentId;
   }
-  async searchPublished(scopeId: string, query: string, refs: ObjectRef[]) {
+  async searchPublished(
+    scopeId: string,
+    query: string,
+    refs: ObjectRef[],
+    kind: "method" | "experience" = "method",
+  ) {
     if (!refs.length) return [];
     const response = await this.client.recall(
       this.projectionBank(scopeId),
@@ -492,7 +497,7 @@ export class HindsightEngine {
         maxTokens: 6000,
         budget: "mid",
         tagGroups: [
-          { tags: ["active", "kind:method"], match: "all_strict" },
+          { tags: ["active", "kind:" + kind], match: "all_strict" },
           {
             tags: refs.map((r) => `ref:${r.id}:${r.revision}`),
             match: "any_strict",

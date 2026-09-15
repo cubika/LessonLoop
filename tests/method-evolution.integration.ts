@@ -541,3 +541,96 @@ test("Support-only revisions require independent evidence and support loss abort
     await store.close();
   }
 });
+
+test("Rejected methods get one bounded revision while retaining every native operation identity", async () => {
+  const store = new ProductStore(url!);
+  await store.open();
+  try {
+    const f = await setup(store);
+    const candidate = {
+      ...f.split,
+      splitMethods: null,
+      method: {
+        ...f.draft("Unsupported proposed step", "Candidate"),
+        changeKind: "branch",
+      },
+    };
+    await f.stage(candidate);
+    await store.transaction(async (tx) => {
+      const j = await tx.get<any>("job", f.newInput.jobId);
+      await tx.put(
+        entry("job", {
+          ...j,
+          revision: j.revision + 1,
+          stage: "assess",
+          assessmentId: "assess-fixture",
+          assessmentOperationId: "op-review-1",
+          modelQuery: "Original authorized evidence",
+          engineOperations: ["op-compose-1", "op-review-1"],
+        }),
+        j.revision,
+      );
+    });
+    let calls = 0;
+    const verdict = {
+      acceptedExperienceIndexes: [],
+      methodSupported: false,
+      substantiveChange: false,
+      supportedEvidenceChange: false,
+      acceptedMethodIndexes: [],
+      splitCoherent: false,
+      reasons: ["Unsupported comparison tool"],
+    };
+    const engine = f.engine as any;
+    engine.forJob = () => engine;
+    engine.operation = async () => ({ status: "completed" });
+    engine.model = async () => ({
+      reflect_response: { structured_output: verdict },
+    });
+    await f.core.tick([f.scope]);
+    let j = await store.transaction((tx) =>
+      tx.get<any>("job", f.newInput.jobId),
+    );
+    assert.equal(j.methodRepairCount, 1);
+    assert.equal(j.stage, "compose");
+    assert.ok(j.modelQuery.includes("not evidence"));
+    assert.deepEqual(j.engineOperations, ["op-compose-1", "op-review-1"]);
+    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+    engine.findModelOperation = async () => undefined;
+    engine.createModel = async () => {
+      calls++;
+      return { operation_id: "op-repaired-compose" };
+    };
+    engine.operation = async () => ({ status: "pending" });
+    await f.core.tick([f.scope]);
+    j = await store.transaction((tx) => tx.get<any>("job", f.newInput.jobId));
+    assert.equal(calls, 1);
+    assert.ok(j.engineOperations.includes("op-repaired-compose"));
+    await store.transaction(async (tx) => {
+      const old = await tx.get<any>("job", j.id);
+      await tx.put(
+        entry("job", {
+          ...old,
+          revision: old.revision + 1,
+          stage: "assess",
+          candidate: learningOutputSchema.parse(candidate),
+          assessmentId: "assess-second",
+          assessmentOperationId: "op-review-2",
+        }),
+        old.revision,
+      );
+    });
+    engine.operation = async () => ({ status: "completed" });
+    await f.core.tick([f.scope]);
+    j = await store.transaction((tx) => tx.get<any>("job", j.id));
+    assert.equal(j.status, "completed");
+    assert.equal(j.methodRepairCount, 1);
+    assert.equal(calls, 1);
+    assert.ok(
+      j.decisions.some((d: any) => d.reason === "method_repair_requested"),
+    );
+    assert.equal((await f.core.browse(f.p, "method")).length, 1);
+  } finally {
+    await store.close();
+  }
+});

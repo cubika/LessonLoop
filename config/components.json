@@ -22,6 +22,18 @@
   },
   "reranker": "rrf",
   "compatibilityShim": "distribution/hindsight_compat.py",
-  "nativeRetention": {"llmTraceEnabled":false,"auditLogEnabled":false,"operationRetentionDays":30,"existingTraceCleanup":"not_automatically_migrated"},
-  "limits": { "modelRequestTimeoutSeconds": 120, "assemblyOperations": 2, "hardOutputTokenCap": false, "usage": "measured" }
+  "nativeRetention": {
+    "llmTraceEnabled": false,
+    "auditLogEnabled": false,
+    "operationRetentionDays": 30,
+    "existingTraceCleanup": "not_automatically_migrated"
+  },
+  "limits": {
+    "modelRequestTimeoutSeconds": 120,
+    "assemblyOperations": 4,
+    "hardOutputTokenCap": false,
+    "usage": "measured",
+    "methodRepairAttempts": 1,
+    "structuredShapeRepairAttempts": 1
+  }
 }

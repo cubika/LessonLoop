@@ -28,6 +28,9 @@ interface Connection {
   prefixDigest: string;
   createdAt: string;
   lastError?: string;
+  intervalMinutes?: number;
+  nextSyncAt?: string;
+  scheduleRevision?: number;
 }
 interface Binding {
   id: string;
@@ -137,7 +140,81 @@ export class SampleConnector {
       return next;
     });
   }
-  async sync(p: Principal, id: string) {
+  async schedule(p: Principal, input: unknown) {
+    if (p.channel !== "user")
+      throw new ApiError("user_operation_required", 403);
+    const v = z
+      .object({
+        id: z.string(),
+        expectedRevision: z.number().int().positive(),
+        intervalMinutes: z.number().int().min(0).max(1440),
+      })
+      .strict()
+      .parse(input);
+    return this.store.transaction(async (tx) => {
+      const old = await tx.get<Connection>("connection", v.id);
+      if (!old || !p.scopes.includes(old.scopeId))
+        throw new ApiError("not_found", 404);
+      if (old.revision !== v.expectedRevision) throw new Conflict();
+      if (old.status === "removed")
+        throw new ApiError("connection_removed", 409);
+      const next = {
+        ...old,
+        revision: old.revision + 1,
+        intervalMinutes: v.intervalMinutes,
+        scheduleRevision: (old.scheduleRevision ?? 0) + 1,
+        nextSyncAt: new Date().toISOString(),
+      };
+      await tx.put(entry("connection", next), old.revision);
+      return next;
+    });
+  }
+  async tick(scopes: string[], now = Date.now()) {
+    const due = await this.store.transaction(async (tx) => {
+      const rows = (await tx.list<Connection>("connection", scopes))
+        .filter(
+          (c) =>
+            c.status === "active" &&
+            (c.intervalMinutes ?? 0) > 0 &&
+            Date.parse(c.nextSyncAt ?? c.createdAt) <= now,
+        )
+        .sort(
+          (a, b) =>
+            Date.parse(a.nextSyncAt ?? a.createdAt) -
+            Date.parse(b.nextSyncAt ?? b.createdAt),
+        )
+        .slice(0, 2);
+      for (const c of rows)
+        await tx.put(
+          entry("connection", {
+            ...c,
+            revision: c.revision + 1,
+            nextSyncAt: new Date(
+              now + c.intervalMinutes! * 60000,
+            ).toISOString(),
+          }),
+          c.revision,
+        );
+      return rows;
+    });
+    const results = [];
+    for (const c of due) {
+      try {
+        results.push({
+          id: c.id,
+          ...(await this.sync(
+            { id: "connector-scheduler", channel: "user", scopes: [c.scopeId] },
+            c.id,
+            c.scheduleRevision ?? 0,
+          )),
+        });
+      } catch {
+        results.push({ id: c.id, status: "retryable" });
+      }
+    }
+    return { results };
+  }
+  async sync(p: Principal, id: string, scheduledRevision?: number) {
     if (p.channel !== "user")
       throw new ApiError("user_operation_required", 403);
     if (this.running.has(id)) return { status: "already_running" };
@@ -149,6 +226,12 @@ export class SampleConnector {
       if (!connection || !p.scopes.includes(connection.scopeId))
         throw new ApiError("not_found", 404);
       if (connection.status !== "active") return { status: connection.status };
+      if (
+        scheduledRevision !== undefined &&
+        (!(connection.intervalMinutes ?? 0) ||
+          (connection.scheduleRevision ?? 0) !== scheduledRevision)
+      )
+        return { status: "schedule_changed" };
       if ((await realpath(connection.file)) !== connection.file)
         throw new ApiError("selected_file_changed", 409);
       const text = await readFile(connection.file, "utf8");
@@ -184,6 +267,12 @@ export class SampleConnector {
           const latest = await tx.get<Connection>("connection", id);
           if (!latest || latest.status !== "active")
             return { index, status: "paused" };
+          if (
+            scheduledRevision !== undefined &&
+            (!(latest.intervalMinutes ?? 0) ||
+              (latest.scheduleRevision ?? 0) !== scheduledRevision)
+          )
+            return { index, status: "schedule_changed" };
           if (latest.cursor !== index) throw new Conflict("cursor_changed");
           await this.settle(tx, latest);
           const { sourceVersion, ...normalized } = change;
@@ -345,6 +434,7 @@ export class SampleConnector {
               ...(accepted ? { jobId: accepted.jobId } : {}),
             };
           }
+          delete latest.lastError;
           await tx.put(
             entry("connection", {
               ...latest,
@@ -357,7 +447,12 @@ export class SampleConnector {
           return result;
         });
         results.push(result);
-        if (["paused", "pending_learning"].includes(result.status)) break;
+        if (
+          ["paused", "pending_learning", "schedule_changed"].includes(
+            result.status,
+          )
+        )
+          break;
       }
       return { status: "received", results };
     } catch (error) {

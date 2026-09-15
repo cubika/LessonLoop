@@ -349,3 +349,88 @@ test("Connector keeps stable families, ignores version-only changes, retries rec
     await store.close();
   }
 });
+
+test("Scheduled connector sync coalesces overdue periods and respects pause across restart", async () => {
+  let store = new ProductStore(url!);
+  await store.open();
+  const scope = randomUUID(),
+    p = { id: randomUUID(), channel: "user" as const, scopes: [scope] };
+  try {
+    let core = new CoreService(
+        store,
+        new HindsightEngine("http://127.0.0.1:19888", "unused"),
+      ),
+      connector = new SampleConnector(core, store);
+    await core.configure(p, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: true,
+      recommendation: false,
+      review: false,
+      notifications: false,
+    });
+    const file = resolve(".local-validation/connector-tests", scope + ".json");
+    await writeFile(
+      file,
+      JSON.stringify([
+        {
+          sourceKey: "scheduled",
+          mutation: "snapshot",
+          material: {
+            scopeId: scope,
+            segments: [{ text: "Scheduled input", role: "external" }],
+          },
+        },
+      ]),
+    );
+    const added = await connector.add(p, { scopeId: scope, file });
+    let connection = await connector.state(p, added.connection.id, 1, "active");
+    assert.equal((await connector.tick([scope])).results.length, 0);
+    connection = await connector.schedule(p, {
+      id: connection.id,
+      expectedRevision: connection.revision,
+      intervalMinutes: 5,
+    });
+    const oldSchedule = connection.scheduleRevision;
+    connection = await connector.schedule(p, {
+      id: connection.id,
+      expectedRevision: connection.revision,
+      intervalMinutes: 0,
+    });
+    assert.equal(
+      (await connector.sync(p, connection.id, oldSchedule)).status,
+      "schedule_changed",
+    );
+    assert.equal((await core.listSources(p)).length, 0);
+    connection = await connector.schedule(p, {
+      id: connection.id,
+      expectedRevision: connection.revision,
+      intervalMinutes: 5,
+    });
+    const now = Date.now();
+    assert.equal((await connector.tick([scope], now)).results.length, 1);
+    assert.equal((await connector.tick([scope], now + 1000)).results.length, 0);
+    assert.equal((await core.listSources(p)).length, 1);
+    await store.close();
+    store = new ProductStore(url!);
+    await store.open();
+    core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    connector = new SampleConnector(core, store);
+    assert.equal(
+      (await connector.tick([scope], now + 60 * 60000)).results.length,
+      1,
+    );
+    assert.equal((await core.listSources(p)).length, 1);
+    connection = (await connector.list(p))[0]!;
+    await connector.state(p, connection.id, connection.revision, "paused");
+    assert.equal(
+      (await connector.tick([scope], now + 120 * 60000)).results.length,
+      0,
+    );
+  } finally {
+    await store.close();
+  }
+});
