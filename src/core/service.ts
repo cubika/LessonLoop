@@ -194,12 +194,7 @@ interface Task {
     id: string;
     text: string;
     values: Record<string, string | string[]>;
-    completedStepIds: string[];
-    conditionResults: Record<string, boolean>;
     ended: boolean;
-    rawDigest?: string;
-    methodRef?: ObjectRef;
-    methodUseRef?: string;
   }>;
   rawObservations?: Array<{
     eventId: string;
@@ -1972,14 +1967,12 @@ export class CoreService {
                     taskRef,
                     callerId,
                     method,
-                    stepIds,
                     returnedAt,
                   }) => ({
                     methodUseRef,
                     taskRef,
                     callerId,
                     method,
-                    stepIds,
                     returnedAt,
                   }),
                 )
@@ -3473,6 +3466,19 @@ export class CoreService {
               await tx.remove(kind, record.id, record.revision);
           }
         }
+        const erasedMethod = (method?: ObjectRef) =>
+          method &&
+          (cleanup.affectedMethods.some((m) => m.id === method.id) ||
+            cleanup.historicalMethods?.some(
+              (m) => m.id === method.id && m.revision === method.revision,
+            ));
+        for (const use of await tx.list<{
+          id: string;
+          revision: number;
+          method: ObjectRef;
+        }>("method_use", [cleanup.scopeId]))
+          if (erasedMethod(use.method))
+            await tx.remove("method_use", use.id, use.revision);
         for (const effect of await tx.list<{
           id: string;
           revision: number;
@@ -3483,9 +3489,7 @@ export class CoreService {
         }>("effect_task", [cleanup.scopeId])) {
           const texts = taskCopies.get(effect.taskRef) ?? [];
           const removed = effect.events.filter(
-            (e) =>
-              texts.includes(e.text) ||
-              cleanup.affectedMethods.some((m) => m.id === e.method?.id),
+            (e) => texts.includes(e.text) || erasedMethod(e.method),
           );
           if (!removed.length) continue;
           for (const event of removed) {
@@ -3796,8 +3800,6 @@ export class CoreService {
         eventId: z.string(),
         text: z.string().min(1).max(4096),
         values: contextSchema,
-        completedStepIds: z.array(z.string()).max(12),
-        conditionResults: z.record(z.boolean()),
         ended: z.boolean().optional(),
       })
       .strict()
@@ -3813,12 +3815,17 @@ export class CoreService {
         id: v.eventId,
         text: v.text,
         values: v.values,
-        completedStepIds: v.completedStepIds,
-        conditionResults: v.conditionResults,
         ended: !!v.ended,
       };
       if (prior) {
-        if (canonical(prior) !== canonical(event))
+        // Old observations may still contain retired step-tracking fields.
+        const comparable = {
+          id: prior.id,
+          text: prior.text,
+          values: prior.values,
+          ended: prior.ended,
+        };
+        if (canonical(comparable) !== canonical(event))
           throw new Conflict("event_conflict");
         return { accepted: true, duplicate: true };
       }
@@ -3915,30 +3922,46 @@ export class CoreService {
         const use = {
           ...identity(t.scopeId),
           taskRef: t.id,
-          callerId: p.id,
+          callerId: t.callerId,
           method: ref("method", m),
           methodUseRef: prepared.methodUseRef,
-          stepIds: Array.isArray(prepared.steps)
-            ? prepared.steps.map((s: { stepId: string }) => s.stepId)
-            : [],
           returnedAt: new Date().toISOString(),
-          delivery: "unknown",
-          adoption: "unknown",
-          outcome: "unknown",
         };
         const storedUse = {
           ...use,
-          id: digest([
-            t.id,
-            p.id,
-            m.id,
-            m.revision,
-            prepared.methodUseRef,
-            use.stepIds,
-          ]),
+          id: prepared.methodUseRef,
         };
-        if (!(await tx.get("method_use", storedUse.id)))
-          await tx.put(entry("method_use", storedUse), null);
+        // Reuse legacy caller-specific rows as well as the stable association.
+        const existing = (
+          await tx.list<{
+            id: string;
+            revision: number;
+            methodUseRef: string;
+            returnedAt: string;
+          }>("method_use", [t.scopeId])
+        ).find((u) => u.methodUseRef === storedUse.methodUseRef);
+        if (!existing) await tx.put(entry("method_use", storedUse), null);
+        else {
+          const boundary = await tx.get<{ clearedAt: string }>(
+            "effect_boundary",
+            t.scopeId,
+          );
+          if (
+            boundary &&
+            Date.parse(existing.returnedAt) <= Date.parse(boundary.clearedAt)
+          )
+            await tx.put(
+              entry("method_use", {
+                ...storedUse,
+                id: existing.id,
+                revision: existing.revision + 1,
+                returnedAt: new Date(
+                  Math.max(Date.now(), Date.parse(boundary.clearedAt) + 1),
+                ).toISOString(),
+              }),
+              existing.revision,
+            );
+        }
       }
       return prepared;
     });
@@ -4068,7 +4091,6 @@ export class CoreService {
       const evaluated = await this.engine.checkObservations({
         observations: snapshot.evidence.map((e) => e.text),
         conditions: conditions.map((c) => ({ key: digest(c), text: c.text })),
-        steps: [],
       });
       result = {};
       for (const check of evaluated.result.conditions)

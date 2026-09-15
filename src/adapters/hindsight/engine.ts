@@ -97,16 +97,10 @@ export class HindsightEngine {
   async checkObservations(input: {
     observations: string[];
     conditions: Array<{ key: string; text: string }>;
-    steps: Array<{ key: string; text: string }>;
   }) {
     return this.productCall<{
       result: {
         conditions: Array<{
-          key: string;
-          result: "true" | "false" | "unknown";
-          excerpt: string;
-        }>;
-        completed_steps: Array<{
           key: string;
           result: "true" | "false" | "unknown";
           excerpt: string;

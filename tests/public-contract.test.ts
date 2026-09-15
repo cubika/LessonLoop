@@ -5,7 +5,6 @@ test("Resource translation preserves source text and arbitrary observation keys"
   const data = {
     context: { method: "literal", playbookId: "unchanged" },
     values: { playbookId: "literal" },
-    conditionResults: { playbookId: false },
     evidence: [{ excerpt: "method and playbook" }],
     segments: [{ text: "method", role: "tool" }],
   };

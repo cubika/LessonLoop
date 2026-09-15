@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ProductStore, Conflict } from "../store/postgres.js";
+import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
+import { feedbackSummary, taskFeedback } from "./feedback.js";
 import {
   identity,
   digest,
@@ -16,7 +17,6 @@ const eventSchema = z
       "task_started",
       "task_ended",
       "delivery",
-      "usage",
       "outcome",
       "user_rating",
       "collection_gap",
@@ -24,7 +24,6 @@ const eventSchema = z
     occurredAt: z.string().datetime(),
     method: refSchema.extend({ kind: z.literal("method") }).optional(),
     methodUseRef: z.string().max(128).optional(),
-    stepId: z.string().max(128).optional(),
     text: z.string().min(1).max(512),
     outcome: z.enum(["succeeded", "failed", "abandoned", "unknown"]).optional(),
     rating: z.enum(["helpful", "incorrect", "irrelevant"]).optional(),
@@ -161,13 +160,12 @@ export class Effects {
             Date.parse(actual.createdAt) < Date.now() - 31 * 86400000
           )
             throw new Error("event_outside_window");
-          if (event.method || event.methodUseRef || event.stepId) {
+          if (event.method || event.methodUseRef) {
             const uses = await tx.list<{
               taskRef: string;
               callerId: string;
               method: ObjectRef;
               methodUseRef: string;
-              stepIds: string[];
               returnedAt: string;
             }>("method_use", [event.scopeId]);
             if (
@@ -179,12 +177,14 @@ export class Effects {
                   use.method.id === event.method!.id &&
                   use.method.revision === event.method!.revision &&
                   use.methodUseRef === event.methodUseRef &&
-                  (!event.stepId || use.stepIds.includes(event.stepId)) &&
+                  (!boundary ||
+                    Date.parse(use.returnedAt) >
+                      Date.parse(boundary.clearedAt)) &&
                   Date.parse(use.returnedAt) <= Date.parse(event.occurredAt),
               )
             )
               throw new Error("method_use_mismatch");
-          } else if (["delivery", "usage"].includes(event.kind))
+          } else if (["delivery", "user_rating"].includes(event.kind))
             throw new Error("method_use_mismatch");
           if (actual.erasedObservationHashes?.includes(digest(event.text)))
             return {
@@ -270,63 +270,64 @@ export class Effects {
       const tasks = (await tx.list<EffectTask>("effect_task", scopes)).filter(
         (t) => Date.parse(t.createdAt) > Date.now() - 30 * 86400000,
       );
-      const n = tasks.length;
-      const count = (kind: Event["kind"], value?: string) =>
-        tasks.filter((t) =>
-          t.events.some(
-            (e) =>
-              e.kind === kind &&
-              (!value || e.outcome === value || e.rating === value),
-          ),
-        ).length;
       return {
-        tasks: n,
+        ...feedbackSummary(tasks),
         coverage: "tasks_with_received_observations",
-        ended: count("task_ended"),
-        delivered: count("delivery"),
-        usageObserved: count("usage"),
-        succeeded: count("outcome", "succeeded"),
-        failed: count("outcome", "failed"),
-        abandoned: count("outcome", "abandoned"),
-        unknownOutcome: tasks.filter(
-          (t) =>
-            !t.events.some(
-              (e) =>
-                e.kind === "outcome" &&
-                e.outcome !== undefined &&
-                e.outcome !== "unknown",
-            ),
-        ).length,
-        helpful: count("user_rating", "helpful"),
-        reportedIncorrect: count("user_rating", "incorrect"),
-        deliveryRate: n ? count("delivery") / n : null,
-        successRate: n ? count("outcome", "succeeded") / n : null,
         causalBenefit: "not_inferred",
         windowDays: 30,
       };
     });
   }
-  async cases(scopes: string[]) {
-    return this.store.transaction(async (tx) =>
-      (await tx.list<EffectTask>("effect_task", scopes))
+  async cases(scopes: string[], transaction?: Transaction) {
+    const read = async (tx: Transaction) => {
+      const cutoff = Date.now() - 30 * 86400000;
+      const boundaries = await tx.list<{ scopeId: string; clearedAt: string }>(
+        "effect_boundary",
+        scopes,
+      );
+      const uses = (
+        await tx.list<{
+          scopeId: string;
+          taskRef: string;
+          method: ObjectRef;
+          returnedAt: string;
+        }>("method_use", scopes)
+      ).filter(
+        (use) =>
+          Date.parse(use.returnedAt) > cutoff &&
+          !boundaries.some(
+            (boundary) =>
+              boundary.scopeId === use.scopeId &&
+              Date.parse(use.returnedAt) <= Date.parse(boundary.clearedAt),
+          ),
+      );
+      return (await tx.list<EffectTask>("effect_task", scopes))
         .filter((t) => Date.parse(t.createdAt) > Date.now() - 30 * 86400000)
-        .map((t) => ({
-          id: t.id,
-          revision: t.revision,
-          scopeId: t.scopeId,
-          taskRef: t.taskRef,
-          classification: t.events.some(
-            (e) => e.kind === "user_rating" && e.rating === "incorrect",
-          )
-            ? "reported_problem"
-            : t.events.some(
-                  (e) => e.kind === "user_rating" && e.rating === "helpful",
-                )
-              ? "user_confirmed_helpful"
-              : "needs_verification",
-          events: t.events,
-        })),
-    );
+        .map((t) => {
+          const result = taskFeedback(
+            t,
+            uses
+              .filter((u) => u.scopeId === t.scopeId && u.taskRef === t.taskRef)
+              .map((u) => u.method),
+          );
+          return {
+            id: t.id,
+            revision: t.revision,
+            scopeId: t.scopeId,
+            taskRef: t.taskRef,
+            ...result,
+            classification: result.feedback.some(
+              (f) => f.userRating === "incorrect",
+            )
+              ? "reported_problem"
+              : result.feedback.some((f) => f.userRating === "helpful")
+                ? "user_confirmed_helpful"
+                : "needs_verification",
+            events: t.events,
+          };
+        });
+    };
+    return transaction ? read(transaction) : this.store.transaction(read);
   }
   async clear(scopeId: string) {
     return this.store.transaction(async (tx) => {

@@ -198,6 +198,15 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       }
       await tx.snapshot(put("method", method).entry);
       await tx.put(put("method", currentMethod).entry, 1);
+      const use = {
+        ...identity(scope),
+        taskRef: task.taskRef,
+        callerId: host.id,
+        method: { kind: "method", id: method.id, revision: 1 },
+        methodUseRef: "source-bound-use",
+        returnedAt: new Date().toISOString(),
+      };
+      await tx.put(put("method_use", use).entry, null);
       // Deleting the experience first must not discard the source-to-history binding.
       const job = await tx.get<any>("job", accepted.jobId);
       await tx.put(
@@ -252,6 +261,10 @@ test("Erasure resumes after native and projection failures, scrubs history and t
       ((await core.inspect(owner, "source_cleanup", receipt.cleanupId)) as any)
         .status,
       "completed",
+    );
+    assert.deepEqual(
+      await store.transaction((tx) => tx.list("method_use", [scope])),
+      [],
     );
     assert.equal((await core.listSources(owner))[0]!.erased, true);
     assert.equal((await core.history(owner, method.id)).length, 0);

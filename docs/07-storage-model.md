@@ -50,7 +50,7 @@ WorkCase 仅作内部缓存，不提供公共 CRUD。getWorkView 根据公开资
 | topic、goal、context | 工作主题、目标、环境与用户约束 |
 | attempts | stepId、action、observation、outcome、evidenceIndexes，记录关键尝试 |
 | result | status=partial/succeeded/failed/abandoned/unknown，说明及证据引用 |
-| methodUses | playbookUseRef、taskRef、调用身份、method ObjectRef、返回步骤，以及投递/采用/结果各自依据 |
+| methodUses | playbookUseRef、taskRef、任务所属身份、method ObjectRef、返回时间；只关联任务与方法版本 |
 | evidence、unresolved、coverage | 实际短证据、未决问题、未采到的内容 |
 
 案例可以没有方法使用或完整结果。追加结果产生新 revision，不删除已有真实观察；纠正旧事实明确目标与被替代证据。一次任务可以按主题有多个案例，共同 taskRef/sourceFamily 防止把拆分当独立样本。
@@ -128,7 +128,9 @@ SourceBinding 以 connectionId+sourceKey 唯一定位资源，保存 parentSourc
 
 ## 效果记录
 
-EffectTask 保存 taskRef、起止与覆盖、ObjectRef/步骤关联、投递/采用/结果证据、用户评价及成本。EffectCase 保存案例类别、观察引用、方法变化或问题说明、人工复核与导出状态。EffectSummary 保存范围、周期、计数贡献、摘要版本和通知去重状态。
+EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除传播。回顾按taskRef、playbookId、revision汇总delivered、taskOutcome和userRating，缺少投递或评价时为null，结果未知为unknown；不持久化另一套派生状态。任务/方法版本关联只保存一次，playbookUseRef保留为接口关联键。运行时不记录步骤完成集合或自动采用事件，方法正文中的步骤和检查仍完整保留。
+
+旧回执可继续读取，usage不参与反馈汇总；旧方法关联中的步骤快照在重新生成WorkCase时移除。宿主与核心、Hindsight扩展需一起更新，旧的步骤观察字段不再接受。EffectCase保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
 
 这些记录按独立回顾授权保存，不自动成为学习输入。相同真实事件可分别路由到学习与回顾，但保持相同来源身份。正文过期或清空后不能靠迟到批次恢复，统计需能撤销贡献；零分母为 N/A，未知不按成功计。
 

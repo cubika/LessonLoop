@@ -183,7 +183,10 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
     .flatMap((c) => c.input);
   assert.equal(effects.filter((e) => e.kind === "delivery").length, 1);
   assert.equal(effects.filter((e) => e.kind === "usage").length, 0);
-  assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "unknown");
+  assert.equal(
+    effects.some((e) => e.kind === "outcome"),
+    false,
+  );
   assert.equal(
     effects.some((e) => e.outcome === "succeeded"),
     false,
@@ -251,8 +254,15 @@ test("session end retries after interruption and late transcript material stays 
     (c) =>
       c.operation === "recordTaskObservation" && c.input[0].kind === "outcome",
   );
-  assert.equal(outcomes.length, 1);
-  assert.equal(outcomes[0]?.input[0].outcome, "failed");
+  assert.equal(outcomes.length, 0);
+  assert.equal(
+    f.calls.filter(
+      (c) =>
+        c.operation === "recordTaskObservation" &&
+        c.input[0].kind === "task_ended",
+    ).length,
+    1,
+  );
 });
 
 test("an interrupted preparation retries the same prompt instead of caching an empty result", async (t) => {
@@ -364,7 +374,10 @@ test("unacknowledged injection is never counted as delivery, and completed promp
     effects.some((e) => e.kind === "delivery"),
     false,
   );
-  assert.equal(effects.find((e) => e.kind === "outcome")?.outcome, "abandoned");
+  assert.equal(
+    effects.some((e) => e.kind === "outcome"),
+    false,
+  );
 });
 
 test("disabled learning does not ingest transcript material and disallowed workspaces make no API call", async (t) => {
@@ -401,7 +414,7 @@ test("disabled learning does not ingest transcript material and disallowed works
   assert.equal(called, false);
 });
 
-test("session closure records outcomes without an observation assessment", async (t) => {
+test("session closure leaves the result unknown and preserves raw evidence", async (t) => {
   const f = await fixture(t);
   await f.hook("userPromptTransformed", 1, { prompt: "Inspect" });
   await f.hook("postToolUse", 2, {

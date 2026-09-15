@@ -88,11 +88,31 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     eventId: "obs",
     text: "Observed file type",
     values: { kind: "manual" },
-    completedStepIds: [],
-    conditionResults: {},
   };
   assert.equal((await core.observe(p, obs)).duplicate, false);
+  await store.transaction(async (tx) => {
+    const saved = await tx.get<any>("task", task.taskRef);
+    await tx.put(
+      {
+        kind: "task",
+        id: saved.id,
+        scopeId: scope,
+        revision: saved.revision + 1,
+        value: {
+          ...saved,
+          revision: saved.revision + 1,
+          observations: saved.observations.map((o: any) => ({
+            ...o,
+            completedStepIds: ["legacy"],
+            conditionResults: { old: true },
+          })),
+        },
+      },
+      saved.revision,
+    );
+  });
   assert.equal((await core.observe(p, obs)).duplicate, true);
+  await assert.rejects(core.observe(p, { ...obs, completedStepIds: [] }));
   await assert.rejects(
     core.observe(agent, obs),
     /trusted_observation_required/,
@@ -142,9 +162,10 @@ test("PostgreSQL migration, singleton, durable idempotency, CAS and source-role 
     "duplicate",
   );
   assert.equal((await effects.summary([scope])).unknownOutcome, 1);
-  assert.equal((await effects.summary([scope])).successRate, 0);
+  assert.equal((await effects.summary([scope])).succeeded, 0);
+  assert.equal("successRate" in (await effects.summary([scope])), false);
   await effects.clear(scope);
-  assert.equal((await effects.summary([scope])).successRate, null);
+  assert.equal((await effects.summary([scope])).tasks, 0);
   assert.equal(
     (await effects.record(host, [event])).results[0]?.status,
     "ignored",

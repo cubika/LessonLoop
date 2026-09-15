@@ -234,10 +234,10 @@ export const workCaseSchema = z
             taskRef: id,
             callerId: id,
             method: refSchema.extend({ kind: z.literal("method") }),
-            stepIds: z.array(id).max(12),
             returnedAt: z.string().datetime(),
           })
-          .strict(),
+          // Strip obsolete returned-step snapshots from historical cases.
+          .strip(),
       )
       .max(8),
   })

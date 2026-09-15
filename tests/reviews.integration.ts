@@ -47,7 +47,6 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
             callerId: host.id,
             method: reference,
             methodUseRef: "use-1",
-            stepIds: ["s1"],
             returnedAt: new Date(Date.now() - 1000).toISOString(),
           },
         },
@@ -103,7 +102,6 @@ test("Periodic reviews merge offline intervals, preserve unknowns, respect mute,
         kind: "delivery",
         method: reference,
         methodUseRef: "use-1",
-        stepId: "s1",
         text: "Wrong task use",
         occurredAt: new Date().toISOString(),
       },
@@ -300,6 +298,195 @@ test("Serious issue notifications require user-confirmed retained evidence and d
       reviews.recordIssue(p, input),
       /issue_evidence_unavailable/,
     );
+  } finally {
+    await store.close();
+  }
+});
+
+test("Simple feedback keeps delivery, corrected task outcomes and ratings independent across restart and clear", async () => {
+  let store = new ProductStore(url!);
+  await store.open();
+  try {
+    const scope = randomUUID();
+    const host = {
+      id: randomUUID(),
+      channel: "host" as const,
+      scopes: [scope],
+    };
+    const user = { ...host, id: randomUUID(), channel: "user" as const };
+    let core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    let effects = new Effects(store);
+    await core.configure(user, {
+      scopeId: scope,
+      expectedRevision: 0,
+      learning: false,
+      recommendation: false,
+      review: true,
+      notifications: false,
+    });
+    const task = await core.startTask(host, scope);
+    const method = { kind: "method" as const, id: randomUUID(), revision: 3 };
+    await store.transaction(async (tx) => {
+      await tx.put(
+        {
+          kind: "method_use",
+          id: "use-" + scope,
+          scopeId: scope,
+          revision: 1,
+          value: {
+            id: "use-" + scope,
+            scopeId: scope,
+            revision: 1,
+            taskRef: task.taskRef,
+            callerId: host.id,
+            method,
+            methodUseRef: "use-" + scope,
+            stepIds: ["legacy"],
+            returnedAt: new Date(Date.now() - 1000).toISOString(),
+          },
+        },
+        null,
+      );
+    });
+    const base = {
+      taskRef: task.taskRef,
+      scopeId: scope,
+      occurredAt: new Date().toISOString(),
+      text: "Retained observation",
+    };
+    const delivery = {
+      ...base,
+      eventId: "delivery",
+      kind: "delivery",
+      method,
+      methodUseRef: "use-" + scope,
+    };
+    assert.equal(
+      (
+        await effects.record(host, [
+          {
+            ...base,
+            eventId: "outcome",
+            kind: "outcome",
+            outcome: "succeeded",
+          },
+        ])
+      ).results[0]!.status,
+      "accepted",
+    );
+    const rate = {
+      taskRef: task.taskRef,
+      methodUseRef: "use-" + scope,
+      rating: "helpful",
+    };
+    await core.rateMethodUse(user, rate, "rating");
+    let record = (await effects.cases([scope]))[0]!.feedback[0]!;
+    assert.deepEqual(record, {
+      taskRef: task.taskRef,
+      playbookId: method.id,
+      revision: 3,
+      delivered: null,
+      taskOutcome: "succeeded",
+      userRating: "helpful",
+    });
+    assert.equal(
+      (await effects.record(host, [delivery])).results[0]!.status,
+      "accepted",
+    );
+    assert.equal(
+      (await effects.record(host, [delivery])).results[0]!.status,
+      "duplicate",
+    );
+    await effects.record(host, [
+      {
+        ...base,
+        eventId: "correct-result",
+        kind: "outcome",
+        outcome: "failed",
+      },
+    ]);
+    await core.rateMethodUse(
+      user,
+      { ...rate, rating: "incorrect" },
+      "rating-correction",
+    );
+    assert.equal(
+      (
+        await effects.record(host, [
+          { ...delivery, eventId: "old-usage", kind: "usage" },
+        ])
+      ).results[0]!.reason,
+      "invalid_event",
+    );
+    assert.equal(
+      (
+        await effects.record(host, [
+          { ...delivery, eventId: "old-step", stepId: "legacy" },
+        ])
+      ).results[0]!.reason,
+      "invalid_event",
+    );
+    await store.close();
+    store = new ProductStore(url!);
+    await store.open();
+    core = new CoreService(
+      store,
+      new HindsightEngine("http://127.0.0.1:19888", "unused"),
+    );
+    effects = new Effects(store);
+    record = (await effects.cases([scope]))[0]!.feedback[0]!;
+    assert.equal(record.delivered, true);
+    assert.equal(record.taskOutcome, "failed");
+    assert.equal(record.userRating, "incorrect");
+    const summary = await effects.summary([scope]);
+    assert.equal(summary.delivered, 1);
+    assert.equal(summary.succeeded, 0);
+    assert.equal(summary.failed, 1);
+    assert.equal(summary.helpful, 0);
+    assert.equal(summary.reportedIncorrect, 1);
+    const reviews = new Reviews(store);
+    await reviews.maintain([scope], Date.now() + 8 * 86400000);
+    const review = (await reviews.list(user))[0]!;
+    assert.equal(review.summary.failed, 1);
+    assert.equal(review.summary.helpfulCount, 0);
+    assert.equal(review.problems.length, 1);
+    assert.deepEqual(await effects.cases([randomUUID()]), []);
+    await effects.clear(scope);
+    assert.equal(
+      (await effects.record(host, [delivery])).results[0]!.status,
+      "ignored",
+    );
+    assert.equal(
+      (await core.rateMethodUse(user, rate, "rating")).results[0]!.status,
+      "ignored",
+    );
+    assert.deepEqual(await effects.cases([scope]), []);
+    assert.equal(
+      (
+        await effects.record(host, [
+          {
+            ...delivery,
+            eventId: "late-old-link",
+            occurredAt: new Date(Date.now() + 1).toISOString(),
+          },
+        ])
+      ).results[0]!.status,
+      "rejected",
+    );
+    // A later independent result cannot restore the cleared preparation link.
+    await effects.record(host, [
+      {
+        ...base,
+        eventId: "later-result",
+        kind: "outcome",
+        occurredAt: new Date(Date.now() + 1).toISOString(),
+        outcome: "unknown",
+      },
+    ]);
+    assert.deepEqual((await effects.cases([scope]))[0]!.feedback, []);
   } finally {
     await store.close();
   }

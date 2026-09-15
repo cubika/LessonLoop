@@ -207,7 +207,38 @@ export async function startUiFixture() {
           result = { accepted: true, results: [{ status: "accepted" }] };
           break;
         case "reviews.notifications":
+        case "reviews.list":
+        case "reviews.issues":
           result = [];
+          break;
+        case "getEffectSummary":
+          result = {
+            tasks: 1,
+            delivered: 0,
+            succeeded: 0,
+            failed: 0,
+            unknownOutcome: 1,
+          };
+          break;
+        case "getUsageView":
+          result = [
+            {
+              id: "feedback-ui",
+              taskRef: "task-ui",
+              classification: "user_confirmed_helpful",
+              taskOutcome: "unknown",
+              feedback: [
+                {
+                  playbookId: "method-ui",
+                  revision: 2,
+                  delivered: null,
+                  taskOutcome: "unknown",
+                  userRating: "helpful",
+                },
+              ],
+              events: [],
+            },
+          ];
           break;
         default:
           throw new Error("Unexpected UI RPC: " + operation);

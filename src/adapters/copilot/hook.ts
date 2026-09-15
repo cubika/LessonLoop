@@ -284,19 +284,6 @@ export async function handleHook(
     };
     const finish = async (task: Task, at: string, reason: string) => {
       if (task.endedAt) return;
-      const outcome = ["error", "timeout"].includes(reason)
-        ? "failed"
-        : ["abort", "user_exit"].includes(reason)
-          ? "abandoned"
-          : "unknown";
-      await effect(
-        task,
-        "outcome",
-        digest([task.taskRef, "outcome"]),
-        `Copilot host execution ended (${reason}); task goal success was not inferred.`,
-        at,
-        { outcome },
-      );
       await effect(
         task,
         "task_ended",
@@ -311,8 +298,6 @@ export async function handleHook(
           eventId: "copilot-ended",
           text: "Copilot task ended. Task success was not inferred.",
           values: {},
-          completedStepIds: [],
-          conditionResults: {},
           ended: true,
         },
         digest([task.taskRef, "ended"]),

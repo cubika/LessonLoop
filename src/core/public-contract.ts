@@ -50,14 +50,7 @@ const privateFields = new Set([
   "comparisonMethods",
 ]);
 // These fields are source data, not protocol structure. Never rewrite their keys.
-const opaque = new Set([
-  "context",
-  "segments",
-  "evidence",
-  "match",
-  "values",
-  "conditionResults",
-]);
+const opaque = new Set(["context", "segments", "evidence", "match", "values"]);
 export function publicValue(value: unknown): any {
   if (Array.isArray(value))
     return value.filter((v) => v?.kind !== "work_case").map(publicValue);
