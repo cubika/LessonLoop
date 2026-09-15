@@ -21,7 +21,7 @@ db.autocommit = True
 try:
     with db.cursor() as cur:
         cur.execute('CREATE DATABASE "' + name + '"')
-    result = subprocess.run([sys.executable, '-I', '-B', str(root / 'tests/hindsight_method_commit_test.py')],
+    result = subprocess.run([sys.executable, '-I', '-B', str(root / 'tests/hindsight_playbook_commit_test.py')],
         env={**os.environ, 'LESSONLOOP_TEST_DATABASE_URL': url}, cwd=root,
         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=180)
     sys.exit(result.returncode)

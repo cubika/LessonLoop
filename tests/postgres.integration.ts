@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore, Conflict } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "./fixtures/method-engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { Effects } from "../src/core/effects.js";
 import { identity, playbookSchema } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;

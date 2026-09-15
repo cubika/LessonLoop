@@ -1,6 +1,6 @@
 """Run the pinned official engine with the documented Schema compatibility fix."""
 import os
-os.environ["HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION"] = "hindsight_methods:PlaybookGuard"
+os.environ["HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION"] = "hindsight_playbooks:PlaybookGuard"
 os.environ["HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"] = "false"
 import hindsight_compat
 hindsight_compat.install()

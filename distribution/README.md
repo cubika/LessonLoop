@@ -9,7 +9,7 @@ alpha.2优先复用系统运行时；最低版本、确认流程和安装用法�
 | download-model.py | 从固定清单下载模型，完整校验大小及 SHA256 后激活 |
 | hindsight_server.py | 启动官方引擎并加载固定版本 Schema 兼容层 |
 | hindsight_compat.py | 保留原始 JSON Schema，验证嵌套必填、枚举、nullable 和格式 |
-| hindsight_methods.py | 正式方法的受检提交、读回和删除；拒绝原生直接改写，要求关闭正文历史 |
+| hindsight_playbooks.py | 正式方法的受检提交、读回和删除；拒绝原生直接改写，要求关闭正文历史 |
 | build-bundle.ps1 | 汇集私有运行时、数据库、本地模型与产品构建，生成逐文件摘要 |
 | bootstrap.ps1 | 发布时生成install.ps1，检查已有依赖、按需确认安装并下载程序；模型由本地安装脚本继续准备 |
 | dependencies.ps1 | 检测最低版本、选择已有运行时，缺失或过旧时询问用户 |

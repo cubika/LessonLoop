@@ -6,7 +6,7 @@ import {
   type PlaybookContentStore,
   type PlaybookRecord,
   type PlaybookWrite,
-} from "./method-content.js";
+} from "./playbook-content.js";
 
 export interface Entry {
   kind: string;

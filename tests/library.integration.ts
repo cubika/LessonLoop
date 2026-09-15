@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "./fixtures/method-engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { dispatch } from "../src/core/server.js";
 import { Effects } from "../src/core/effects.js";
 import { identity, digest, playbookSchema } from "../src/domain/schema.js";
@@ -323,6 +323,7 @@ test("Playbook guidance survives core restart and retains task, source and feedb
     assert.ok(
       uses.every(
         (u) =>
+          u.id === first.playbookUseRef &&
           u.playbookUseRef === first.playbookUseRef &&
           !["delivery", "adoption", "outcome", "stepIds"].some(
             (key) => key in u,

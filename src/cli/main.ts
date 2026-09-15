@@ -187,8 +187,7 @@ async function main() {
         } else filters[flag.slice(2)] = value;
       }
       input = filters;
-    } else if (["inspectPlaybook", "playbookHistory"].includes(operation ?? ""))
-      input = { id: args.shift() };
+    } else if (operation === "inspectPlaybook") input = { id: args.shift() };
     else if (args[0])
       input = JSON.parse(await readFile(resolve(args[0]), "utf8"));
   } else if (

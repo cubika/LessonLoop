@@ -3,7 +3,7 @@ import { digest } from "../../src/domain/schema.js";
 import type {
   PlaybookContent,
   PlaybookWrite,
-} from "../../src/store/method-content.js";
+} from "../../src/store/playbook-content.js";
 
 // Database integration tests isolate native I/O. The Python lifecycle suite
 // independently exercises the real engine, routes, guard and durable writes.

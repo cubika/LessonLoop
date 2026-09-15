@@ -23,7 +23,7 @@ from hindsight_api import MemoryEngine
 from hindsight_api.models import RequestContext
 from hindsight_api.extensions.operation_validator import OperationValidationError
 from hindsight_api.api.http import create_app
-from hindsight_methods import PlaybookGuard, bank_for
+from hindsight_playbooks import PlaybookGuard, bank_for
 from hindsight_product import LessonLoopProduct
 
 async def main():

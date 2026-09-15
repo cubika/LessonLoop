@@ -8,7 +8,7 @@ import { digest, type Source, type ObjectRef } from "../../domain/schema.js";
 import type {
   PlaybookContent,
   PlaybookWrite,
-} from "../../store/method-content.js";
+} from "../../store/playbook-content.js";
 
 export const PROFILE_VERSION = "p0-0.1";
 export const LEARNING_MISSION =

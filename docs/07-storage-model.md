@@ -119,7 +119,7 @@ SourceBinding 以 connectionId+sourceKey 唯一定位资源，保存 parentSourc
 
 EffectTask 保存有界事件回执，用于幂等接收、问题引用和删除传播。回顾按taskRef、playbookId、revision汇总delivered、taskOutcome和userRating，缺少投递或评价时为null，结果未知为unknown；不持久化另一套派生状态。任务/方法版本关联只保存一次，playbookUseRef保留为接口关联键。运行时不记录步骤完成集合或自动采用事件，方法正文中的步骤和检查仍完整保留。
 
-当前存储版本内的旧回执可继续读取，usage不参与反馈汇总；旧方法关联中的步骤快照在重新生成WorkView时移除。宿主与核心、Hindsight扩展需一起更新，旧的步骤观察字段不再接受。使用视图保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
+格式 3 只接受当前关联结构，playbook_use 直接以 playbookUseRef 定位；不扫描旧关联键或转换旧步骤快照。宿主与核心、Hindsight 扩展需一起更新。使用视图保留问题引用与人工复核，周期回顾保留范围、周期和通知去重状态。
 
 这些记录按独立回顾授权保存，不自动成为学习输入。相同真实事件可分别路由到学习与回顾，但保持相同来源身份。正文过期或清空后不能靠迟到批次恢复，统计需能撤销贡献；零分母为 N/A，未知不按成功计。
 

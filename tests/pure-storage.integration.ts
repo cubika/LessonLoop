@@ -4,7 +4,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "./fixtures/method-engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import { identity } from "../src/domain/schema.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL;
 if (!url) throw Error("isolated test database required");
@@ -13,13 +13,17 @@ test("Old storage is explicitly rejected without modifying its version", async (
   await db.connect();
   const store = new ProductStore(url);
   try {
-    await db.query("UPDATE lessonloop.schema_version SET version=1");
-    await assert.rejects(store.open(), /incompatible_product_schema/);
-    assert.equal(
-      (await db.query("SELECT version FROM lessonloop.schema_version")).rows[0]
-        .version,
-      1,
-    );
+    for (const version of [1, 2]) {
+      await db.query("UPDATE lessonloop.schema_version SET version=$1", [
+        version,
+      ]);
+      await assert.rejects(store.open(), /incompatible_product_schema/);
+      assert.equal(
+        (await db.query("SELECT version FROM lessonloop.schema_version"))
+          .rows[0].version,
+        version,
+      );
+    }
   } finally {
     await db.query("UPDATE lessonloop.schema_version SET version=3");
     await store.close();

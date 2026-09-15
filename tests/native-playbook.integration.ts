@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ProductStore } from "../src/store/postgres.js";
 import { CoreService } from "../src/core/service.js";
-import { HindsightEngine } from "./fixtures/method-engine.js";
+import { HindsightEngine } from "./fixtures/playbook-engine.js";
 import {
   identity,
   playbookSchema,
   type Playbook,
 } from "../src/domain/schema.js";
 import { experienceSchema } from "../src/domain/experience.js";
-import type { PlaybookWrite } from "../src/store/method-content.js";
-import { splitPlaybook } from "../src/store/method-content.js";
+import type { PlaybookWrite } from "../src/store/playbook-content.js";
+import { splitPlaybook } from "../src/store/playbook-content.js";
 const url = process.env.LESSONLOOP_TEST_DATABASE_URL!;
 const entry = (kind: string, value: any) => ({
   kind,

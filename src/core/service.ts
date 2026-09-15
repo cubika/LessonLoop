@@ -27,7 +27,10 @@ import {
   byteSize,
 } from "../domain/schema.js";
 import { ProductStore, Transaction, Conflict } from "../store/postgres.js";
-import type { PlaybookRecord, PlaybookWrite } from "../store/method-content.js";
+import type {
+  PlaybookRecord,
+  PlaybookWrite,
+} from "../store/playbook-content.js";
 import {
   assessmentJsonSchema,
   learningAssessmentJsonSchema,
@@ -3746,15 +3749,11 @@ export class CoreService {
           ...use,
           id: prepared.playbookUseRef,
         };
-        // Reuse legacy caller-specific rows as well as the stable association.
-        const existing = (
-          await tx.list<{
-            id: string;
-            revision: number;
-            playbookUseRef: string;
-            returnedAt: string;
-          }>("playbook_use", [t.scopeId])
-        ).find((u) => u.playbookUseRef === storedUse.playbookUseRef);
+        const existing = await tx.get<{
+          id: string;
+          revision: number;
+          returnedAt: string;
+        }>("playbook_use", storedUse.id);
         if (!existing) await tx.put(entry("playbook_use", storedUse), null);
         else {
           const boundary = await tx.get<{ clearedAt: string }>(
