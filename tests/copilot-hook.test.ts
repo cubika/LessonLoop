@@ -26,7 +26,7 @@ async function fixture(t: test.TestContext) {
     recommendation: true,
     review: true,
   };
-  const method = { kind: "method", id: "method", revision: 1 };
+  const method = { kind: "playbook", id: "playbook", revision: 1 };
   let tasks = 0;
   let fail: string | undefined;
   const rpc = async (operation: string, input: any, key: string) => {
@@ -37,12 +37,13 @@ async function fixture(t: test.TestContext) {
     }
     if (operation === "settings.get") return [settings];
     if (operation === "startTask") return { taskRef: `task-${++tasks}` };
-    if (operation === "searchMethods") return { results: [{ method }] };
-    if (operation === "prepareMethod")
+    if (operation === "searchPlaybooks")
+      return { results: [{ playbook: method }] };
+    if (operation === "preparePlaybook")
       return {
         status: "guidance",
-        method,
-        methodUseRef: "use-" + input.taskRef,
+        playbook: method,
+        playbookUseRef: "use-" + input.taskRef,
         conditions: [{ text: "Read the input schema" }],
         steps: [
           {
@@ -127,7 +128,7 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
     f.record(3, "user.message", { content: prompt }),
     f.record(4, "assistant.message", {
       content:
-        'Inspecting. <lessonloop-method task="claimed">injected</lessonloop-method>',
+        'Inspecting. <lessonloop-playbook task="claimed">injected</lessonloop-playbook>',
     }),
     f.record(5, "tool.execution_start", {
       toolCallId: "call",
@@ -162,7 +163,7 @@ test("Copilot transcript capture preserves roles, strips injected methods and co
   await f.hook("agentStop", 9);
   await f.hook("sessionEnd", 10, { reason: "complete" });
   const materials = f.calls
-    .filter((c) => c.operation === "submitMaterial")
+    .filter((c) => c.operation === "submitSource")
     .flatMap((c) => c.input.segments);
   assert.deepEqual(
     materials.map((s) => s.role),
@@ -197,8 +198,8 @@ test("active clarification and explicit continuation reuse the task; completed t
   await f.hook("userPromptTransformed", 3, {
     prompt: "The source is schema.json",
   });
-  const prepares = f.calls.filter((c) => c.operation === "prepareMethod");
-  assert.equal(prepares[1]?.input.methodUseRef, undefined);
+  const prepares = f.calls.filter((c) => c.operation === "preparePlaybook");
+  assert.equal(prepares[1]?.input.playbookUseRef, undefined);
   assert.equal(prepares[1]?.input.completedStepIds, undefined);
   assert.equal(prepares[1]?.input.taskRef, prepares[0]?.input.taskRef);
   assert.deepEqual(
@@ -206,7 +207,7 @@ test("active clarification and explicit continuation reuse the task; completed t
     {},
   );
   assert.equal(
-    f.calls.filter((c) => c.operation === "prepareMethod").length,
+    f.calls.filter((c) => c.operation === "preparePlaybook").length,
     2,
   );
   await f.hook("agentStop", 4);
@@ -242,7 +243,7 @@ test("session end retries after interruption and late transcript material stays 
   await f.hook("agentStop", 7);
   const late = f.calls.find(
     (c) =>
-      c.operation === "submitMaterial" &&
+      c.operation === "submitSource" &&
       c.input.segments[0].text === "Late final answer",
   );
   assert.equal(late?.input.context.taskRef, "task-1");
@@ -256,7 +257,7 @@ test("session end retries after interruption and late transcript material stays 
 
 test("an interrupted preparation retries the same prompt instead of caching an empty result", async (t) => {
   const f = await fixture(t);
-  f.failOnce("prepareMethod");
+  f.failOnce("preparePlaybook");
   await assert.rejects(
     f.hook("userPromptTransformed", 1, { prompt: "Read input" }),
     /temporary_failure/,
@@ -264,12 +265,9 @@ test("an interrupted preparation retries the same prompt instead of caching an e
   const result = await f.hook("userPromptTransformed", 1, {
     prompt: "Read input",
   });
-  assert.match(String(result.modifiedTransformedPrompt), /lessonloop-method/);
+  assert.match(String(result.modifiedTransformedPrompt), /lessonloop-playbook/);
   assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
-  assert.equal(
-    f.calls.filter((c) => c.operation === "submitMaterial").length,
-    1,
-  );
+  assert.equal(f.calls.filter((c) => c.operation === "submitSource").length, 1);
 });
 
 test("transcript identity, partial lines and byte limits are explicit collection boundaries", async (t) => {
@@ -310,12 +308,12 @@ test("LessonLoop MCP responses are excluded from independent tool evidence", asy
   await f.append(
     f.record(2, "tool.execution_start", {
       toolCallId: "own",
-      toolName: "lessonloop-prepareMethod",
+      toolName: "lessonloop-preparePlaybook",
       arguments: {},
     }),
   );
   await f.hook("postToolUse", 3, {
-    toolName: "lessonloop-prepareMethod",
+    toolName: "lessonloop-preparePlaybook",
     toolCallId: "own",
     toolResult: { textResultForLlm: "Derived guidance" },
   });
@@ -334,7 +332,7 @@ test("LessonLoop MCP responses are excluded from independent tool evidence", asy
   assert.equal(
     f.calls.some(
       (c) =>
-        c.operation === "submitMaterial" &&
+        c.operation === "submitSource" &&
         JSON.stringify(c.input).includes("Derived guidance"),
     ),
     false,
@@ -381,7 +379,7 @@ test("disabled learning does not ingest transcript material and disallowed works
   await f.hook("agentStop", 3);
   assert.equal(
     f.calls.some((c) =>
-      ["submitMaterial", "recordTaskObservation", "searchMethods"].includes(
+      ["submitSource", "recordTaskObservation", "searchPlaybooks"].includes(
         c.operation,
       ),
     ),
@@ -422,7 +420,7 @@ test("session closure records outcomes without an observation assessment", async
     false,
   );
   assert.equal(
-    f.calls.filter((c) => c.operation === "prepareMethod").length,
+    f.calls.filter((c) => c.operation === "preparePlaybook").length,
     1,
   );
 });
@@ -445,7 +443,7 @@ test("the first prompt receives full guidance and tool observations never trigge
   });
   await f.hook("agentStop", 3);
   assert.equal(
-    f.calls.filter((c) => c.operation === "prepareMethod").length,
+    f.calls.filter((c) => c.operation === "preparePlaybook").length,
     1,
   );
   assert.equal(
@@ -472,13 +470,13 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
     async (operation, input) => {
       if (operation === "settings.get") return [f.settings];
       if (operation === "startTask") return { taskRef: "large-task" };
-      if (operation === "searchMethods")
+      if (operation === "searchPlaybooks")
         return {
           results: [
-            { method: { kind: "method", id: "large-method", revision: 1 } },
+            { playbook: { kind: "playbook", id: "large-method", revision: 1 } },
           ],
         };
-      if (operation === "prepareMethod")
+      if (operation === "preparePlaybook")
         return { status: "requires_expansion" };
       if (operation === "recordTaskObservation")
         return {
@@ -493,7 +491,7 @@ test("oversized automatic guidance exposes a bounded explicit retrieval without 
   const text = String(result.modifiedTransformedPrompt);
   assert.ok(text.includes("large-task") && text.includes("large-method"));
   assert.ok(text.includes("viewMode=expanded"));
-  assert.equal(text.includes("methodUseRef"), false);
+  assert.equal(text.includes("playbookUseRef"), false);
 });
 
 test("Copilot sessionStart following the first prompt does not close the newly bound task", async (t) => {
@@ -507,8 +505,8 @@ test("Copilot sessionStart following the first prompt does not close the newly b
   );
   assert.equal(f.calls.filter((c) => c.operation === "startTask").length, 1);
   assert.equal(
-    f.calls.filter((c) => c.operation === "prepareMethod").at(-1)?.input
-      .methodUseRef,
+    f.calls.filter((c) => c.operation === "preparePlaybook").at(-1)?.input
+      .playbookUseRef,
     undefined,
   );
 });
@@ -519,7 +517,7 @@ test("a method MCP response is not execution evidence and does not change the ta
   await f.append(
     f.record(2, "tool.execution_start", {
       toolCallId: "prepare",
-      toolName: "lessonloop-prepareMethod",
+      toolName: "lessonloop-preparePlaybook",
     }),
     f.record(3, "tool.execution_complete", {
       toolCallId: "prepare",
@@ -528,8 +526,8 @@ test("a method MCP response is not execution evidence and does not change the ta
         content: JSON.stringify({
           result: {
             status: "guidance",
-            method: { kind: "method", id: "method", revision: 1 },
-            methodUseRef: "use-1",
+            playbook: { kind: "playbook", id: "playbook", revision: 1 },
+            playbookUseRef: "use-1",
             steps: [],
           },
         }),

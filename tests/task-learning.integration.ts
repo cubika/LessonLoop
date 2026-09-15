@@ -149,24 +149,116 @@ test("New task snapshots replace one case while older candidates cannot overwrit
     assert.equal((cases[0]!.evidence as unknown[]).length, 3);
     assert.equal((cases[0]!.result as any).summary, "Verification C passed");
     assert.equal((await core.getJob(host, first.jobId)).status, "completed");
+    const sourceFor = (await core.listSources(owner)).find(
+      (s) => s.materialId === first.materialId,
+    )!;
     const supplemented = await core.submitMaterial(
       owner,
       {
         scopeId: scope,
-        caseFor: {
-          kind: "work_case",
-          id: String(caseId),
-          revision: Number(cases[0]!.revision),
-        },
+        sourceFor: { id: sourceFor.id, revision: sourceFor.revision },
         segments: [{ text: "User confirmed the output", role: "user" }],
       },
       "user-supplement",
     );
+    const nextSupplement = await core.submitMaterial(
+      owner,
+      {
+        scopeId: scope,
+        sourceFor: { id: sourceFor.id, revision: sourceFor.revision },
+        segments: [{ text: "User confirmed again", role: "user" }],
+      },
+      "second-user-supplement",
+    );
+    // Both were accepted against the same source revision and internal view.
+    await stage(nextSupplement.jobId);
     await stage(supplemented.jobId);
-    await core.tick([scope]);
-    const supplementCase = (await core.browse(host, "work_case"))[0]!;
+    const staged = await store.transaction((tx) =>
+      tx.get<any>("job", supplemented.jobId),
+    );
+    const stagedMaterials = await store.transaction(async (tx) =>
+      Promise.all(
+        staged.materialIds.map((id: string) => tx.get<any>("material", id)),
+      ),
+    );
+    await (core as any).publish(
+      staged,
+      stagedMaterials,
+      staged.candidate,
+      staged.verdict,
+    );
+    let supplementCase = (await core.browse(host, "work_case"))[0]!;
     assert.equal(supplementCase.taskRef, task.taskRef);
     assert.equal((supplementCase.evidence as unknown[]).length, 4);
+    assert.equal((supplementCase.attempts as unknown[]).length, 4);
+    await core.tick([scope]);
+    assert.equal(
+      (await core.getJob(host, nextSupplement.jobId)).status,
+      "completed",
+    );
+    supplementCase = (await core.browse(host, "work_case"))[0]!;
+    assert.equal((supplementCase.evidence as unknown[]).length, 5);
+    assert.equal((supplementCase.attempts as unknown[]).length, 5);
+    // A manual source has no taskRef; its own ordering still prevents late rollback.
+    const manual = await core.submitMaterial(
+      owner,
+      {
+        scopeId: scope,
+        segments: [{ role: "user", text: "Manual initial observation" }],
+      },
+      "manual",
+    );
+    const manualSource = (await core.listSources(owner)).find(
+      (s) => s.materialId === manual.materialId,
+    )!;
+    const manualAppend = (text: string, key: string) =>
+      core.submitMaterial(
+        owner,
+        {
+          scopeId: scope,
+          sourceFor: { id: manualSource.id, revision: 1 },
+          segments: [{ role: "user", text }],
+        },
+        key,
+      );
+    const earlier = await manualAppend(
+      "Manual earlier failed",
+      "manual-earlier",
+    );
+    const later = await manualAppend("Manual later succeeded", "manual-later");
+    await stage(later.jobId);
+    const publishJob = async (id: string) => {
+      const j = await store.transaction((tx) => tx.get<any>("job", id));
+      const ms = await store.transaction((tx) =>
+        Promise.all(
+          j.materialIds.map((mid: string) => tx.get<any>("material", mid)),
+        ),
+      );
+      await (core as any).publish(j, ms, j.candidate, j.verdict);
+    };
+    await publishJob(later.jobId);
+    await stage(earlier.jobId);
+    await publishJob(earlier.jobId);
+    await stage(manual.jobId);
+    await publishJob(manual.jobId);
+    assert.equal(
+      (await core.browse(host, "work_case")).filter((c) =>
+        (c.evidence as any[]).some((e) => e.fingerprint === manualSource.id),
+      ).length,
+      1,
+    );
+    const manualCase = (await core.browse(host, "work_case")).find((c) =>
+      (c.evidence as any[]).some((e) => e.fingerprint === manualSource.id),
+    )!;
+    assert.equal((manualCase.result as any).summary, "Manual later succeeded");
+    assert.equal((manualCase.attempts as any[]).length, 3);
+    await store.transaction((tx) =>
+      tx.remove(
+        "work_case",
+        String(manualCase.id),
+        Number(manualCase.revision),
+      ),
+    );
     const fourth = await submit("New D observation", "d");
     await stage(fourth.jobId);
     await store.transaction(async (tx) => {

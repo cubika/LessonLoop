@@ -98,7 +98,6 @@ export async function runUiLibraryChecks() {
       e.dataset.view = match[1];
       return e;
     });
-    elements.get("record-kind").value = "work_case";
     const requests = [];
     const context = vm.createContext({
       document: {
@@ -160,14 +159,14 @@ export async function runUiLibraryChecks() {
     assert.equal($("cards").children.length, 2);
     checks.push("method pagination");
     await click($("cards"), "设为常用");
-    assert.equal(requests.at(-2).operation, "pinMethod");
+    assert.equal(requests.at(-2).operation, "pinPlaybook");
     assert.ok($("method-pages").textContent.includes("第 1 页"));
     checks.push("pin resets pagination");
     $("method-topic").value = "生成文件";
     $("method-state").value = "active";
     await $("search").onsubmit({ preventDefault() {} });
     assert.equal(
-      requests.findLast((r) => r.operation === "browseMethods").input.topic,
+      requests.findLast((r) => r.operation === "browsePlaybooks").input.topic,
       "生成文件",
     );
     checks.push("filter request");
@@ -192,7 +191,7 @@ export async function runUiLibraryChecks() {
     await input(steps[0], "分支条件", "当前文件已存在");
     await input(editor, "修改说明", "核对界面编辑请求");
     await click(editor, "提交审查");
-    const revise = requests.findLast((r) => r.operation === "reviseMethod");
+    const revise = requests.findLast((r) => r.operation === "revisePlaybook");
     assert.equal(revise.input.body.steps.length, 3);
     assert.equal(revise.input.body.steps[1].instruction, "核对新步骤");
     assert.equal(revise.input.body.steps[0].choices[0].next, "stop");
@@ -205,7 +204,7 @@ export async function runUiLibraryChecks() {
     assert.equal(field(editor, "名称").value, "旧版生成文件检查");
     await click(editor, "提交审查");
     assert.equal(
-      requests.findLast((r) => r.operation === "reviseMethod").input
+      requests.findLast((r) => r.operation === "revisePlaybook").input
         .expectedRevision,
       2,
     );
@@ -222,54 +221,52 @@ export async function runUiLibraryChecks() {
     assert.ok(taskPanel.textContent.includes("完成检查（s2）：字段符合预期"));
     assert.ok(taskPanel.textContent.includes("停止条件（全局）：来源不明"));
     assert.equal(
-      requests.findLast((r) => r.operation === "prepareMethod").input
-        .methodUseRef,
+      requests.findLast((r) => r.operation === "preparePlaybook").input
+        .playbookUseRef,
       undefined,
     );
     await click(taskPanel, "评价这次使用");
     await click(taskPanel, "保存评价");
     assert.equal(
-      requests.findLast((r) => r.operation === "rateMethodUse").input.taskRef,
+      requests.findLast((r) => r.operation === "ratePlaybookUse").input.taskRef,
       "task-ui",
     );
     assert.ok(!requests.some((r) => r.operation === "observeTask"));
     checks.push("host task link and use rating without executor");
     await run("renderRecords()");
-    await run("showRecord('work_case','case-ui')");
-    await click($("record-detail"), "补充结果或后续观察");
+    await run("renderSources()");
+    await click($("source-list"), "补充结果或后续观察");
     await input(
-      $("record-detail"),
+      $("source-list"),
       "实际结果、尝试及可核对的依据",
       "实际读回包含新增字段",
     );
-    await click($("record-detail"), "提交结果复盘");
+    await click($("source-list"), "提交结果复盘");
     assert.equal(
-      requests.findLast((r) => r.operation === "submitMaterial").input.caseFor
+      requests.findLast((r) => r.operation === "submitSource").input.sourceFor
         .id,
-      "case-ui",
+      "source-ui",
     );
-    checks.push("case result links current revision");
+    checks.push("source result links current revision");
     await run("showRecord('experience','experience-ui')");
     await click($("record-detail"), "补充证据并审查");
     await input($("record-detail"), "实际原文或观察", "实际文件包含 auditTag");
     await click($("record-detail"), "提交补证");
     assert.equal(
-      requests.findLast((r) => r.operation === "submitMaterial").input
+      requests.findLast((r) => r.operation === "submitSource").input
         .verificationFor.revision,
       2,
     );
     checks.push("experience targeted verification");
-    await $("new-case").click();
-    await input($("record-detail"), "主题", "新增案例");
-    await input($("record-detail"), "工作目标", "保留输出");
-    await input($("record-detail"), "实际尝试、观察及原文依据", "已读取输出");
-    await click($("record-detail"), "提交案例复盘");
+    $("scope").value = "ui-check";
+    $("material").value = "已读取输出，新增来源原文";
+    await $("submit").click();
     assert.ok(
       requests
-        .findLast((r) => r.operation === "submitMaterial")
-        .input.segments[0].text.includes("新增案例"),
+        .findLast((r) => r.operation === "submitSource")
+        .input.segments[0].text.includes("新增来源"),
     );
-    checks.push("authored case material");
+    checks.push("authored source submission");
     await run("show('method-ui')");
     await run(
       "editMethod(document.getElementById('detail'), {...current,supportRefs:[{kind:'experience',id:'experience-ui',revision:1}]})",
@@ -278,19 +275,19 @@ export async function runUiLibraryChecks() {
       e.textContent.includes("修改说明"),
     );
     let oldRefRequests = requests.filter(
-      (r) => r.operation === "reviseMethod",
+      (r) => r.operation === "revisePlaybook",
     ).length;
     await button(editor, "提交审查").click();
     assert.match($("notice").textContent, /原依据已更新/);
     assert.equal(
-      requests.filter((r) => r.operation === "reviseMethod").length,
+      requests.filter((r) => r.operation === "revisePlaybook").length,
       oldRefRequests,
     );
     field(editor, "送审时改用上述当前依据修订（仍需审查）").checked = true;
     await button(editor, "提交审查").click();
     assert.match($("notice").textContent, /依据仍未可用/);
     assert.equal(
-      requests.filter((r) => r.operation === "reviseMethod").length,
+      requests.filter((r) => r.operation === "revisePlaybook").length,
       oldRefRequests,
     );
     checks.push(
@@ -298,7 +295,7 @@ export async function runUiLibraryChecks() {
     );
     const realFetch = context.fetch;
     context.fetch = async (path, options) =>
-      JSON.parse(options.body).operation === "inspect"
+      JSON.parse(options.body).operation === "inspectExperience"
         ? { ok: false, json: async () => ({ error: "not_found" }) }
         : realFetch(path, options);
     await run("editMethod(document.getElementById('detail'), current)");
@@ -310,7 +307,7 @@ export async function runUiLibraryChecks() {
     $("method-topic").value = "different";
     await click($("method-pages"), "上一页");
     assert.equal(
-      requests.findLast((r) => r.operation === "browseMethods").input.cursor,
+      requests.findLast((r) => r.operation === "browsePlaybooks").input.cursor,
       undefined,
     );
     assert.ok($("method-pages").textContent.includes("第 1 页"));
@@ -324,7 +321,7 @@ export async function runUiLibraryChecks() {
     let release;
     const blockingFetch = context.fetch;
     context.fetch = async (path, options) => {
-      if (JSON.parse(options.body).operation === "prepareMethod")
+      if (JSON.parse(options.body).operation === "preparePlaybook")
         return new Promise((resolve) => {
           release = () =>
             resolve({
@@ -332,7 +329,7 @@ export async function runUiLibraryChecks() {
               json: async () => ({
                 result: {
                   status: "guidance",
-                  methodUseRef: "old-task-use",
+                  playbookUseRef: "old-task-use",
                   steps: [],
                   completionChecks: [],
                 },

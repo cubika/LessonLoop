@@ -6,9 +6,13 @@
 
 ## 数据所有权
 
+对外资源仅 Source、Experience、Playbook。下表描述内部存储：Material 保留接收批次；source 行以每个片段的 fingerprint 为稳定身份；Method 行映射为 Playbook。WorkCase 可作为有期限的学习缓存，EffectCase 是事件投影。公开命名调整不改存储键或已有引用。
+
+公共 playbookId、playbookUseRef 和 kind=playbook 在 API 边界映射到内部 methodId、methodUseRef 和 kind=method。Material.sourceFor 关联 Source 修订；内部解析出的 caseFor 不对外暴露。完整原文仍按原有保留期清理，Source 身份与控制记录继续用于追踪剩余依赖。
+
 | 数据 | 权威位置 | 用途 |
 |---|---|---|
-| Material、WorkCase、Experience、Method | ProductStore | 工作输入、分层主张、方法正文与用户可管理状态 |
+| Material、WorkCase、Experience、Playbook | ProductStore | 工作输入、分层主张、方法正文与用户可管理状态 |
 | 用户控制、版本和 SourceBinding | ProductStore | 纠正、停用、忘记、范围、来源变化和恢复 |
 | PublishedProjection | 可重建索引 | 查询当前可投递对象，不决定产品状态 |
 | 原文、chunks、原生 facts/observations、图与向量 | Hindsight 原生存储 | 提取、归纳、候选与依据读取 |
@@ -23,7 +27,7 @@
 
 跨对象引用采用 ObjectRef={kind,id,revision}，kind 为 work_case、experience 或 method。只有语义已明确限定单一对象的字段才省略 kind，例如 Experience.derivedFrom 只引用 Experience。作业结果、写操作、纠正回执和历史使用关联必须带 kind。
 
-引用绑定实际支持修订。revision 改变表示正文、依据、边界或使用状态变化；索引重建本身不改领域修订。方法沿革不是支持引用，引用图禁止循环，首版 Method 不递归调用其他 Method。
+引用绑定实际支持修订。revision 改变表示正文、依据、边界或使用状态变化；索引重建本身不改领域修订。方法沿革不是支持引用，引用图禁止循环，首版 Playbook 不递归调用其他 Playbook。
 
 ## 来源与 Material
 
@@ -37,6 +41,8 @@ Evidence={excerpt,role,relation,fingerprint,locator?,author?,observedAt?}。rela
 
 ## WorkCase
 
+WorkCase 仅作内部缓存，不提供公共 CRUD。getWorkView 根据公开资源按需关联现有缓存，缓存缺失返回 available=false，不在读取时调用模型。sourceFor 补充来源时解析内部关联，用户无需指定 caseFor。
+
 | 字段 | 内容 |
 |---|---|
 | 公共身份 | id、revision、scopeId、createdAt、updatedAt |
@@ -44,7 +50,7 @@ Evidence={excerpt,role,relation,fingerprint,locator?,author?,observedAt?}。rela
 | topic、goal、context | 工作主题、目标、环境与用户约束 |
 | attempts | stepId、action、observation、outcome、evidenceIndexes，记录关键尝试 |
 | result | status=partial/succeeded/failed/abandoned/unknown，说明及证据引用 |
-| methodUses | methodUseRef、taskRef、调用身份、method ObjectRef、返回步骤，以及投递/采用/结果各自依据 |
+| methodUses | playbookUseRef、taskRef、调用身份、method ObjectRef、返回步骤，以及投递/采用/结果各自依据 |
 | evidence、unresolved、coverage | 实际短证据、未决问题、未采到的内容 |
 
 案例可以没有方法使用或完整结果。追加结果产生新 revision，不删除已有真实观察；纠正旧事实明确目标与被替代证据。一次任务可以按主题有多个案例，共同 taskRef/sourceFamily 防止把拆分当独立样本。
@@ -66,7 +72,7 @@ WorkCase 支持关联迟到结果，但不恢复过期执行状态。其核心�
 
 review={reason,question,reviewBy}；reason=verification_requested/conflict/source_changed/scope_unclear。active 不保留待复评标记，重新启用仍运行准入。constraint 专指真实本人偏好或有权设置的要求。依据判定由02定义，不以 level 或来源数量代替。
 
-## Method 与版本
+## Playbook 与版本
 
 | 字段 | 内容 |
 |---|---|
@@ -80,13 +86,13 @@ review={reason,question,reviewBy}；reason=verification_requested/conflict/sourc
 | state、review、validFrom、validUntil | 与产品资格共用的使用状态、复评和有效期 |
 | change | kind=create/refine/branch/split/retire/correction、summary、caseRefs、predecessors |
 
-predecessors 保存被本次方法修订或拆分替代的 Method ObjectRef，仅表示沿革。change 中案例引用只解释变化来源，长期事实支持由 supportRefs 承担。
+predecessors 保存被本次方法修订或拆分替代的 Playbook ObjectRef，仅表示沿革。change 中案例引用只解释变化来源，长期事实支持由 supportRefs 承担。
 
 方法按 steps 顺序开始。无 choices 时进入下一步；有 choices 时，在对应步骤完成后判断，只有恰好一条匹配且其他条明确不匹配才推进。零匹配、多匹配或未知时由 Agent 继续调查或询问；没有隐含默认路径，条件和跳转不允许循环或悬空。
 
 检查引用的stepIds须存在。prepare返回全部完成检查和停止条件，保留stepIds以说明路径归属。Agent执行全局及所选路径的检查；未选分支不作为本次完成要求。返回指导或完成某一步不代表任务成功。无需执行DSL或服务端逐步推进。
 
-Method 维护当前正文与有限旧版快照。旧版只用于查看变化或作为新修订的输入，不取得当前使用资格。删除来源时清理所有受控快照中的相关复制内容；缺失旧依据明确显示，不能拿当前正文冒充旧内容。
+Playbook 维护当前正文与有限旧版快照。旧版只用于查看变化或作为新修订的输入，不取得当前使用资格。删除来源时清理所有受控快照中的相关复制内容；缺失旧依据明确显示，不能拿当前正文冒充旧内容。
 
 ## Condition 与任务准备
 
@@ -94,13 +100,13 @@ Condition={text,match?}；match={key,values} 表示已规范化上下文值属�
 
 方法全局条件为 AND，例外任一成立就排除。分支条件只在相应决策点判断，不要求所有互斥分支同时成立。支持经验的当前资格先统一检查，本次适用性按方法与当前路径判断。
 
-方法准备不保存执行会话。Task保留归属、范围、结束状态和创建时间；每次获取检查任务仍有效。methodUseRef稳定绑定任务归属、taskRef及方法id/revision，用于真实结果与反馈关联。记录不表示步骤已经执行，也不授予权限。
+方法准备不保存执行会话。Task保留归属、范围、结束状态和创建时间；每次获取检查任务仍有效。playbookUseRef稳定绑定任务归属、taskRef及方法id/revision，用于真实结果与反馈关联。记录不表示步骤已经执行，也不授予权限。
 
 ## 发布投影与引擎映射
 
 PublishedProjection 保存 ObjectRef、scope、eligibilityVersion、有效期和检索文本。查询在候选限额前过滤当前可投递集合，随后由核心重查状态、来源与支持。原生未发布事实不能占满产品 top-k。
 
-EngineBinding 保存 objectRef、backendInstanceId、engineType、processingConfigVersion、nativeRefs、sourceRefs、dependencyCoverage、checkState、checkedAt。Experience 绑定其实际原生依据，Method 可只绑定产品检索投影，不要求对应一个原生 mental model。
+EngineBinding 保存 objectRef、backendInstanceId、engineType、processingConfigVersion、nativeRefs、sourceRefs、dependencyCoverage、checkState、checkedAt。Experience 绑定其实际原生依据，Playbook 可只绑定产品检索投影，不要求对应一个原生 mental model。
 
 来源重处理或原生 ID 改变后，依据来源和主张重新绑定；无法确认则暂停，不只依赖文字相似。索引写入读回和产品修订一致后才解除发布屏障。
 
@@ -135,8 +141,8 @@ EffectTask 保存 taskRef、起止与覆盖、ObjectRef/步骤关联、投递/�
 | 已确认取消作业的材料 | 取消确认后 7 天清理；先清点原生迟到副本，已发布对象独立保留 |
 | 未完成或 uncertain 所需材料 | 保留至操作确认或修复，不按完成期限误删 |
 | WorkCase | 原始观察后 30 天；追加不重置旧证据期限 |
-| 当前 Experience、Method | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
-| Method 旧版 | 最近 10 个旧修订且不超过 90 天，两项限制同时生效 |
+| 当前 Experience、Playbook | 长期保留当前内容、获准短证据及引用，直到用户删除或来源策略要求清理 |
+| Playbook 旧版 | 最近 10 个旧修订且不超过 90 天，两项限制同时生效 |
 | EffectTask、EffectCase | 原始观察后 30 天，复核和复制不延期 |
 | EffectSummary | 90 天；无任务正文，贡献关联随删除或到期清理 |
 | 方法获取所关联的Task | 创建后最长24小时；结束即停止获取，核心重启不额外缩短期限 |
@@ -144,7 +150,7 @@ EffectTask 保存 taskRef、起止与覆盖、ObjectRef/步骤关联、投递/�
 | SourceBinding、SourceControl、EngineBinding | 有依赖、恢复或重放需要时保留，正文最小化 |
 | 用户另存导出文件 | 独立快照，不属于服务可远程撤回范围 |
 
-发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkCase、Experience、Method、历史和原生副本。
+发布前将获准的必要案例证据保存为 Experience 支持，不能只引用会过期的案例 URL。禁止复制或来源到期时停止相关使用，不擅自延长保留。清空效果记录只清统计；忘记或擦除来源须传播到 WorkCase、Experience、Playbook、历史和原生副本。
 
 Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系。默认发行 profile 必须明确实际副本策略；无法同时满足材料清理和方法依据保留时，按[决策记录](06-review-and-decisions.md)处理，不能只清作业就报告原文已删除。
 
@@ -158,10 +164,10 @@ Hindsight 的 document/chunks、基础事实和派生结果有独立保留关系
 | WorkCase | 64 KiB；16 attempts，每项2 KiB；16 Evidence；8 methodUses |
 | Experience | 16 KiB；conclusion 2 KiB；conditions/exceptions各4；topics8；entities16；derivedFrom8；根指纹32 |
 | Evidence | 单摘录512 B；Experience最多3项且总2 KiB；EffectCase同限；WorkCase最多16项 |
-| Method | 32 KiB；title256 B、goal1 KiB；12 steps，instruction1 KiB、rationale512 B；每步4 choices；16 supportRefs |
+| Playbook | 32 KiB；title256 B、goal1 KiB；12 steps，instruction1 KiB、rationale512 B；每步4 choices；16 supportRefs |
 | 检查与变化 | completionChecks/stopConditions各4项，每项text512 B、stepIds最多12；change.summary1 KiB、caseRefs8、predecessors4 |
 | Condition / review | text/question512 B；match最多4值；review整体1 KiB，默认30天 |
-| 学习作业 | 64 KiB、8提案；Method正文一次最多1份，超限拆关联作业；单次比较12案例、20相关对象，组装最多2次模型调用 |
+| 学习作业 | 64 KiB、8提案；Playbook正文一次最多1份，超限拆关联作业；单次比较12案例、20相关对象，组装最多2次模型调用 |
 | 控制记录 | WriteOperation48 KiB；SourceControl2 KiB；SourceBinding32 KiB；连接配置16 KiB、游标8 KiB |
 | 依赖展开 | 一个方法或经验请求共32个经验、深度5；超限不取得使用资格 |
 | 方法搜索 | 请求16 KiB；最多3个摘要，约800 token；摘要不带执行资格 |

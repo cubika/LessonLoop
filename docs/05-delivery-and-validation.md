@@ -92,7 +92,7 @@ P0选择固定Hindsight与官方Agent集成，使用合理的提取/归纳、范
 | D03 | 条件与match不一致、只有例外、相似路径不能产生错误匹配 |
 | D04 | 证据数量/字节超限不截断支持或例外 |
 | D05 | 派生引用、父修订、根来源覆盖和循环按合同校验 |
-| D06 | Material、WorkCase、Experience、Method预算分别验证，索引大小不冒充产品容量 |
+| D06 | Material、WorkCase、Experience、Playbook预算分别验证，索引大小不冒充产品容量 |
 | D07 | 跨scope发布重新授权和脱敏，不继承私有来源资格 |
 
 ## 准备、回执与准入

@@ -39,7 +39,7 @@ test("Sample connector requires an explicit file scope and advances only after r
         {
           sourceKey: "doc-1",
           mutation: "snapshot",
-          material: {
+          source: {
             scopeId: scope,
             segments: [{ text: "Selected sample source.", role: "external" }],
           },
@@ -89,7 +89,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
     changes.push({
       sourceKey: "doc",
       mutation: "snapshot",
-      material: material("Version A"),
+      source: material("Version A"),
     });
     await writeFile(file, JSON.stringify(changes));
     const added = (await dispatch(
@@ -106,7 +106,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
     changes.push({
       sourceKey: "doc",
       mutation: "snapshot",
-      material: material("Version B"),
+      source: material("Version B"),
     });
     await writeFile(file, JSON.stringify(changes));
     assert.equal(
@@ -154,13 +154,13 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
         sourceKey: "event-1",
         parentSourceKey: "task-1",
         mutation: "append",
-        material: material("Observed A"),
+        source: material("Observed A"),
       },
       {
         sourceKey: "event-2",
         parentSourceKey: "task-1",
         mutation: "append",
-        material: material("Observed B"),
+        source: material("Observed B"),
       },
     );
     await writeFile(file, JSON.stringify(changes));
@@ -173,7 +173,7 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
       parentSourceKey: "task-1",
       mutation: "correct",
       correctsRef: { bindingId: first.id, sourceRevision: 1 },
-      material: material("Corrected A"),
+      source: material("Corrected A"),
     });
     await writeFile(file, JSON.stringify(changes));
     await connector.sync(p, id);
@@ -191,13 +191,13 @@ test("Connector replacement is atomic, corrections stay targeted, and parent for
         sourceKey: "event-3",
         parentSourceKey: "task-1",
         mutation: "append",
-        material: material("Late C"),
+        source: material("Late C"),
       },
       {
         sourceKey: "grandchild",
         parentSourceKey: "event-3",
         mutation: "append",
-        material: material("Late nested C"),
+        source: material("Late nested C"),
       },
     );
     await writeFile(file, JSON.stringify(changes));
@@ -250,7 +250,7 @@ test("Connector keeps stable families, ignores version-only changes, retries rec
       sourceKey: key,
       parentSourceKey: parent,
       mutation: "append",
-      material: { scopeId: scope, segments: [{ text, role: "external" }] },
+      source: { scopeId: scope, segments: [{ text, role: "external" }] },
     });
     changes.push(
       event("A", "task", "Same task A"),
@@ -377,7 +377,7 @@ test("Scheduled connector sync coalesces overdue periods and respects pause acro
         {
           sourceKey: "scheduled",
           mutation: "snapshot",
-          material: {
+          source: {
             scopeId: scope,
             segments: [{ text: "Scheduled input", role: "external" }],
           },
@@ -465,7 +465,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
         sourceKey: "document",
         parentSourceKey: "collection",
         mutation: "snapshot",
-        material: material("Original snapshot"),
+        source: material("Original snapshot"),
       },
     ];
     await writeFile(file, JSON.stringify(changes));
@@ -494,7 +494,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
       mutation: "snapshot",
       complete: false,
       partKeys: ["intro", "body"],
-      parts: [{ partKey: "intro", material: material("New introduction") }],
+      parts: [{ partKey: "intro", source: material("New introduction") }],
     });
     await writeFile(file, JSON.stringify(changes));
     await assert.rejects(
@@ -509,7 +509,7 @@ test("Connector receives complete snapshots atomically and tracks every learning
     changes[1].complete = true;
     changes[1].parts.push({
       partKey: "body",
-      material: material("New full body"),
+      source: material("New full body"),
     });
     await writeFile(file, JSON.stringify(changes));
     const submit = core.submitMaterial.bind(core);
@@ -629,7 +629,7 @@ test("Connector draft inputs enter material learning without creating trusted pr
     ];
     const inputs = [
       {
-        kind: "work_case",
+        kind: "source",
         scopeId: scope,
         goal: "Build the project",
         unresolved: ["Deployment not checked"],
@@ -643,7 +643,7 @@ test("Connector draft inputs enter material learning without creating trusted pr
         evidence,
       },
       {
-        kind: "method_draft",
+        kind: "playbook_draft",
         scopeId: scope,
         title: "Build verification",
         goal: "Check the project build",

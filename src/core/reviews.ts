@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ProductStore, Conflict, type Transaction } from "../store/postgres.js";
 import { digest, identity, type ObjectRef } from "../domain/schema.js";
 import type { Principal } from "./service.js";
+import { publicValue } from "./public-contract.js";
 const DAY = 86400000;
 type Stored = { id: string; revision: number; scopeId: string };
 type Review = Stored & {
@@ -275,7 +276,7 @@ export class Reviews {
           "Incomplete retained evidence; not an independent evaluation dataset or proof of benefit.",
         cases,
       });
-      const content = JSON.stringify(data, null, 2);
+      const content = JSON.stringify(publicValue(data), null, 2);
       if (Buffer.byteLength(content) > 262144)
         throw new Error("export_budget_exceeded");
       return {

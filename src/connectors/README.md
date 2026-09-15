@@ -1,6 +1,8 @@
 # 样例连接器
 
-`input.ts` 规范化material、work_case、experience_draft、method_draft；`sample-source.ts`读取文件并形成有限页。完整来源最多8片，每片32KiB、每批256KiB，UTF-8原文不截断。显式parts必须附完整唯一partKeys和complete=true。片段共用来源族，全部接收与旧来源替代在同一事务；学习状态汇总全部片，重试仅处理失败片。
+公开输入使用 source、experience_draft、playbook_draft；source 可以是原文片段或结构化工作记录。变更正文使用 source 或 input，显式 parts 中每项为 {partKey, source}。下文的 material 是核心规范化后的内部接收批次。
+
+`input.ts` 规范化 source、experience_draft、playbook_draft；`sample-source.ts`读取文件并形成有限页。完整来源最多8片，每片32KiB、每批256KiB，UTF-8原文不截断。显式parts必须附完整唯一partKeys和complete=true。片段共用来源族，全部接收与旧来源替代在同一事务；学习状态汇总全部片，重试仅处理失败片。
 
 sample.ts 读取用户明确选择的 JSON 变更文件。连接默认暂停；用户查看初始范围后恢复并同步。接收、来源替代、绑定和游标在同一事务提交，学习状态单独记录。
 

@@ -29,21 +29,21 @@ export type Config = {
   stateRoot: string;
 };
 type Call = (operation: string, input: any, key: string) => Promise<any>;
-type Method = { kind: "method"; id: string; revision: number };
+type Method = { kind: "playbook"; id: string; revision: number };
 type Task = {
   taskRef: string;
   startedAt: string;
   endedAt?: string;
   stopped?: boolean;
   method?: Method;
-  methodUseRef?: string;
+  playbookUseRef?: string;
   prompts: Array<{
     key: string;
     digest: string;
     responseDigest?: string;
     done?: boolean;
     method?: Method;
-    methodUseRef?: string;
+    playbookUseRef?: string;
   }>;
   materials: string[];
   observations: string[];
@@ -134,6 +134,19 @@ export async function handleHook(
       const previous = JSON.parse(await readFile(path, "utf8"));
       if (!Array.isArray(previous.tasks)) throw new Error("hook_state_invalid");
       state = previous;
+      // Keep replay and feedback identities when opening pre-Playbook hook state.
+      for (const task of state.tasks) {
+        for (const record of [task, ...task.prompts]) {
+          const old = record as typeof record & {
+            method?: Method;
+            methodUseRef?: string;
+          };
+          if (old.method) record.method = { ...old.method, kind: "playbook" };
+          if (!record.playbookUseRef && old.methodUseRef)
+            record.playbookUseRef = old.methodUseRef;
+          delete old.methodUseRef;
+        }
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -203,7 +216,7 @@ export async function handleHook(
       }
       try {
         await call(
-          "submitMaterial",
+          "submitSource",
           {
             scopeId: config.scopeId,
             segments: [
@@ -397,14 +410,17 @@ export async function handleHook(
           typeof output === "string"
             ? task.prompts.find((p) => p.responseDigest === digest(output))
             : undefined;
-        if (returned?.method && returned.methodUseRef)
+        if (returned?.method && returned.playbookUseRef)
           await effect(
             task,
             "delivery",
             digest([task.taskRef, "delivery", record.id ?? output]),
             "Copilot acknowledged the transformed prompt containing this method.",
             at,
-            { method: returned.method, methodUseRef: returned.methodUseRef },
+            {
+              playbook: returned.method,
+              playbookUseRef: returned.playbookUseRef,
+            },
           );
       }
       if (record.type === "tool.execution_complete") {
@@ -488,7 +504,7 @@ export async function handleHook(
       if (setting.recommendation && prompt.trim()) {
         if (!task.method) {
           const search = await call(
-            "searchMethods",
+            "searchPlaybooks",
             {
               query:
                 prompt
@@ -497,13 +513,13 @@ export async function handleHook(
             },
             "search",
           );
-          task.method = search.results[0]?.method;
+          task.method = search.results[0]?.playbook;
         }
         if (task.method) {
           const prepared = await call(
-            "prepareMethod",
+            "preparePlaybook",
             {
-              methodId: task.method.id,
+              playbookId: task.method.id,
               revision: task.method.revision,
               taskRef: task.taskRef,
               requestId: promptKey,
@@ -511,13 +527,13 @@ export async function handleHook(
             promptKey,
           );
           if (prepared.status === "guidance") {
-            task.methodUseRef = prepared.methodUseRef;
+            task.playbookUseRef = prepared.playbookUseRef;
             promptRecord.method = task.method;
-            if (task.methodUseRef)
-              promptRecord.methodUseRef = task.methodUseRef;
+            if (task.playbookUseRef)
+              promptRecord.playbookUseRef = task.playbookUseRef;
             output = promptEnvelope(
               event,
-              `<lessonloop-method task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete method as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. The methodUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-method>`,
+              `<lessonloop-playbook task="${task.taskRef}">\n${JSON.stringify(prepared)}\nUse this complete playbook as guidance. Check its conditions, execute the relevant steps, and choose branches from current observations. The playbookUseRef only links feedback. /lessonloop new starts a separate task; /lessonloop continue keeps this task after a completed turn.\n</lessonloop-playbook>`,
             );
             promptRecord.responseDigest = digest(
               output.modifiedTransformedPrompt,
@@ -525,13 +541,13 @@ export async function handleHook(
           } else if (prepared.status === "requires_expansion") {
             output = promptEnvelope(
               event,
-              "<lessonloop-method>" +
+              "<lessonloop-playbook>" +
                 JSON.stringify({
                   ...prepared,
                   taskRef: task.taskRef,
-                  method: task.method,
+                  playbook: task.method,
                 }) +
-                " Full guidance exceeds the automatic budget. To read it, call prepareMethod with these task and method references and viewMode=expanded.</lessonloop-method>",
+                " Full guidance exceeds the automatic budget. To read it, call preparePlaybook with these task and playbook references and viewMode=expanded.</lessonloop-playbook>",
             );
           } else {
             if (prepared.reason) await gap(task, prepared.reason);

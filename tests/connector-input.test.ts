@@ -10,7 +10,7 @@ import { byteSize } from "../src/domain/schema.js";
 test("Connector splits full UTF-8 content deterministically without losing source attribution", () => {
   const original = 'Observe 中文 🧭 \"quoted\"\n'.repeat(4000);
   const input = {
-    kind: "material",
+    kind: "source",
     scopeId: "scope",
     segments: [
       {
@@ -49,7 +49,7 @@ test("Source drafts retain claims, gaps and evidence without accepting publicati
   ];
   const inputs = [
     {
-      kind: "work_case",
+      kind: "source",
       scopeId: "scope",
       goal: "Verify the build",
       attempts: [{ action: "Run the build" }],
@@ -64,7 +64,7 @@ test("Source drafts retain claims, gaps and evidence without accepting publicati
       evidence,
     },
     {
-      kind: "method_draft",
+      kind: "playbook_draft",
       scopeId: "scope",
       title: "Build check",
       goal: "Verify the build",
@@ -97,7 +97,7 @@ test("Source drafts retain claims, gaps and evidence without accepting publicati
 
 test("Method source draft requires evidence and valid forward branches", () => {
   const draft = {
-    kind: "method_draft",
+    kind: "playbook_draft",
     scopeId: "scope",
     title: "Build check",
     goal: "Verify the build",
@@ -145,8 +145,8 @@ test("Sample snapshot rejects missing, duplicate and incomplete parts before acc
     complete: true,
     partKeys: ["intro", "body"],
     parts: [
-      { partKey: "body", material },
-      { partKey: "intro", material },
+      { partKey: "body", source: material },
+      { partKey: "intro", source: material },
     ],
   };
   try {
@@ -176,7 +176,7 @@ test("Sample snapshot rejects missing, duplicate and incomplete parts before acc
           parts: [
             {
               partKey: "intro",
-              material: { ...material, scopeId: "elsewhere" },
+              source: { ...material, scopeId: "elsewhere" },
             },
           ],
           partKeys: ["intro"],
@@ -200,7 +200,7 @@ test("Connector read page budgets count material parts and leave complete source
       partKeys: Array.from({ length: count }, (_, n) => `part-${n}`),
       parts: Array.from({ length: count }, (_, n) => ({
         partKey: `part-${n}`,
-        material: {
+        source: {
           scopeId: "scope",
           segments: [{ text: `Evidence ${n}`, role: "external" }],
         },
@@ -225,7 +225,7 @@ test("Connector read page budgets count material parts and leave complete source
         {
           sourceKey: "oversized",
           mutation: "snapshot",
-          material: {
+          source: {
             scopeId: "scope",
             segments: [{ text: "x".repeat(262144), role: "external" }],
           },

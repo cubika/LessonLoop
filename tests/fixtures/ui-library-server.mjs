@@ -68,10 +68,10 @@ export async function startUiFixture() {
     result: { status: "succeeded", summary: "已读回核对" },
     unresolved: ["不同版本待测"],
     coverage: ["单个本地 fixture"],
-    methodUses: [
+    playbookUses: [
       {
         taskRef: "task-ui",
-        methodUseRef: "use-ui",
+        playbookUseRef: "use-ui",
         method: { id: base.id, revision: 2 },
       },
     ],
@@ -101,7 +101,7 @@ export async function startUiFixture() {
             },
           ];
           break;
-        case "browseMethods": {
+        case "browsePlaybooks": {
           const rows = methods.filter(
             (m) =>
               (!input.pinnedOnly || m.pinned) &&
@@ -120,27 +120,44 @@ export async function startUiFixture() {
           };
           break;
         }
-        case "pinMethod":
+        case "pinPlaybook":
           methods.find((m) => m.id === input.id).pinned = input.pinned;
           result = { pinned: input.pinned };
           break;
-        case "inspectMethod":
+        case "inspectPlaybook":
           result = methods.find((m) => m.id === input.id);
           break;
-        case "methodHistory":
+        case "playbookHistory":
           result = [{ ...base, revision: 1, title: "旧版生成文件检查" }];
           break;
-        case "inspect":
+        case "inspectExperience":
           result = experience;
           break;
-        case "browse":
+        case "browseExperiences":
           result = [experience];
           break;
-        case "browseWorkCases":
-          result = [workCase];
+        case "listSources":
+          result = [
+            {
+              kind: "source",
+              id: "source-ui",
+              revision: 1,
+              scopeId: "ui-check",
+              segment: { text: "实际来源原文" },
+              contentStatus: "retained",
+            },
+          ];
           break;
-        case "inspectWorkCase":
-          result = workCase;
+        case "getWorkView":
+          result = {
+            target: input,
+            items: [
+              {
+                ...workCase,
+                sources: [{ kind: "source", id: "source-ui", revision: 1 }],
+              },
+            ],
+          };
           break;
         case "listTasks":
           result = [
@@ -153,10 +170,10 @@ export async function startUiFixture() {
             },
           ];
           break;
-        case "prepareMethod":
+        case "preparePlaybook":
           result = {
             status: "guidance",
-            methodUseRef: "use-ui",
+            playbookUseRef: "use-ui",
             conditions: [{ text: "使用生成器维护文件" }],
             exceptions: [{ text: "外部系统只读文件" }],
             steps: [
@@ -173,20 +190,20 @@ export async function startUiFixture() {
             stopConditions: [{ text: "来源不明" }],
           };
           break;
-        case "submitMaterial":
+        case "submitSource":
           result = { accepted: true, jobId: "job-ui" };
           break;
         case "getJob":
           result = { id: "job-ui", status: "completed", results: [] };
           break;
-        case "reviseMethod":
+        case "revisePlaybook":
           result = { accepted: true, reviewId: "review-ui" };
           break;
         case "getRevisionReview":
           result = { status: "completed" };
           break;
         case "feedback":
-        case "rateMethodUse":
+        case "ratePlaybookUse":
           result = { accepted: true, results: [{ status: "accepted" }] };
           break;
         case "reviews.notifications":

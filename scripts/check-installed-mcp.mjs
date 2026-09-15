@@ -34,7 +34,7 @@ try {
   // without a model call, product write, or credential in the report.
   const result = await client.listTools();
   const names = result.tools.map((tool) => tool.name);
-  for (const name of ["prepareMethod", "searchMethods"])
+  for (const name of ["preparePlaybook", "searchPlaybooks"])
     assert.ok(names.includes(name), `Required tool missing: ${name}`);
   console.log(
     JSON.stringify({

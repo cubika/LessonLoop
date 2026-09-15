@@ -54,25 +54,42 @@ test("MCP exposes complete guidance retrieval without completion or reassessment
       listed.tools.some((t) => t.name === "reassessTask"),
       false,
     );
-    assert.ok(listed.tools.some((t) => t.name === "prepareMethod"));
+    assert.ok(listed.tools.some((t) => t.name === "preparePlaybook"));
+    for (const name of [
+      "submitMaterial",
+      "submitWorkCase",
+      "prepareMethod",
+      "inspectWorkCase",
+      "listEffectCases",
+    ])
+      assert.equal(
+        listed.tools.some((t) => t.name === name),
+        false,
+      );
+    for (const name of [
+      "submitSource",
+      "recallExperiences",
+      "inspectExperience",
+    ])
+      assert.ok(listed.tools.some((t) => t.name === name));
     const input = {
-      methodId: "method",
+      playbookId: "playbook",
       revision: 1,
       taskRef: "task",
       viewMode: "expanded",
     };
     const result = await client.callTool({
-      name: "prepareMethod",
+      name: "preparePlaybook",
       arguments: { input },
     });
     assert.equal(result.isError, false);
-    assert.deepEqual(calls, [{ operation: "prepareMethod", input }]);
+    assert.deepEqual(calls, [{ operation: "preparePlaybook", input }]);
     const content = (
       result.content as Array<{ type: string; text?: string }>
     )[0];
     assert.equal(JSON.parse(content!.text!).result.steps.length, 2);
     const rejected = await client.callTool({
-      name: "prepareMethod",
+      name: "preparePlaybook",
       arguments: { input: { ...input, completedStepIds: ["inspect"] } },
     });
     assert.equal(rejected.isError, true);

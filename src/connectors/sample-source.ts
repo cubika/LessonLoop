@@ -12,8 +12,18 @@ import {
 } from "./input.js";
 
 const partSchema = z
-  .object({ partKey: id, material: materialInputSchema })
-  .strict();
+  .object({
+    partKey: id,
+    source: materialInputSchema
+      .innerType()
+      .omit({ caseFor: true })
+      .refine(
+        (value) => byteSize(value) <= 32768,
+        "Source part exceeds 32 KiB",
+      ),
+  })
+  .strict()
+  .transform(({ partKey, source }) => ({ partKey, material: source }));
 const changeSchema = z
   .object({
     sourceKey: id,
@@ -24,7 +34,7 @@ const changeSchema = z
       .object({ bindingId: id, sourceRevision: z.number().int().positive() })
       .strict()
       .optional(),
-    material: connectorMaterialSchema.optional(),
+    source: connectorMaterialSchema.optional(),
     input: connectorInputSchema.optional(),
     parts: z.array(partSchema).min(1).max(CONNECTOR_LIMITS.parts).optional(),
     partKeys: z.array(id).min(1).max(CONNECTOR_LIMITS.parts).optional(),
@@ -33,7 +43,7 @@ const changeSchema = z
   .strict();
 export type SourceChange = Omit<
   z.infer<typeof changeSchema>,
-  "input" | "material" | "parts" | "partKeys" | "complete"
+  "input" | "source" | "parts" | "partKeys" | "complete"
 > & { parts: MaterialPart[]; partKeys: string[]; complete: true };
 export interface SampleSnapshot {
   file: string;
@@ -60,14 +70,14 @@ export async function readSampleFile(
     .parse(JSON.parse(contents))
     .map((row): SourceChange => {
       const {
-        material,
+        source,
         input,
         parts: suppliedParts,
         partKeys,
         complete,
         ...change
       } = row;
-      const payloads = [material, input, suppliedParts].filter(
+      const payloads = [source, input, suppliedParts].filter(
         (v) => v !== undefined,
       ).length;
       const contentChange = !["withdraw", "erase"].includes(change.mutation);
@@ -92,8 +102,8 @@ export async function readSampleFile(
         parts = partKeys.map(
           (key) => suppliedParts.find((part) => part.partKey === key)!,
         );
-      } else if (input || material) {
-        parts = normalizeInput(input ?? { kind: "material", ...material! });
+      } else if (input || source) {
+        parts = normalizeInput(input ?? { kind: "source", ...source! });
       }
       if (parts.some((part) => part.material.scopeId !== scopeId))
         throw new ApiError("scope_mismatch");
